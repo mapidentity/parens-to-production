@@ -1,0 +1,29 @@
+{
+    "mcpServers": {
+        "clojure-mcp": {
+            "type": "stdio",
+            "command": "clojure",
+            "args": [
+                "-Tmcp",
+                "start-mcp-server",
+                ":port",
+                "7888",
+                ":project-dir",
+                "\"/workspace\"",
+                ":cljfmt",
+                "false"
+            ],
+            "env": {}
+        },
+        "playwright": {
+            "type": "stdio",
+            "command": "playwright-mcp",
+            "args": [
+                "--no-sandbox",
+                "--viewport-size",
+                "1920x1080"
+            ],
+            "env": {}
+        }
+    }
+}

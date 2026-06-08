@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# clj-kondo lint + companion grep checks for things clj-kondo can't see.
+cd "$(dirname "$0")"
+
+# clj-kondo returns: 0 = clean, 1 = warnings, 2 = errors, 3 = bad invocation.
+# We want warnings to be informational (don't fail), errors to fail.
+clj-kondo --lint src test
+kondo_rc=$?
+
+# Time-as-global check. clj-kondo's :discouraged-var only fires on
+# Clojure vars, not Java static methods, so we grep for forbidden
+# /now invocations and currentTimeMillis. Everything must read time
+# through myapp.time (see CLAUDE.md § "Time").
+#
+# Allowed exceptions:
+#   - src/myapp/time.clj         — the wrapper itself
+#   - test/myapp/time_test.clj   — tests for the wrapper
+forbidden_pattern='(LocalDate/now|LocalDateTime/now|ZonedDateTime/now|OffsetDateTime/now|Instant/now|Year/now|YearMonth/now|System/currentTimeMillis|System\.currentTimeMillis)'
+violations=$(grep -rn -E "$forbidden_pattern" src test \
+  --include='*.clj' --include='*.cljs' --include='*.cljc' \
+  | grep -v '^src/myapp/time\.clj:' \
+  | grep -v '^test/myapp/time_test\.clj:' \
+  || true)
+
+time_rc=0
+if [ -n "$violations" ]; then
+  echo
+  echo "Time-as-global violations (use myapp.time wrappers — see CLAUDE.md § 'Time'):"
+  echo "$violations"
+  time_rc=1
+fi
+
+# Fail on any clj-kondo error (rc>=2) or any time violation.
+if [ "$kondo_rc" -ge 2 ] || [ "$time_rc" -ne 0 ]; then
+  exit 1
+fi

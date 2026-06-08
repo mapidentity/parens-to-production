@@ -1,0 +1,49 @@
+{:linters
+ {;; Discouraged Datomic APIs — see CLAUDE.md § "Datomic Reads".
+  ;; Raw d/pull returns :db.type/instant as java.util.Date (not Instant),
+  ;; which silently breaks `.atZone` / `.toEpochMilli` callers downstream.
+  ;; Use db/pull-owned (tenant-safe) or db/pull* (conversion-only) instead.
+  ;; (The companion JDK-now ban lives in `./lint` as a grep pass — clj-kondo
+  ;; can't lint Java static methods via :discouraged-var.)
+  :discouraged-var
+  {datomic.api/pull
+   {:message
+    "Use myapp.db.core/pull-owned (tenant-safe) or myapp.db.core/pull* — raw d/pull leaves :db.type/instant values as java.util.Date and breaks Instant-typed callers. See CLAUDE.md § 'Datomic Reads'."}}
+
+  ;; Documentation
+  :missing-docstring {:level :warning}
+  :docstring-no-summary {:level :warning}
+  :docstring-leading-trailing-whitespace {:level :warning}
+
+  ;; Correctness
+  :shadowed-var {:level :warning}
+  :condition-always-true {:level :warning}
+  :equals-float {:level :warning}
+  :used-underscored-binding {:level :warning}
+
+  ;; Consistency
+  :equals-expected-position {:level :warning
+                             :position :first
+                             :only-in-test-assertion true}
+  :unsorted-required-namespaces {:level :warning}
+
+  :warn-on-reflection {:level :warning
+                       :warn-only-on-interop true}
+
+  ;; Simplification
+  :redundant-fn-wrapper {:level :warning}
+  :redundant-call {:level :warning}
+  :def-fn {:level :warning}
+  :single-key-in {:level :warning}
+  :unused-alias {:level :warning}
+  :plus-one {:level :warning}
+  :minus-one {:level :warning}}
+ 
+  :lint-as
+ {myapp.web.assets/defn-asset clj-kondo.lint-as/def-catch-all
+  myapp.web.inspector/defview clojure.core/defn
+  myapp.web.inspector/defview- clojure.core/defn-
+  myapp.web.inspector/tag-root clojure.core/identity}
+
+ :hooks
+ {:analyze-call {clojure.core/defn- hooks.missing-docstring/check-defn-}}}

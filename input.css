@@ -1,0 +1,236 @@
+@import "tailwindcss" source("./src");
+
+/* The dev-only source inspector uses its own injected `.fy-insp-*` styles, never
+   Tailwind utilities. Excluding it keeps a false-positive `resize` token (from its
+   `addEventListener('resize', …)`) out of the production bundle — zero prod footprint. */
+@source not "./src/myapp/web/inspector.js";
+
+@view-transition {
+  navigation: auto;
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+html:active-view-transition {
+  overflow: hidden;
+}
+
+@font-face {
+  font-family: "Geist";
+  src: url("/fonts/GeistVF.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  --color-primary: #4338ca;
+  --color-primary-vivid: #4f46e5;
+  --color-chrome: #292524;
+  --color-accent: #d97706;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #fafaf9;
+  --color-border: #e7e5e4;
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #78716c;
+  --color-positive: #047857;
+  --color-negative: #e11d48;
+  --color-warning: #92400e;
+}
+
+/* Legal document typography */
+.legal-content {
+  color: var(--color-text-primary);
+  line-height: 1.75;
+  font-size: 0.9375rem;
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    color: var(--color-text-primary);
+    font-weight: 700;
+    line-height: 1.3;
+    margin-top: 2em;
+    margin-bottom: 0.75em;
+  }
+
+  h1 {
+    font-size: 1.75rem;
+  }
+
+  h2 {
+    font-size: 1.375rem;
+  }
+
+  h3 {
+    font-size: 1.125rem;
+  }
+
+  h4 {
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  h1:first-child,
+  h2:first-child,
+  h3:first-child {
+    margin-top: 0;
+  }
+
+  p {
+    margin-top: 0.75em;
+    margin-bottom: 0.75em;
+  }
+
+  a {
+    color: var(--color-primary-vivid);
+    text-decoration: underline;
+  }
+
+  a:hover {
+    color: var(--color-primary);
+  }
+
+  strong {
+    color: var(--color-text-primary);
+    font-weight: 600;
+  }
+
+  ul,
+  ol {
+    margin-top: 0.5em;
+    margin-bottom: 0.75em;
+    padding-left: 1.5em;
+  }
+
+  ul {
+    list-style-type: disc;
+  }
+
+  ol {
+    list-style-type: decimal;
+  }
+
+  li {
+    margin-top: 0.25em;
+    margin-bottom: 0.25em;
+  }
+
+  li::marker {
+    color: #9ca3af;
+  }
+
+  hr {
+    border: none;
+    border-top: 1px solid var(--color-border);
+    margin: 2em 0;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1em;
+    margin-bottom: 1em;
+    font-size: 0.875rem;
+  }
+
+  th {
+    background-color: var(--color-surface-subtle);
+    font-weight: 600;
+    color: var(--color-text-primary);
+    text-align: left;
+    padding: 0.625rem 0.75rem;
+    border-bottom: 2px solid var(--color-border);
+  }
+
+  td {
+    padding: 0.625rem 0.75rem;
+    border-bottom: 1px solid #f3f4f6;
+    vertical-align: top;
+  }
+
+  tr:last-child td {
+    border-bottom: none;
+  }
+}
+
+/* Interaction: press feedback on all clickable elements */
+button, a, [role="button"] {
+  transition: transform 100ms ease-out, color 150ms ease-out;
+}
+button:active, a:active, [role="button"]:active {
+  transform: scale(0.97);
+}
+
+/* Interaction: card hover lift */
+.card {
+  transition: box-shadow 200ms ease-out, transform 200ms ease-out;
+}
+.card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+}
+
+/* Interaction: smooth group expand/collapse */
+.group-content {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.group-content > div {
+  overflow: hidden;
+}
+.group-content.open {
+  grid-template-rows: 1fr;
+}
+
+/* Interaction: chevron rotation. Two selectors to cover both:
+   1) the legacy .group-open class (set by JS on htmx-swap and on toggle), and
+   2) the browser-native [open] attribute on <details> (works without JS).
+   Either path lets the chevron rotate when the group is expanded. */
+.group-chevron {
+  display: inline-block;
+  transition: transform 150ms ease-out;
+}
+.group-open .group-chevron,
+details[open] .group-chevron {
+  transform: rotate(90deg);
+}
+
+/* Interaction: subtle attention pulse for action items */
+@keyframes gentle-pulse {
+  0%, 100% { border-color: #fde68a; }
+  50% { border-color: #fbbf24; }
+}
+.action-pulse {
+  animation: gentle-pulse 3s ease-in-out infinite;
+}
+
+/* Accessibility: visible focus rings for keyboard navigation */
+button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Diff view: added / removed lines (used by the recipe version diff). */
+.diff-add {
+  background-color: #ecfdf5;
+  color: var(--color-positive);
+}
+.diff-del {
+  background-color: #fff1f2;
+  color: var(--color-negative);
+  text-decoration: line-through;
+}
+
+/* Tabular figures (servings, counts, timestamps line up in columns). */
+.tabular-nums,
+td, th,
+.font-mono {
+  font-variant-numeric: tabular-nums lining-nums;
+}

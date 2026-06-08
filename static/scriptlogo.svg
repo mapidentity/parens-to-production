@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 32" fill="none">
+  <g stroke="#4f46e5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="8" cy="8" r="2.8"/>
+    <circle cx="8" cy="24" r="2.8"/>
+    <circle cx="23" cy="13" r="2.8"/>
+    <path d="M8 10.8v10.4"/>
+    <path d="M23 15.8c0 4.6-4 5-8 6"/>
+  </g>
+  <text x="38" y="21" font-family="ui-sans-serif,system-ui,Segoe UI,Helvetica,Arial,sans-serif" font-size="17" font-weight="700" fill="#1e1b4b">MyApp</text>
+</svg>

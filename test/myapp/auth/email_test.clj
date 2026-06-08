@@ -1,0 +1,104 @@
+(ns myapp.auth.email-test
+  "Integration tests for magic link email delivery.
+  Uses an embedded GreenMail SMTP server to verify subject, recipient, body
+  content, and i18n."
+  (:require
+    [clojure.string :as str]
+    [clojure.test :refer [deftest is use-fixtures]]
+    [myapp.auth.email :as email]
+    [myapp.config :as config]
+    [myapp.test-helpers :as h])
+  (:import
+    [com.icegreen.greenmail.util GreenMail ServerSetup]
+    [jakarta.mail.internet MimeMessage]))
+
+(set! *warn-on-reflection* true)
+
+(def ^:dynamic *greenmail*
+  "Bound to a running GreenMail instance per test by the with-greenmail fixture."
+  nil)
+
+(defn with-greenmail
+  "Fixture: starts GreenMail SMTP on a dynamic port, stubs config to point at it."
+  [f]
+  (let [setup (ServerSetup. 0 "127.0.0.1" "smtp")
+        gm (GreenMail.
+             ^"[Lcom.icegreen.greenmail.util.ServerSetup;" (into-array ServerSetup [setup]))]
+    (.start gm)
+    (try
+      (let [port (.getPort (.getSmtp gm))
+            test-cfg (assoc h/test-config
+                       :smtp {:host "127.0.0.1"
+                              :port port
+                              :tls false
+                              :user nil
+                              :pass nil
+                              :from "noreply@myapp.test"})]
+        (with-redefs [config/config (delay test-cfg)]
+          (binding [*greenmail* gm]
+            (f))))
+      (finally (.stop gm)))))
+
+(use-fixtures :each with-greenmail)
+
+(deftest send-magic-link-delivers-email
+  (let [result
+        (email/send-magic-link! :nl "user@example.com" "test-token-abc" "https://myapp.test")]
+    (is (= :SUCCESS (:error result)))
+    (let [messages (.getReceivedMessages ^GreenMail *greenmail*)]
+      (is (= 1 (alength messages)))
+      (let [^MimeMessage msg (aget messages 0)]
+        (is (= "Inloggen bij MyApp" (.getSubject msg)))
+        (is (= "noreply@myapp.test" (str (first (.getFrom msg)))))
+        (let [body (str (.getContent msg))]
+          (is (str/includes? body "https://myapp.test/auth/verify?token=test-token-abc"))
+          (is (str/includes? body "15 minuten")))))))
+
+(deftest send-magic-link-recipient-is-correct
+  (email/send-magic-link! :nl "other@example.com" "token-123" "https://myapp.test")
+  (let [messages (.getReceivedMessages ^GreenMail *greenmail*)
+        ^MimeMessage msg (aget messages 0)
+        recipients (.getAllRecipients msg)]
+    (is (= "other@example.com" (str (first recipients))))))
+
+(deftest send-magic-link-smtp-failure-returns-error
+  (let [_ (.stop ^GreenMail *greenmail*)
+        result (email/send-magic-link! :nl "user@example.com" "token-fail" "https://myapp.test")]
+    (is (= :FAIL (:error result)))
+    (is (string? (:message result)))))
+
+(deftest send-magic-link-english-locale
+  (let [result
+        (email/send-magic-link! :en "user@example.com" "token-en" "https://myapp.test")]
+    (is (= :SUCCESS (:error result)))
+    (let [messages (.getReceivedMessages ^GreenMail *greenmail*)]
+      (is (= 1 (alength messages)))
+      (let [^MimeMessage msg (aget messages 0)]
+        (is (= "Sign in to MyApp" (.getSubject msg)))
+        (let [body (str (.getContent msg))]
+          (is (str/includes? body "https://myapp.test/auth/verify?token=token-en"))
+          (is (str/includes? body "15 minutes")))))))
+
+(deftest send-magic-link-authenticated-smtp
+  ;; Covers the SMTP auth branch in smtp-session (when user/pass are configured).
+  (let [setup (ServerSetup. 0 "127.0.0.1" "smtp")
+        gm (GreenMail.
+             ^"[Lcom.icegreen.greenmail.util.ServerSetup;" (into-array ServerSetup [setup]))]
+    (.start gm)
+    (try
+      (.setUser gm "testuser@myapp.test" "testuser" "testpass")
+      (let [port (.getPort (.getSmtp gm))
+            test-cfg (assoc h/test-config
+                       :smtp {:host "127.0.0.1"
+                              :port port
+                              :tls false
+                              :user "testuser"
+                              :pass "testpass"
+                              :from "noreply@myapp.test"})]
+        (with-redefs [config/config (delay test-cfg)]
+          (let [result
+                (email/send-magic-link! :nl "user@example.com" "auth-token" "https://myapp.test")]
+            (is (= :SUCCESS (:error result)))
+            (let [messages (.getReceivedMessages gm)]
+              (is (= 1 (alength messages)))))))
+      (finally (.stop gm)))))

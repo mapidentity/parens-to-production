@@ -1,0 +1,30 @@
+{:width 100
+ :style [:community :respect-bl :sort-require]
+ :map {:comma? false :force-nl? true}
+ :comment {:wrap? false}
+ :vector {:respect-nl? true}
+ :list {:hang? false :indent 2 :indent-arg 2}
+ :pair {:force-nl? true}
+ :fn-gt2-force-nl #{:fn}
+ :fn-force-nl #{:noarg1-body :noarg1 :force-nl-body :force-nl :flow :flow-body :binding}
+ :fn-map {"cond" [:pair-fn {:list {:respect-nl? true}}]
+          "if" :arg1
+          "def" :arg1-force-nl-body
+          "defn" :arg1-force-nl-body
+          "defn-" :arg1-force-nl-body
+          "defview" :arg1-force-nl-body
+          "defview-" :arg1-force-nl-body
+          "try" :flow-body
+          "d/q" [:hang {:vector {:respect-nl? true}}]
+          "->" [:noarg1-body {:list {:hang? true}}]
+          "->>" [:noarg1-body {:list {:hang? true}}]
+          "some->" [:noarg1-body {:list {:hang? true}}]
+          "some->>" [:noarg1-body {:list {:hang? true}}]
+          "cond->" [:arg1-pair-body {:list {:hang? true}}]
+          "cond->>" [:arg1-pair-body {:list {:hang? true}}]
+          "assoc" [:arg1-pair {:list {:hang? true}}]
+          "db/transact*" :arg1
+          "log/error" :arg2
+          "log/warn" :arg1
+          "log/info" :arg1
+          "log/debug" :arg1}}

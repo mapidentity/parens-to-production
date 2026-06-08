@@ -1,0 +1,637 @@
+# Server-Rendered HTML with Hiccup: Views, Layouts, and Progressive Enhancement
+
+
+In the previous chapters we set up our Ring server and routing with Reitit, a live-reload workflow, a Datomic schema, internationalization, and Tailwind styling. But we glossed over how pages actually get rendered. In this chapter we build the entire view layer: HTML generation with Hiccup, a layout system that shares structure across pages, navigation components, and a progressive enhancement strategy that keeps things fast without requiring a JavaScript framework. (The login and session machinery the layouts hint at -- magic-link authentication -- comes later, in the authentication chapters; here we just render the views it will plug into.)
+
+## Why Server-Rendered HTML
+
+The default assumption in 2026 is that you need React (or something like it) to build a web app. For a lot of products, that is the wrong starting point. Here is why we went with server-rendered HTML:
+
+- **One language, one process.** Our Clojure server already has all the data. Rendering HTML is just a function call -- no API layer, no serialization boundary, no client-side state management.
+- **Instant page loads.** The browser gets complete HTML. No loading spinners, no hydration, no layout shift.
+- **Simpler deployment.** No build step for a JavaScript bundle. No CDN configuration for client assets. The server sends HTML; the browser renders it.
+- **Progressive enhancement where it matters.** A tiny script upgrades navigation and form submissions into in-place updates without requiring JavaScript for the page to work at all.
+
+This is not a philosophical stance against SPAs. It is a pragmatic choice: for a solo-operated SaaS, every moving part you add is a part you maintain. Server-rendered HTML eliminates an entire category of complexity.
+
+## Hiccup 2: HTML as Data
+
+[Hiccup](https://github.com/weavejester/hiccup) represents HTML as Clojure data structures. We render with version 2 (`hiccup/hiccup "2.0.0"`), whose `hiccup2.core/html` macro auto-escapes string content by default. That auto-escaping is the foundation of our XSS defense -- more on this in the output-encoding section below.
+
+The core idea is simple. HTML elements become Clojure vectors:
+
+```clojure
+;; Hiccup
+[:h1 "Hello"]
+
+;; Becomes
+;; <h1>Hello</h1>
+```
+
+Attributes are maps in the second position:
+
+```clojure
+[:a {:href "/dashboard" :class "text-primary"} "Go to dashboard"]
+;; <a href="/dashboard" class="text-primary">Go to dashboard</a>
+```
+
+CSS classes can use dot syntax for brevity:
+
+```clojure
+[:div.mt-4.text-center "Centered text"]
+;; <div class="mt-4 text-center">Centered text</div>
+```
+
+And since it is just data, you can use all of Clojure: `if`, `for`, `when`, `let`, function composition. No template language to learn. No special syntax for conditionals or loops.
+
+We use one namespace from the library for rendering:
+
+```clojure
+(require '[hiccup2.core :as h])   ;; escaping html rendering, raw HTML insertion
+```
+
+`hiccup2.core/html` renders hiccup to an escaped string. `hiccup2.core/raw` wraps a string we want emitted *verbatim* (no escaping) -- used for the doctype, for markdown-rendered HTML, and for the inline scripts and styles we control. We will see both at work in the base layout.
+
+## The Layout System
+
+Every web app has shared structure: the `<head>` tag, stylesheets, scripts, navigation. We handle this with three layout functions that compose together.
+
+### Base Layout
+
+The base layout is the HTML5 shell that every page shares. It is private -- page functions never call it directly:
+
+```clojure
+(ns myapp.web.views
+  (:require
+    [hiccup2.core :as h]
+    [myapp.i18n :refer [t]]
+    [myapp.web.assets :as assets :refer [defn-asset]]
+    [myapp.web.inspector :refer [tag-root]]
+    [myapp.web.markdown :as markdown]))
+
+(defn-asset toast-script "myapp/web/toast.js")
+
+(defn- script-tag
+  "A <script> for a served asset, with SRI integrity when the manifest provides it
+  (prod). `attrs` adds e.g. {:type \"module\"} or {:defer true}."
+  [logical attrs]
+  (let [url (assets/asset logical)]
+    [:script (cond-> (assoc attrs :src url)
+               (assets/asset-sri url) (assoc :integrity (assets/asset-sri url)))]))
+
+(defn- base-layout
+  "Base HTML5 wrapper. All pages use this — never called directly by page fns."
+  [locale & body]
+  (h/html
+    {:mode :html}
+    (h/raw "<!DOCTYPE html>")
+    [:html {:lang (name locale)}
+     [:head [:meta {:charset "UTF-8"}]
+      [:meta {:name "viewport" :content "width=device-width, initial-scale=1.0"}]
+      [:meta {:name "description" :content (t locale :meta/description)}]
+      [:title "MyApp"]
+      [:link {:rel "icon" :type "image/svg+xml" :href "/icon.svg"}]
+      [:link {:rel "stylesheet" :href (assets/asset "styles.css")}]
+      ;; Import map (must precede any module script) remaps each module's absolute
+      ;; import specifier to its hashed URL in prod; identity no-op in dev.
+      [:script {:type "importmap"} (h/raw (assets/importmap-json))]
+      ;; Idiomorph (classic script) must load before the dispatcher module
+      ;; so window.Idiomorph is available when dispatcher.js runs.
+      (script-tag "idiomorph" {:defer true})
+      (script-tag "js/dispatcher.js" {:type "module"})
+      (script-tag "js/live-form.js" {:type "module"})
+      (script-tag "js/defer-details.js" {:type "module"})
+      (script-tag "js/server-preview.js" {:type "module"})
+      (script-tag "js/admin-stats.js" {:type "module"})]
+     [:body (tag-root body)
+      [:div#toast-container.fixed.bottom-4.right-4.z-50
+       {:aria-live "polite" :aria-atomic "true"}]
+      (toast-script)]]))
+```
+
+A few things to note:
+
+- **`locale` is threaded everywhere.** Every layout takes it as the first argument, and all user-facing text goes through `(t locale :key)` for i18n. We will cover i18n in a future post, but the view layer is ready for it from day one.
+- **The whole document is built by `h/html`, the *escaping* renderer.** This matters enough that it gets its own section below. The doctype is the one structural literal we want emitted as-is, so it goes through `(h/raw "<!DOCTYPE html>")`.
+- **Assets resolve through `(assets/asset "...")`.** The stylesheet, the module scripts, and the import map all come from the asset system: in production each URL is content-hashed and carries an integrity (SRI) attribute; in development the same calls return stable, unhashed URLs. The asset pipeline is its own topic -- here, the view layer just asks for a logical name and gets back a URL.
+- **`(script-tag "js/dispatcher.js" {:type "module"})`** loads the dispatcher, the script that powers progressive enhancement (covered in detail below). It is a normal ES module, served from the classpath through the asset pipeline -- not inlined.
+- **`(toast-script)`** inlines a small toast helper. The `defn-asset` macro and inline scripts are covered later in this post.
+- **`(tag-root body)`** wraps the page body for the development source inspector. In production it is the identity function; the body is unchanged.
+- **`body` uses `& body` (rest args)** so callers can pass multiple elements naturally without wrapping them in a container.
+
+### Public Layout
+
+For unauthenticated pages (login, error pages, terms acceptance), we want a centered card on a subtle background:
+
+```clojure
+(defn public-layout
+  "Centered card layout for unauthenticated pages (landing, auth, terms)."
+  [locale & body]
+  (base-layout
+    locale
+    [:main.min-h-screen.bg-surface-subtle.flex.items-center.justify-center.px-4
+     {:data-layout "public"}
+     [:div.max-w-md.w-full body]]))
+```
+
+This wraps `base-layout`, adding a centered container. The Tailwind classes handle the visual design: full viewport height, centered flexbox, constrained width. Public pages have no navigation -- just the content.
+
+Note the `<main data-layout="public">`. Every page's content lives inside a single `<main>` element, and that element carries a `data-layout` marker. The dispatcher uses both facts -- `<main>` as the morph target, `data-layout` to detect when navigating would change the whole chrome. We will come back to this.
+
+### App Layout
+
+Authenticated pages -- and the public recipe-browsing pages -- get the navigation chrome:
+
+```clojure
+(defn app-layout
+  "Layout with the top navigation. Used for recipe browsing (public OR signed
+  in), the dashboard, and admin. `opts` may include `:admin?`. `user-email`
+  may be nil for anonymous visitors browsing recipes."
+  [locale user-email active-tab opts & body]
+  (let [admin? (:admin? opts)]
+    (base-layout
+      locale
+      [:div.min-h-screen.flex.flex-col.bg-surface-subtle
+       (top-nav locale user-email active-tab admin?)
+       [:main.flex-1 {:data-layout "app"}
+        [:div.mx-auto.max-w-5xl.px-4.py-8.sm:px-6
+         body]]])))
+```
+
+The `active-tab` parameter (a keyword like `:browse`, `:new`, `:dashboard`, `:admin`) tells the navigation which tab to highlight. The `opts` map carries flags like `:admin?` to conditionally show admin-only tabs. `user-email` may be `nil`: the recipe browse pages render with the app chrome whether or not someone is signed in, and the nav adapts.
+
+Again, the content sits in `<main data-layout="app">` -- same morph target as the public layout, different `data-layout` value.
+
+### How They Compose
+
+The hierarchy is:
+
+```
+base-layout          (HTML5 shell, head, scripts)
+  |
+  +-- public-layout  (centered card, no nav, <main data-layout="public">)
+  |
+  +-- app-layout     (top nav + content area, <main data-layout="app">)
+```
+
+Page functions call either `public-layout` or `app-layout`, never `base-layout` directly. This keeps the shared structure in one place while giving each page type its own wrapper.
+
+## Navigation Components
+
+The app layout includes a single, responsive top navigation bar. The same bar shows whether or not someone is signed in -- it just shows different tabs.
+
+### The Top Bar
+
+The top navigation bar is a horizontal strip with tabs for each workflow area. Each tab is an icon plus a label (the label hides on the narrowest screens):
+
+```clojure
+(defn- nav-tab
+  "Single tab in the top navigation bar."
+  [locale label-key href icon-key active?]
+  [:a
+   {:href href
+    :class
+    (if active?
+      "flex items-center gap-1.5 text-white border-b-2 border-white px-3 py-3 text-sm font-semibold"
+      "flex items-center gap-1.5 text-white/70 hover:text-white border-b-2 border-transparent hover:border-white/30 px-3 py-3 text-sm font-medium")}
+   (hero-icon (get nav-icons icon-key))
+   [:span.hidden.sm:inline (t locale label-key)]])
+```
+
+The active tab gets full white text with a solid bottom border. Inactive tabs are translucent with a hover effect. This is pure CSS -- no JavaScript needed for tab state.
+
+The bar itself adapts to the signed-in state. Browse is always shown; "New recipe" and "Dashboard" appear only when there is a `user-email`; the admin tab appears only for admins. On the right, a signed-in user sees their email and a logout form; an anonymous visitor sees a sign-in link:
+
+```clojure
+(defn- top-nav
+  "Top navigation bar. Adapts to whether a user is signed in."
+  [locale user-email active-tab admin?]
+  [:nav.bg-chrome.sticky.top-0.z-50
+   [:div.mx-auto.max-w-5xl.px-4
+    [:div.flex.h-14.items-center.justify-between
+     [:div.flex.items-center.gap-x-2
+      [:a.mr-2 {:href "/recipes"}
+       [:img.h-7 {:src "/scriptlogo-white.svg" :alt "MyApp" :width 132 :height 32}]]
+      (nav-tab locale :nav/browse "/recipes" :browse (= active-tab :browse))
+      (when user-email
+        (nav-tab locale :nav/new "/recipes/new" :new (= active-tab :new)))
+      (when user-email
+        (nav-tab locale :nav/dashboard "/dashboard" :dashboard (= active-tab :dashboard)))
+      (when admin?
+        (nav-tab locale :nav/admin "/admin" :admin (= active-tab :admin)))]
+     [:div.flex.items-center.gap-x-2
+      (if user-email
+        (list
+          [:span {:key "email" :class "text-sm text-white/70 hidden sm:block"} user-email]
+          [:form {:key "out" :method "POST" :action "/auth/logout"}
+           [:button {:type "submit" :class "text-sm text-white/70 hover:text-white"}
+            (t locale :auth/sign-out)]])
+        [:a {:href "/" :class "text-sm text-white/70 hover:text-white"}
+         (t locale :home/sign-in)])]]]])
+```
+
+### Inline SVG Icons
+
+Tabs use inline SVG icons. Using inline SVGs means no icon font to load, and each icon is just a vector of path strings:
+
+```clojure
+(defn- hero-icon
+  "Inline 24x24 Heroicon-style outline SVG. `paths` is a seq of d-strings."
+  [paths]
+  [:svg.h-5.w-5
+   {:fill "none" :viewBox "0 0 24 24" :stroke-width "1.5" :stroke "currentColor"}
+   (for [d paths]
+     [:path {:stroke-linecap "round" :stroke-linejoin "round" :d d}])])
+
+(def ^:private nav-icons
+  {:browse    ["M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052..."]
+   :new       ["M12 4.5v15m7.5-7.5h-15"]
+   :dashboard ["M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25..."]
+   :admin     ["M9.594 3.94c.09-.542..." "M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"]})
+```
+
+The icon paths are stored in a map keyed by tab name, so the markup that draws each tab stays small.
+
+## Building Pages
+
+With layouts and navigation in place, building a page is straightforward. Here is the landing page:
+
+```clojure
+(defn home-page
+  "Landing page with the magic-link sign-in form."
+  [locale]
+  (public-layout
+    locale
+    [:div.space-y-8
+     [:div.text-center
+      [:img.h-12.mx-auto {:src "/logo.svg" :alt "MyApp" :width 220 :height 48}]
+      [:p.mt-3.text-lg.font-medium.text-text-primary (t locale (rand-nth tagline-keys))]
+      [:p.mt-2.text-sm.text-text-secondary (t locale :home/lead)]]
+     [:div.bg-surface.py-8.px-6.border.border-border.rounded-lg
+      [:h2.text-2xl.font-semibold.text-text-primary.mb-4 (t locale :home/get-started)]
+      [:form {:method "POST" :action "/auth/request"}
+       [:div
+        [:label.block.text-sm.font-medium.text-text-primary {:for "email"}
+         (t locale :home/email-label)]
+        [:input.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md
+         {:type "email" :id "email" :name "email" :required true
+          :placeholder (t locale :home/email-placeholder)}]]
+       [:div.mt-6
+        [:button.w-full.py-3.px-4.rounded-md.text-sm.font-semibold.text-white.bg-primary.hover:bg-primary-vivid
+         {:type "submit"} (t locale :home/sign-in)]]]
+      [:p.mt-4.text-xs.text-text-secondary.text-center (t locale :home/magic-link-explanation)]]]))
+```
+
+There is nothing special on the form. A plain `<form method="POST" action="/auth/request">` with a plain `<button type="submit">`. No data attributes, no per-element wiring. The dispatcher enhances it automatically (next section), and if the dispatcher never loads, the form posts the old-fashioned way and everything still works.
+
+And here is the authenticated dashboard, using `app-layout`:
+
+```clojure
+(defn dashboard
+  "Signed-in user's home: their own recipes."
+  [locale user-email admin? recipes]
+  (app-layout
+    locale user-email :dashboard {:admin? admin?}
+    [:div.flex.items-center.justify-between.mb-6
+     [:h1.text-2xl.font-bold.text-text-primary (t locale :dashboard/your-recipes)]
+     [:a.inline-flex.items-center.gap-1.text-sm.font-semibold.text-white.bg-primary.hover:bg-primary-vivid.px-3.py-2.rounded-md
+      {:href "/recipes/new"} "+ " (t locale :recipe/new)]]
+    (if (seq recipes)
+      [:div.grid.gap-4.sm:grid-cols-2
+       (for [r recipes] ^{:key (:recipe/id r)} (recipe-card locale r))]
+      [:div.text-center.py-12
+       [:p.text-text-secondary (t locale :dashboard/no-recipes)]
+       [:a.mt-4.inline-block.text-sm.font-semibold.text-white.bg-primary.hover:bg-primary-vivid.px-4.py-2.rounded-md
+        {:href "/recipes/new"} (t locale :dashboard/create-cta)]])))
+```
+
+The `:dashboard` keyword tells the navigation to highlight the Dashboard tab. The `admin?` flag passes through to the nav.
+
+## Handlers: Connecting Routes to Views
+
+Handlers sit between routes and views. They extract data from the request, call domain logic, and return a Ring response with rendered HTML. A small private helper does the wrapping:
+
+```clojure
+(defn- html
+  "Ring HTML response (200) from a Hiccup-rendered string."
+  [body]
+  {:status 200
+   :headers {"Content-Type" "text/html; charset=UTF-8"}
+   :body (str body)})
+```
+
+Note the explicit `charset=UTF-8`. With the escaping renderer (below), the response is exactly the bytes Hiccup produced, so we declare the encoding the browser should read them in.
+
+Handlers then read what they need off the request and render:
+
+```clojure
+(defn home
+  "Landing page handler. Redirects authenticated users to the dashboard."
+  [request]
+  (let [email (get-in request [:session :user-email])
+        user-exists? (and email (auth/find-user-by-email (d/db (db/get-connection)) email))]
+    (cond
+      user-exists? (response/redirect "/dashboard")
+      email (-> (html (views/home-page (:locale request))) (assoc :session nil))
+      :else (html (views/home-page (:locale request))))))
+
+(defn dashboard
+  "Signed-in home: the user's own recipes."
+  [request]
+  (let [recipes (recipe/recipes-for-user ...)]
+    (html (views/dashboard (:locale request) (:user-email request) (admin? request) recipes))))
+```
+
+The pattern is consistent: gather data, render the view, wrap with `html`. No framework magic. The `str` inside `html` realizes the Hiccup output as an HTML string for the response body.
+
+Importantly, **handlers do not branch on the request type.** There is no "is this a fetch?" check and no separate partial-vs-full code path. A handler renders one thing -- the full page -- and the dispatcher on the client extracts the part it needs. We will see why that works in a moment.
+
+## Progressive Enhancement: the Dispatcher + Idiomorph
+
+The base layout loads `dispatcher.js` as an ES module. It is the one script responsible for turning ordinary links and forms into smooth, in-place updates -- without any per-element configuration, and without changing how the server responds.
+
+The whole strategy rests on one idea: **the server always renders complete pages; the client morphs the part that changed.** Specifically, the dispatcher intercepts same-origin navigation, fetches the destination, parses the returned HTML, pulls out its `<main>`, and *morphs* the live `<main>` to match using [idiomorph](https://github.com/bigskysoftware/idiomorph). Morphing diffs the existing DOM against the new DOM and applies the minimal set of mutations -- so focus, scroll position, form state, and ongoing CSS transitions inside unchanged subtrees survive the update.
+
+### What it intercepts
+
+The dispatcher attaches exactly three listeners at the document level:
+
+```javascript
+document.addEventListener('click', onClick, true);
+document.addEventListener('submit', onSubmit);
+window.addEventListener('popstate', onPopState);
+```
+
+For clicks, it looks for the nearest `<a href>` and decides whether to take over. It deliberately bows out -- letting the browser do its native thing -- for anything that is not a plain primary-button, same-origin navigation:
+
+```javascript
+function shouldEnhanceLink(a, e) {
+  if (a.hasAttribute('data-no-enhance')) return false;
+  if (a.getAttribute('target') === '_blank') return false;
+  if (a.hasAttribute('download')) return false;
+  if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return false;
+  if (e.button !== undefined && e.button !== 0) return false;
+  const href = a.getAttribute('href');
+  if (!href) return false;
+  if (!sameOrigin(href)) return false;
+  if (isFragmentOnly(a)) return false;
+  return true;
+}
+```
+
+So cmd-click to open in a new tab, downloads, external links, and in-page `#anchor` jumps all behave exactly as the browser intends. The only opt-out attribute is `data-no-enhance`; everything else is inferred from the link itself.
+
+Forms are similar -- the dispatcher reads `action` and `method` straight off the `<form>` (honoring an `<input formaction>`/`formmethod` submitter when present), and skips anything cross-origin or marked `data-no-enhance`. There is no DSL: a normal `<form method="POST" action="/auth/request">` is enhanced as-is.
+
+### The core primitive: fetchAndMorph
+
+Both the click and submit handlers funnel into one exported function, `fetchAndMorph`. It fetches, picks the fragment to apply, morphs, and updates history:
+
+```javascript
+export async function fetchAndMorph(url, opts = {}) {
+  // ... fetch the URL (credentials: same-origin, redirect: follow) ...
+
+  const finalUrl = res.url || url;       // reflects any 302 the server issued
+  const html = await res.text();
+
+  // Pull <main> (or an explicit data-target) out of the response HTML.
+  const { fragmentEl, parsedDoc } = pickResponseFragment(html, target);
+  const targetEl = document.querySelector(target);
+  if (!targetEl) return;                 // page already morphed away; bail quietly
+
+  // Cross-layout guard (see below).
+  // ...
+
+  morph(targetEl, fragmentEl, { morphStyle: 'innerHTML', ignoreActiveValue });
+  updateTitle(parsedDoc);
+  // ... history bookkeeping ...
+}
+```
+
+A few details worth pulling out, because they are what make this robust rather than a toy:
+
+- **The server is the source of truth for errors and redirects.** A 4xx or 5xx with an HTML body is morphed in place, so server-rendered error pages just appear. A POST that ends in a redirect (the Post-Redirect-Get pattern) is followed by `fetch`, and `finalUrl` carries the redirect target, which the dispatcher then writes into the address bar -- so a refresh does not re-POST.
+- **Cross-layout navigation falls back to a full load.** If the response's `<main data-layout>` differs from the live one (e.g. going from `public-layout` to `app-layout`), an in-place morph would leave the wrong chrome around it. The dispatcher detects the mismatch and does an honest full navigation instead:
+
+  ```javascript
+  if (target === 'main') {
+    const liveLayout = document.querySelector('main[data-layout]');
+    const newLayout = parsedDoc.querySelector('main[data-layout]');
+    if (liveLayout && newLayout
+        && liveLayout.dataset.layout !== newLayout.dataset.layout) {
+      window.location.assign(finalUrl);
+      return;
+    }
+  }
+  ```
+
+  This is the payoff for putting `data-layout` on every `<main>`.
+- **In-flight requests are de-duplicated.** Each destination keys an `AbortController`; a newer click to the same target aborts the older fetch, so rapid navigation cannot land an out-of-order morph.
+- **Failure degrades gracefully.** A network error on a GET falls back to `window.location.assign(url)` -- a real navigation -- so the user is never stranded on a dead click.
+
+### A note on the Accept header
+
+You will see the fetch send `headers: { 'Accept': 'text/html' }`. **The server does not branch on it.** There is no content negotiation, no "partial vs full" response, no special header that flips the handler into a different mode. Every handler renders the complete page every time; the dispatcher is the only thing that decides to extract `<main>`. The `Accept` header is vestigial -- harmless, but do not build server logic around it. Keeping the server oblivious to *how* it is being called is exactly what lets the no-JavaScript path stay correct for free.
+
+### History and accessibility
+
+For link clicks and GET form submits, the dispatcher pushes a history entry to the fetched URL, so Back and Forward work. `popstate` re-fetches whatever URL the browser is now showing and morphs `<main>` again. After a navigation morph it moves focus to `<main>` (giving it `tabindex="-1"` if needed) so screen readers re-announce the new content, and it copies the new document's `<title>` over.
+
+### Scripts inside a morph
+
+One sharp edge of morphing (or any `innerHTML` swap): browsers do **not** execute `<script>` tags introduced that way. If a page embeds a per-page script inside `<main>`, a morph would insert it inert. The dispatcher handles this by re-materializing such scripts after the morph -- cloning each into a fresh `<script>` element (which the browser *does* run) and marking it `data-executed` so later morphs leave it alone:
+
+```javascript
+function executeScripts(root) {
+  const scripts = root.querySelectorAll('script:not([data-executed])');
+  scripts.forEach((old) => {
+    const fresh = document.createElement('script');
+    for (const attr of old.attributes) fresh.setAttribute(attr.name, attr.value);
+    fresh.setAttribute('data-executed', 'true');
+    fresh.text = old.textContent;
+    old.replaceWith(fresh);
+  });
+}
+```
+
+In practice our pages avoid inline `<script>` inside `<main>` entirely (it would also fight our strict Content-Security-Policy -- a later post). Page-specific behavior is delivered as ES modules loaded once in `<head>` that *enhance* whatever DOM is present and re-run their setup on the `dispatcher:morphed` event the function fires at the end:
+
+```javascript
+document.dispatchEvent(new CustomEvent('dispatcher:morphed', {
+  detail: { url: finalUrl, target, method },
+}));
+```
+
+That event is the extension point. The `live-form`, `defer-details`, `server-preview`, and `admin-stats` modules each listen for it (or for native events) and idempotently wire up the elements they care about after every morph.
+
+### Why this shape
+
+This is progressive enhancement in the literal sense. The HTML is complete and functional on its own; the dispatcher is a strict speed-up layered on top. There is no client-side router to keep in sync with the server's routes, no template duplicated between server and client, no hydration step, and no handler that has to know whether it is talking to a browser navigation or a `fetch`. Delete `dispatcher.js` and the app still works -- every link navigates, every form posts. Keep it and navigation becomes a partial DOM morph that preserves UI state.
+
+## Output Encoding: Escaping is the Primary XSS Defense
+
+Recipes carry user-supplied text -- titles, descriptions, ingredient lines -- that we render straight into pages. That is precisely where stored XSS lives: if a recipe title containing `<script>...</script>` is written into the page unescaped, every visitor runs the attacker's script. The fix is not to sanitize on the way in; it is to **encode on the way out, by default, everywhere**.
+
+This is why the base layout renders with `hiccup2.core/html` -- the *escaping* renderer -- and not with the page-helper `html5` wrapper:
+
+```clojure
+(h/html
+  {:mode :html}
+  (h/raw "<!DOCTYPE html>")
+  [:html {:lang (name locale)}
+   ...])
+```
+
+`h/html` HTML-escapes every string it renders. So a recipe whose title is `<img src=x onerror=alert(1)>` comes out as text -- `&lt;img src=x onerror=alert(1)&gt;` -- not as live markup. We get this for free at every interpolation point. The recipe card, the detail heading, the author name, the nav email: all of them put user or session strings into the tree as plain Clojure strings, and all of them are escaped:
+
+```clojure
+[:h3.text-lg.font-semibold.text-text-primary (:recipe/title recipe)]   ;; escaped
+[:span {:class "..."} user-email]                                      ;; escaped
+```
+
+There is nothing to remember and nothing to opt into. Safe is the default; you have to go out of your way to render raw.
+
+### Opting into raw, on purpose
+
+Some content we *do* want emitted verbatim, and only those places use `h/raw`:
+
+- **The doctype.** `(h/raw "<!DOCTYPE html>")` -- a fixed literal we control.
+- **The import map and inline scripts/styles.** These are our own bytes, and (as the security post explains) they must be emitted exactly so the Content-Security-Policy hash matches what the browser sees: `[:script {:type "importmap"} (h/raw (assets/importmap-json))]`.
+- **Markdown-rendered HTML.** Recipe descriptions and legal documents are authored in Markdown and rendered to HTML by CommonMark; that HTML is inserted with `h/raw`:
+
+  ```clojure
+  (when-not (str/blank? (:recipe/description recipe))
+    [:div.legal-content.mt-4 (h/raw (markdown/render (:recipe/description recipe)))])
+  ```
+
+Each `h/raw` is a deliberate, auditable decision. The rule of thumb: grep for `h/raw`, and every hit should be either a literal you wrote or output from a renderer you trust. Everything else flows through `h/html` and is escaped.
+
+A correctly-escaped output layer is the load-bearing defense here. (The app also ships a strict, hash-based Content-Security-Policy with no `'unsafe-inline'` for scripts, which would *additionally* block an injected inline script -- but that is defense-in-depth sitting behind escaping, and it is the subject of its own post. The escaping is what makes the XSS not happen in the first place.)
+
+## CommonMark for Markdown Content
+
+Recipe descriptions and legal documents (terms of service, privacy policy) are written in Markdown and rendered to HTML. We use [CommonMark](https://commonmark.org/) via the `commonmark-java` library:
+
+```clojure
+(ns myapp.web.markdown
+  "CommonMark markdown-to-HTML rendering."
+  (:import
+    [org.commonmark.parser Parser]
+    [org.commonmark.renderer.html HtmlRenderer]
+    [org.commonmark.ext.gfm.tables TablesExtension]))
+
+(def ^:private extensions
+  [(TablesExtension/create)])
+
+(def ^:private ^Parser parser
+  (-> (Parser/builder) (.extensions extensions) (.build)))
+
+(def ^:private ^HtmlRenderer renderer
+  (-> (HtmlRenderer/builder) (.extensions extensions) (.build)))
+
+(defn render
+  "Render markdown string to HTML string."
+  [markdown-str]
+  (->> (.parse parser markdown-str)
+       (.render renderer)))
+```
+
+The parser and renderer are created once and reused (they are thread-safe). We enable the GFM tables extension because legal documents sometimes need tables (e.g., data processing categories, retention periods).
+
+The rendered HTML is inserted into a styled container with `h/raw` (the deliberate raw-output decision from the previous section):
+
+```clojure
+(defn legal-page
+  "Render a legal document as a styled HTML page."
+  [locale title html-content]
+  (base-layout
+    locale
+    [:div.min-h-screen.bg-surface-subtle
+     [:div.max-w-3xl.mx-auto.py-8.px-4
+      [:div.bg-surface.border.border-border.rounded-lg.p-8
+       [:h1.text-3xl.font-bold.text-text-primary.mb-8 title]
+       [:div.legal-content (h/raw html-content)]]]]))
+```
+
+The `.legal-content` class applies typography styles to the rendered HTML -- heading sizes, paragraph spacing, list styles, table formatting -- in CSS. This is a clean separation: the Markdown is pure content, the renderer converts to semantic HTML, and the CSS handles presentation.
+
+## Inline Scripts via defn-asset
+
+A few small scripts -- like the toast helper -- are best inlined directly into the document rather than fetched as separate modules. The `defn-asset` macro turns a classpath resource into a private function that returns the corresponding inline Hiccup element:
+
+```clojure
+(defmacro defn-asset
+  "Defines a private zero-arity fn returning a hiccup element for a classpath
+  resource (an INLINE <script>/<style>). Content is emitted RAW (unescaped) so the
+  emitted bytes equal what the CSP hashes. In prod content is read once at load; in
+  dev it is re-read every call so inline scripts hot-reload. Script assets register
+  their path so their hash enters the CSP."
+  [sym path]
+  (let [tag (tag-for-ext path)
+        wrap (if tag (fn [expr] [tag `(h2/raw ~expr)]) identity)
+        reg (when (= tag :script) `(register-inline-script! ~path))]
+    (if dev?
+      `(do ~reg (defn- ~sym [] ~(wrap `(slurp (io/resource ~path)))))
+      (let [content (wrap (slurp (io/resource path)))]
+        `(do ~reg (let [v# ~content] (defn- ~sym [] v#)))))))
+```
+
+Two things connect this back to earlier sections:
+
+- **The content is wrapped in `h2/raw`.** This macro lives in the `myapp.web.assets` namespace, which aliases `hiccup2.core` as `h2` (the views namespace happens to alias it as `h` -- same library, different local nickname). Because the body is syntax-quoted, `` `(h2/raw ~expr) `` expands to the fully-qualified `hiccup2.core/raw`, so the generated function works no matter how the *calling* namespace aliases Hiccup. An inline script must be emitted byte-for-byte; escaping it would corrupt the JavaScript. Because we control the file, raw output is the correct call here -- and because the bytes are emitted exactly, the strict CSP can authorize the script by hashing those same bytes.
+- **Script assets register their path** (`register-inline-script!`) so the CSP can compute and allow their hash. The CSP machinery itself is covered in the security post; the takeaway here is that inlining a script is a one-liner and it stays compatible with a no-`'unsafe-inline'` policy.
+
+In development the file is re-read on every render so you can edit the script and refresh; in production it is read once at load and baked into the function. Usage is a single form at the top of the views namespace:
+
+```clojure
+(defn-asset toast-script "myapp/web/toast.js")
+```
+
+Then `(toast-script)` in the layout returns `[:script (h/raw "...the JS...")]`.
+
+## The Middleware Stack
+
+The view layer relies on middleware to prepare the request and to set response headers. Here is the relevant portion of the stack:
+
+```clojure
+(def ^:private app*
+  (delay
+    (ring/ring-handler
+      (ring/router routes {:conflicts nil})
+      (ring/routes
+        (cond-> (ring/create-file-handler {:path "/" :root assets/static-root})
+          assets/dev? wrap-dev-no-store)
+        (ring/create-default-handler))
+      {:middleware [[params/wrap-params]
+                    [keyword-params/wrap-keyword-params]
+                    [session/wrap-session
+                     {:store (cookie/cookie-store {:key (config/get-config :session-key)})
+                      :cookie-name "session"
+                      :cookie-attrs {:http-only true :secure true
+                                     :same-site :lax :max-age (* 30 24 60 60)}}]
+                    [wrap-locale]
+                    [wrap-no-cache-authenticated]
+                    [wrap-csp]]})))
+```
+
+The pieces that touch the view layer:
+
+- **`wrap-locale`** detects the user's locale from the session or the `Accept-Language` header and assocs `:locale` onto the request. Every view function receives this. (This is the *only* request header the server negotiates on -- there is no enhanced/partial negotiation.)
+- **`wrap-no-cache-authenticated`** sets `Cache-Control: no-store` on authenticated responses, preventing the browser's back-forward cache from showing stale pages after logout.
+- **`wrap-csp`** attaches the strict Content-Security-Policy header to every `text/html` response (the defense-in-depth backstop behind output escaping). Its construction lives in `myapp.web.assets` and gets its own post.
+
+Static assets are served from `assets/static-root` -- the source `static/` tree in development, the built and content-hashed tree in production. In development a small `wrap-dev-no-store` keeps the browser from caching stable, unhashed dev URLs.
+
+## What We Have Now
+
+After this post, the view layer is complete:
+
+- **Hiccup 2 with the escaping renderer** for HTML generation -- composable, just Clojure data, and auto-escaped so user content is safe by default. Raw output is an explicit, auditable opt-in.
+- **A layout system**: `base-layout` for the HTML5 shell, `public-layout` for unauthenticated pages, `app-layout` for the chrome-bearing experience -- every page's content inside a single `<main data-layout>`.
+- **Responsive, state-aware navigation**: one top bar that adapts to signed-in vs anonymous, with active-tab highlighting in pure CSS.
+- **Progressive enhancement via the dispatcher + idiomorph**: links and forms are upgraded into in-place `<main>` morphs that preserve UI state, with zero per-element configuration and zero server-side branching. The server always renders full pages; the client decides what to swap. Works without JavaScript. Better with it.
+- **CommonMark rendering** for Markdown content, keeping content in Markdown and presentation in CSS.
+
+There is no virtual DOM, no client-side state store, no hydration, and no separate API. The server renders complete HTML; the browser shows it; one small dispatcher makes navigation feel instant.
+
+The next chapters sharpen the development experience further -- a source inspector and morph-based hot reload -- and a later chapter puts this view layer under test end to end, driving a real browser with Playwright to verify the full request, render, and morph loop, including the no-JavaScript fallback path.

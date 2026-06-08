@@ -1,0 +1,31 @@
+{:server {:port 3000
+          :host #profile {:dev "0.0.0.0"
+                          :prod "127.0.0.1"}}
+
+ :database-uri #profile {:dev "datomic:mem://myapp-dev"
+                         :prod #env "DATABASE_URI"}
+
+ :analytics-database-uri #profile {:dev "datomic:mem://myapp-analytics-dev"
+                                   :prod #env "ANALYTICS_DATABASE_URI"}
+
+ :admin-email #profile {:dev "admin@myapp.lan"
+                        :prod #env "ADMIN_EMAIL"}
+
+ :base-url #profile {:dev "https://myapp.lan"
+                     :prod #env "BASE_URL"}
+
+ :session-key #env "SESSION_KEY"
+ :signing-key #env "SIGNING_KEY"
+
+ :smtp {:host #profile {:dev "mailpit"
+                        :prod #env "SMTP_HOST"}
+        :port #profile {:dev 1025
+                        :prod 587}
+        :tls #profile {:dev false
+                       :prod true}
+        :user #profile {:dev nil
+                        :prod #env "SMTP_USER"}
+        :pass #profile {:dev nil
+                        :prod #env "SMTP_PASS"}
+        :from #profile {:dev "no-reply@myapp.lan"
+                        :prod #env "SMTP_FROM"}}}

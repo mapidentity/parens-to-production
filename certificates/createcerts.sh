@@ -1,0 +1,43 @@
+#!/bin/env bash
+set -euo pipefail
+SCRIPT_DIR=$(dirname "$0")
+
+# Add additional hosts here
+HOSTS='myapp.lan mailpit.lan'
+
+if [ -e "rootCA.key" ]; then
+    echo "============ NO ACTION REQUIRED ============"
+    echo "Exiting due to certificates already created."
+    echo "============================================"
+    exit 0
+fi
+
+echo "Creating root CA"
+openssl genrsa -out rootCA.key 4096
+openssl req -x509 -new -nodes -key rootCA.key -sha256 -days 825 -out rootCA.crt -subj "/C=CH/ST=Noord Holland/L=Amsterdam/O=myapp/OU=IT/CN=myapp development CA" -addext "basicConstraints = CA:TRUE" -addext "keyUsage = keyCertSign, cRLSign"
+openssl x509 -in rootCA.crt -text -noout
+rm -f rootCA.jks
+keytool -import -file rootCA.crt -alias development -noprompt -trustcacerts -keystore rootCA.jks -storepass changeit
+
+for CN in $HOSTS
+do
+echo "Creating certificate for $CN"
+mkdir -p "$CN"
+openssl req -new \
+-newkey rsa:2048 -nodes -keyout "$CN/$CN.key" \
+-out "$CN/$CN.csr" \
+-subj "/C=CH/ST=Utrecht/L=Amersfoort/O=myapp/OU=IT/CN=$CN" \
+-addext "subjectAltName = DNS:$CN"
+
+echo "Signing certificate with root CA for $CN"
+openssl x509 -req -in "$CN/$CN.csr" -CA rootCA.crt -CAkey rootCA.key -CAcreateserial -out "$CN/$CN.crt" -days 500 -sha256 -extfile <(cat "$SCRIPT_DIR/openssl.cnf" <(printf "\nDNS.1 = $CN"))
+
+echo "Check generated certificate"
+openssl verify -CAfile rootCA.crt -verify_hostname $CN "$CN/$CN.crt"
+openssl x509 -in "$CN/$CN.crt" -text -noout
+
+
+echo "Adding to jks file"
+openssl pkcs12 -export -out "$CN/keystore.p12" -inkey "$CN/$CN.key" -in "$CN/$CN.crt" -password pass:
+keytool -noprompt -importkeystore -destkeystore "$CN/keystore.jks" -srcstoretype PKCS12 -srckeystore "$CN/keystore.p12" -storepass changeit -srcstorepass ""
+done

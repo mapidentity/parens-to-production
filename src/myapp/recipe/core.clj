@@ -1,0 +1,310 @@
+(ns myapp.recipe.core
+  "The recipe-versioning domain — \"Git for recipes\".
+
+  The interesting properties all fall out of Datomic's immutability:
+
+  - **Versions** of a recipe are just the transactions that touched it.
+    `version-history` enumerates them via `d/history`; `version-as-of`
+    reconstructs the recipe at any past basis-t via `d/as-of`.
+  - **Diffs** between two versions are a line diff (`line-diff`) of the
+    `:recipe/ingredients` / `:recipe/steps` text pulled at each basis-t —
+    which is exactly why those fields are stored newline-separated.
+  - **Forks** are new entities carrying a `:recipe/forked-from` ref;
+    `lineage` walks that ref to the root original and `forks` finds the
+    children. A fork may point at another user's recipe — that's the point.
+
+  Reads are public (anyone may browse and fork any recipe). Mutations
+  (`update!`, `delete!`) are owner-only, enforced through the tenant-isolation
+  helpers in `myapp.db.core` (the conventional `:recipe/user` owner ref)."
+  (:require
+    [clojure.string :as str]
+    [datomic.api :as d]
+    [myapp.db.core :as db]
+    [myapp.time :as time])
+  (:import
+    [java.util UUID]))
+
+(set! *warn-on-reflection* true)
+
+(def pull-pattern
+  "Pull pattern for a fully-rendered recipe, including its owner and (if any)
+  the recipe it was forked from."
+  [:db/id :recipe/id :recipe/title :recipe/description :recipe/servings
+   :recipe/ingredients :recipe/steps :recipe/created-at :recipe/updated-at
+   {:recipe/user [:db/id :user/email :user/display-name]}
+   {:recipe/forked-from [:recipe/id :recipe/title {:recipe/user [:user/display-name]}]}])
+
+(defn lines
+  "Split newline-separated text into a vector of non-blank, right-trimmed lines."
+  [s]
+  (if (str/blank? s)
+    []
+    (->> (str/split-lines s)
+         (map str/trimr)
+         (remove str/blank?)
+         vec)))
+
+;; ---------------------------------------------------------------------------
+;; Reads
+;; ---------------------------------------------------------------------------
+
+(defn recipe-by-id
+  "Pull the current state of the recipe with `:recipe/id` = `id` (a UUID), or nil.
+
+  Resolves the eid first so a missing/retracted recipe returns nil rather than
+  the `{:db/id nil}` that a dangling lookup-ref pull would yield."
+  [db id]
+  (when id
+    (when-let [eid (d/entid db [:recipe/id id])]
+      (db/pull* db pull-pattern eid))))
+
+(defn all-recipes
+  "All recipes, most-recently-updated first. Public browse list."
+  [db]
+  (->> (d/q '[:find [?e ...] :where [?e :recipe/id]] db)
+       (map #(db/pull* db pull-pattern %))
+       (sort-by :recipe/updated-at #(compare %2 %1))
+       vec))
+
+(defn recipes-by-user
+  "Recipes owned by `user-eid`, most-recently-updated first."
+  [db user-eid]
+  (->> (d/q '[:find [?e ...] :in $ ?u :where [?e :recipe/user ?u]] db user-eid)
+       (map #(db/pull* db pull-pattern %))
+       (sort-by :recipe/updated-at #(compare %2 %1))
+       vec))
+
+(defn owned-by?
+  "True when `recipe` (a pulled map) is owned by `user-eid`."
+  [recipe user-eid]
+  (and user-eid (= user-eid (get-in recipe [:recipe/user :db/id]))))
+
+;; ---------------------------------------------------------------------------
+;; Lineage (the fork graph)
+;; ---------------------------------------------------------------------------
+
+(defn lineage
+  "Ancestors of recipe `id`, immediate parent first, up to the root original.
+  Empty vector for an original recipe. Spans owners."
+  [db id]
+  (loop [cur (recipe-by-id db id)
+         acc []]
+    (if-let [parent-id (get-in cur [:recipe/forked-from :recipe/id])]
+      (let [parent (recipe-by-id db parent-id)]
+        ;; Guard against a pathological cycle (can't happen via the UI, but a
+        ;; hand-crafted transaction could): stop if we loop back on ourselves.
+        (if (or (nil? parent) (some #(= (:recipe/id parent) (:recipe/id %)) acc))
+          acc
+          (recur parent (conj acc parent))))
+      acc)))
+
+(defn forks
+  "Direct forks (children) of recipe `id`, oldest first."
+  [db id]
+  (if-let [eid (d/entid db [:recipe/id id])]
+    (->> (d/q '[:find [?c ...] :in $ ?e :where [?c :recipe/forked-from ?e]] db eid)
+         (map #(db/pull* db pull-pattern %))
+         (sort-by :recipe/created-at)
+         vec)
+    []))
+
+;; ---------------------------------------------------------------------------
+;; Version history (time travel over a single recipe)
+;; ---------------------------------------------------------------------------
+
+(defn version-history
+  "Every version of recipe `id`, oldest first, reconstructed from Datomic
+  history. Each entry is `{:tx <tx-eid> :t <basis-t> :instant <Instant>
+  :recipe <state as-of that tx>}`. Returns nil if the recipe doesn't exist."
+  [db id]
+  (when-let [eid (d/entid db [:recipe/id id])]
+    (let [h (d/history db)
+          txs (->> (d/q '[:find ?tx ?inst
+                          :in $ ?e
+                          :where
+                          [?e _ _ ?tx true]
+                          [?tx :db/txInstant ?inst]]
+                        h eid)
+                   ;; Sort by basis-t, not :db/txInstant — two edits in the same
+                   ;; millisecond tie on the instant, which would make version
+                   ;; order (and "latest") non-deterministic. t is monotonic.
+                   (sort-by (fn [[tx _]] (d/tx->t tx))))]
+      (mapv (fn [[tx inst]]
+              {:tx tx
+               :t (d/tx->t tx)
+               :instant (db/as-instant inst)
+               :recipe (db/pull* (d/as-of db tx) pull-pattern eid)})
+            txs))))
+
+(defn version-as-of
+  "The state of recipe `id` as of basis point `t` (a basis-t, tx-eid, or
+  Instant/Date). nil if the recipe doesn't exist."
+  [db id t]
+  (when-let [eid (d/entid db [:recipe/id id])]
+    (db/pull* (d/as-of db t) pull-pattern eid)))
+
+;; ---------------------------------------------------------------------------
+;; Line diff (LCS) — the version-to-version comparison
+;; ---------------------------------------------------------------------------
+
+(defn- lcs-suffix-table
+  "Map from [i j] to the length of the longest common subsequence of the
+  suffixes a[i..] and b[j..]. Missing entries (the boundary row/column) read
+  as 0 via the lookup default."
+  [a b]
+  (let [n (count a)
+        m (count b)]
+    ;; Primitive-long index loops (not reduce-over-range) so the arithmetic
+    ;; stays unboxed — the strict build (ch2) fails on boxed math.
+    (loop [i (dec n)
+           dp (transient {})]
+      (if (neg? i)
+        (persistent! dp)
+        (recur
+          (dec i)
+          (loop [j (dec m)
+                 dp dp]
+            (if (neg? j)
+              dp
+              (recur
+                (dec j)
+                (assoc! dp [i j]
+                  (if (= (nth a i) (nth b j))
+                    (inc (long (get dp [(inc i) (inc j)] 0)))
+                    (max (long (get dp [(inc i) j] 0))
+                         (long (get dp [i (inc j)] 0)))))))))))))
+
+(defn line-diff
+  "A git-style line diff of two newline-separated strings.
+
+  Returns a vector of `{:op :ctx|:add|:del :text <line>}` in display order,
+  computed from a longest-common-subsequence of the lines: shared lines are
+  `:ctx`, lines only in `new-text` are `:add`, lines only in `old-text` are
+  `:del`. Pure data → data."
+  [old-text new-text]
+  (let [a (lines old-text)
+        b (lines new-text)
+        n (count a)
+        m (count b)
+        dp (lcs-suffix-table a b)]
+    (loop [i 0
+           j 0
+           acc (transient [])]
+      (cond
+        (and (< i n) (< j m) (= (nth a i) (nth b j)))
+        (recur (inc i) (inc j) (conj! acc {:op :ctx :text (nth a i)}))
+
+        (and (< j m) (or (= i n) (>= (long (dp [i (inc j)] 0)) (long (dp [(inc i) j] 0)))))
+        (recur i (inc j) (conj! acc {:op :add :text (nth b j)}))
+
+        (< i n)
+        (recur (inc i) j (conj! acc {:op :del :text (nth a i)}))
+
+        :else
+        (persistent! acc)))))
+
+(defn diff
+  "Field-level diff between two recipe states (pulled maps).
+
+  Scalar fields (`title`, `description`, `servings`) report `{:changed? bool
+  :old .. :new ..}`; the list fields (`ingredients`, `steps`) report a
+  `line-diff`. `:changed?` at the top level is true if anything differs."
+  [old-recipe new-recipe]
+  (let [scalar (fn [k]
+                 (let [o (get old-recipe k)
+                       nw (get new-recipe k)]
+                   {:changed? (not= o nw) :old o :new nw}))
+        ingredients (line-diff (:recipe/ingredients old-recipe) (:recipe/ingredients new-recipe))
+        steps (line-diff (:recipe/steps old-recipe) (:recipe/steps new-recipe))
+        any-line-change? (fn [d] (some #(not= :ctx (:op %)) d))]
+    {:title (scalar :recipe/title)
+     :description (scalar :recipe/description)
+     :servings (scalar :recipe/servings)
+     :ingredients ingredients
+     :steps steps
+     :changed? (boolean
+                 (or (not= (:recipe/title old-recipe) (:recipe/title new-recipe))
+                     (not= (:recipe/description old-recipe) (:recipe/description new-recipe))
+                     (not= (:recipe/servings old-recipe) (:recipe/servings new-recipe))
+                     (any-line-change? ingredients)
+                     (any-line-change? steps)))}))
+
+;; ---------------------------------------------------------------------------
+;; Mutations
+;; ---------------------------------------------------------------------------
+
+(defn create!
+  "Create a new recipe owned by `user-eid`. Returns the new `:recipe/id` (UUID).
+  Pass `:forked-from-eid` to record provenance (used by `fork!`)."
+  [conn user-eid {:keys [title description servings ingredients steps forked-from-eid]}]
+  (let [id (UUID/randomUUID)
+        now (time/now)]
+    @(db/transact* conn
+       [(cond-> {:db/id "new-recipe"
+                 :recipe/id id
+                 :recipe/user user-eid
+                 :recipe/title (or title "Untitled recipe")
+                 :recipe/description (or description "")
+                 :recipe/servings (long (or servings 1))
+                 :recipe/ingredients (or ingredients "")
+                 :recipe/steps (or steps "")
+                 :recipe/created-at now
+                 :recipe/updated-at now}
+          forked-from-eid (assoc :recipe/forked-from forked-from-eid))])
+    id))
+
+(defn fork!
+  "Fork the recipe `source-id` (any owner's) into a new recipe owned by
+  `user-eid`, copying the current fields and recording `:recipe/forked-from`.
+  Returns the new `:recipe/id`, or nil if the source doesn't exist."
+  [conn user-eid source-id]
+  (let [db (d/db conn)
+        src (recipe-by-id db source-id)
+        src-eid (d/entid db [:recipe/id source-id])]
+    (when src
+      (create! conn user-eid
+        {:title (:recipe/title src)
+         :description (:recipe/description src)
+         :servings (:recipe/servings src)
+         :ingredients (:recipe/ingredients src)
+         :steps (:recipe/steps src)
+         :forked-from-eid src-eid}))))
+
+(defn update!
+  "Apply `changes` (a subset of the `:recipe/*` content keys) to recipe `id`,
+  if owned by `user-eid`. Bumps `:recipe/updated-at`. Returns true on success,
+  nil if the recipe is missing or not owned by the user."
+  [conn user-eid id changes]
+  (let [db (d/db conn)]
+    (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
+      @(db/transact* conn
+         [(merge {:db/id eid
+                  :recipe/updated-at (time/now)}
+                 (select-keys changes
+                   [:recipe/title :recipe/description :recipe/servings
+                    :recipe/ingredients :recipe/steps]))])
+      true)))
+
+(defn delete!
+  "Retract recipe `id` if owned by `user-eid`. Returns true on success, nil
+  otherwise. (Forks keep their own copies — `:recipe/forked-from` simply
+  dangles, which lineage tolerates.)"
+  [conn user-eid id]
+  (let [db (d/db conn)]
+    (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
+      @(db/transact* conn [[:db/retractEntity eid]])
+      true)))
+
+;; ---------------------------------------------------------------------------
+;; Aggregates (admin dashboard)
+;; ---------------------------------------------------------------------------
+
+(defn total-recipes
+  "Count of all recipes."
+  [db]
+  (or (d/q '[:find (count ?e) . :where [?e :recipe/id]] db) 0))
+
+(defn total-forks
+  "Count of recipes that were forked from another."
+  [db]
+  (or (d/q '[:find (count ?e) . :where [?e :recipe/forked-from]] db) 0))

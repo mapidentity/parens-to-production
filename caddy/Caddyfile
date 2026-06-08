@@ -1,0 +1,44 @@
+myapp.lan {
+	tls /certs/myapp.lan/myapp.lan.crt /certs/myapp.lan/myapp.lan.key
+	encode zstd gzip
+
+	# Long-lived, request-invariant security headers (applied to every response).
+	# The per-document Content-Security-Policy is set by the app, which owns the
+	# inline-script hashes — Caddy must NOT set CSP or it would conflict.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		-Server
+	}
+
+	root * /static
+	@static file
+	handle @static {
+		# Content-hashed filenames (styles.<hash>.css, dispatcher.<hash>.js) are immutable
+		@hashed path_regexp \.([a-f0-9]{8})\.(css|js)$
+		header @hashed Cache-Control "public, max-age=31536000, immutable"
+
+		# Vendored libs are version-pinned in the filename, so equally immutable
+		@vendor path /idiomorph-*.min.js /idiomorph-*.min.js.map
+		header @vendor Cache-Control "public, max-age=31536000, immutable"
+
+		# Static assets that rarely change
+		@assets path *.svg *.png *.jpg *.woff2
+		header @assets Cache-Control "public, max-age=604800"
+
+		file_server
+	}
+
+	handle {
+		reverse_proxy myapp:3000
+	}
+}
+
+mailpit.lan {
+	tls /certs/mailpit.lan/mailpit.lan.crt /certs/mailpit.lan/mailpit.lan.key
+	reverse_proxy mailpit:8025
+}

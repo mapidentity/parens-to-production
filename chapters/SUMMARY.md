@@ -1,0 +1,23 @@
+# Summary
+
+[Introduction](README.md)
+
+- [What We Are Building, and Why](01-primer.md)
+- [A Reproducible Clojure Dev Environment with Devcontainers](02-devcontainer.md)
+- [Strict Compilation: Catching Reflection and Boxed Math](03-build-hardening.md)
+- [Your First Clojure Web Server: Ring, http-kit, and Reitit](04-web-server.md)
+- [Live Reload: A File Watcher and WebSocket Browser Refresh](05-live-reload.md)
+- [Datomic: Schema, Queries, and the java.time Bridge](06-datomic.md)
+- [Testing a Clojure App: Fixtures, Helpers, and Coverage](07-unit-testing.md)
+- [i18n: Multi-Language Support with Accept-Language Detection](08-i18n.md)
+- [Styling with Tailwind CSS](09-tailwind-styling.md)
+- [Server-Rendered HTML with Hiccup](10-hiccup-views.md)
+- [A Bidirectional Source Inspector for Server-Rendered Hiccup](11-inspector.md)
+- [Tightening the Reload Loop: DOM Morphing and CSS Hot-Swap](12-morph-reload.md)
+- [Passwordless Auth Part 1: HMAC-Signed Magic Link Tokens](13-auth-tokens.md)
+- [Passwordless Auth Part 2: Magic Link Emails and Login Flow](14-auth-email-flow.md)
+- [E2E Testing a Clojure Web App with Playwright](15-e2e-testing.md)
+- [Building an Admin Dashboard](16-admin-dashboard.md)
+- [The Production Asset Pipeline: Hashing, SRI, Import Maps, and CSP](17-asset-pipeline.md)
+- [100% Lighthouse Scores in CI](18-lighthouse.md)
+- [CI/CD: Forgejo Actions, Podman, and Automated Deployment](19-ci-cd.md)

@@ -1,0 +1,22 @@
+[book]
+title = "Building a Clojure/Datomic SaaS from Scratch"
+authors = ["P. de Kruif"]
+language = "en"
+src = "chapters"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = ""
+edit-url-template = ""
+copy-fonts = true
+no-section-label = false
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+enable = true
+limit-results = 30
+use-boolean-and = true

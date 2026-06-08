@@ -1,0 +1,35 @@
+# mdBook build output
+/book
+
+# Clojure build artifacts
+/target
+/.cpcache
+
+# Generated served asset tree (built by `clojure -T:build assets`)
+/myapp/static
+
+# Dev-generated CSS (Tailwind --watch writes this; sources are input.css + static/)
+/static/styles.css
+/static/styles.*.css
+
+# Node / Playwright
+/node_modules
+/test-results
+/playwright-report
+/.playwright-mcp
+
+# Lighthouse CI output
+/.lighthouseci
+
+# Editor / OS noise
+.DS_Store
+*.swp
+
+# Tool caches (keep .clj-kondo/config.edn + hooks, drop the cache)
+/.clj-kondo/.cache
+/.lsp
+/.calva
+/.clojure-mcp
+
+# nREPL port file (transient)
+/.nrepl-port
