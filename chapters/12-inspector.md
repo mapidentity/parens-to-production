@@ -1,14 +1,14 @@
 # A Bidirectional Source Inspector for Server-Rendered Hiccup: From Element to Code and Back
 
 
-In [the live-reload chapter](05-live-reload.md) we closed the gap between saving a file and seeing it in the browser. This chapter closes two more, in both directions:
+In [the live-reload chapter](06-live-reload.md) we closed the gap between saving a file and seeing it in the browser. This chapter closes two more, in both directions:
 
 - **Element → code.** You spot a misaligned badge in the admin dashboard; hold a key, hover it, and your editor opens the exact `.clj` line that produced it.
 - **Code → element.** You put your cursor on a view function (or a call to one) in the editor, and the matching element lights up in the browser — even telling apart the component's *definition* from this particular *call site*.
 
 Front-end frameworks have had the first half for years (React/Vue/Svelte inspectors). The second half — editor-cursor-drives-the-browser — is rarer even there. We render HTML on the server from Hiccup, plain Clojure data with no source information attached, so we have to manufacture all of it. This post is the full build: the why, the how, and the trade-offs.
 
-It reuses two things from [the live-reload chapter](05-live-reload.md) — the file watcher and the `dev-reload` WebSocket — and hooks into the `base-layout` from [the Hiccup views chapter](10-hiccup-views.md). Everything here is dev-only and **structurally absent** from production builds, the same as the rest of our dev infrastructure. If you read strictly in order, the Hiccup views chapter's layout sections are the relevant background.
+It reuses two things from [the live-reload chapter](06-live-reload.md) — the file watcher and the `dev-reload` WebSocket — and hooks into the `base-layout` from [the Hiccup views chapter](11-hiccup-views.md). Everything here is dev-only and **structurally absent** from production builds, the same as the rest of our dev infrastructure. If you read strictly in order, the Hiccup views chapter's layout sections are the relevant background.
 
 ---
 

@@ -1,0 +1,95 @@
+# The Frontend's Many Roads, and Why We Take the Server
+
+This book makes one architectural decision before all the others: **the server is the authority.** Domain state lives in the database, behind a server you control; the browser is a rendering surface, not a source of truth. Every later choice -- server-rendered HTML, the URL as state, a strict Content-Security-Policy, no client bundle, progressive enhancement -- follows from it.
+
+A decision that load-bearing should not be asserted; it should be *earned*. The honest way to earn it is to trace how the frontend actually got here -- not as the popular single-pendulum story ("everyone built single-page apps and regrets it"), which is wrong, but as several distinct roads, each built to solve a real problem, each making a trade-off to do so. The case for server authority is strongest when you can see exactly which problem each road solved, what it cost, and which way it is now heading. So this chapter answers the reader's recurring *why*: why the application moved to the browser, why that turned out to be expensive, why some traditions never moved at all, and why -- for an app like ours -- the server is the right place to stand.
+
+## Why the application moved into the browser
+
+Start with the road everyone remembers, because it is the one that made the consequential bet.
+
+React came out of a genuine problem at real scale. Facebook's UI -- news feed, ads, chat -- was hard to keep consistent as state changed underneath it; the imperative DOM updates that kept the screen in sync with the data were a swamp of bugs. Jordan Walke's prototype (around 2011, inspired by Facebook's PHP component system XHP) became React, open-sourced in May 2013. *Why* did it win? Because the virtual DOM made one idea cheap that had previously been expensive: treat the UI as a pure function of state, re-render the whole thing on every change, and let a diff reconcile it to the DOM. For large, genuinely interactive applications, that was a real advance, and it deserved its adoption.
+
+But notice the trade-off baked into "the UI is a function of state": *where does the state live?* If rendering happens on the client, the most natural place to keep the state it renders from is also the client. That pull -- not the tool itself, but the gravity of its model -- is how the application drifted into the browser. Flux and then Redux (2015, borrowing the Elm architecture's discipline) answered the next *why*: as the client state grew, teams needed it predictable and debuggable, so they centralized it into a single store, and the server was demoted to a JSON API feeding that store. In ClojureScript the same wave arrived as **Reagent** (Dan Holmsand's Hiccup-flavored interface to React) and **re-frame** (Mike Thompson's framework on top), whose single big `app-db` atom is the purest statement of the era: the application's truth, held in one place, in memory, in the browser.
+
+For app-shaped UIs -- editors, dashboards, design tools -- this was correct, and still is. The mistake was never the tool; it was the *default*. The model was applied to content- and data-shaped apps that had no need of it, and they inherited a trade-off that only makes sense when the client genuinely owns the experience: **the loss of addressability.** Once authoritative state lives only in memory, refresh discards it, the URL no longer describes what you are looking at, back and forward misbehave, and "share this link" quietly breaks -- because the link no longer names the state. The web's native strengths were traded for in-app smoothness. For Facebook's feed, a reasonable trade. For a recipe page, a bad one.
+
+## Why that bet turned expensive -- and the war to undo it
+
+The next chapter of the story is the most telling, because it is the application lineage spending enormous effort to walk its own bet back.
+
+First came server rendering, bolted on (Next.js for React, Nuxt for Vue). *Why?* Because the empty-shell-plus-JavaScript model hurt exactly what content apps need most: first paint and SEO. But rendering on the server in a client-first framework introduced a new cost with its own *why*: **hydration.** The server sends HTML, but the HTML is inert -- the event handlers and component state live in JavaScript that has not run yet. So the client must download the whole application, re-execute it, rebuild the component tree, and "attach" it to the server's HTML to make it interactive. You render twice and ship the entire app to light up a page. That is the hydration tax, and it exists *only because* authority was moved to the client in the first place.
+
+Almost every famous framework development since is an attack on that tax, and each answers a sharper *why*:
+
+- **Islands** (the term coined by Etsy's Katie Sylor-Miller in 2019, popularized by Preact's Jason Miller in 2020, productized by Astro): *why hydrate the whole page when most of it is static?* Ship zero JavaScript by default; hydrate only the few interactive components.
+- **React Server Components** (announced December 2020, shipped in React 19): *why ship a component's code at all if it only needs server data?* Let those components run only on the server and send no JavaScript, with explicit client islands where interaction is real. This is React deliberately moving authority back toward the server.
+- **Resumability** (Qwik, from Miško Hevery -- the creator of Angular -- built at a visual-builder company whose generated sites shipped crushing JavaScript): *why re-execute on the client at all?* Serialize the state and the listener locations into the HTML so the client *resumes* instead of re-hydrating.
+- **Signals and compilers** (Solid's fine-grained reactivity, Svelte's influence, Vue's runtime-light explorations): *why diff a virtual DOM at runtime?* Compile updates ahead of time and shrink the runtime that has to ship.
+
+Read together, this is a decade of brilliant engineering aimed largely at *undoing* a single decision -- shipping less JavaScript, running more on the server, recovering authority that was given away. The lineage is converging, from the client side, on something close to "render on the server, send a little JavaScript." Which raises the obvious question the rest of this chapter answers: what if you never gave authority away, and so never needed any of this machinery to get it back?
+
+## Why some roads never made the bet at all
+
+Here the single-pendulum story does real damage, because several major tools came from different problems and never moved authority to the client -- and flattening them into "SPA frameworks that came back" is simply false.
+
+**Vue** (Evan You, first cut 2013, released 2014) was built by an ex-Angular engineer to be *progressive and incrementally adoptable*. *Why?* Because not every page needs a framework: you should be able to drop Vue onto one HTML page like a sprinkle, or scale up to a full app, and choose per project. It was a dial by design, not a demand.
+
+**Svelte** came from the opposite end of the spectrum from React, and conflating the two is the specific error worth correcting. Rich Harris built it out of newsroom graphics work -- interactive data visualizations at *The Guardian* and then *The New York Times*, produced under deadline and dropped into otherwise static content pages. His earlier framework Ractive (2013), and then Svelte (conceived around Thanksgiving 2016), were driven by a single conviction: the frameworks of the day *shipped far too much JavaScript* for a mobile-web audience. *Why a compiler, then?* Because if you compile components to small, direct DOM code, the framework can largely *disappear* at runtime -- there is no multi-kilobyte library to download per interactive widget. Svelte's native use case was *rich interactive components added to pages* -- much closer to islands than to a client-owned application. The full-application framework, **SvelteKit**, grew out of that success *later*; it was the consequence, not the premise. That origin still shows in SvelteKit's strong progressive-enhancement story, where forms work without JavaScript and are merely enhanced when it loads. The trade-off Svelte accepts is a compile step and a little compiler "magic," in exchange for shipping almost nothing.
+
+And there is the **hypermedia tradition**, older than the SPA peak, which never left the server because it never saw a reason to. Basecamp's **Turbolinks** (2012, inspired by GitHub's pjax) intercepted navigations to swap the page body without a full reload; it grew into **Turbo** (Hotwire) in late 2020, adding Frames for scoped partial navigation and Streams for server-pushed HTML fragments, with **Stimulus** for modest behavior. In parallel, Carson Gross's **intercooler.js** (2013) was rewritten without its jQuery dependency in 2020 to become **htmx**, reviving hypermedia-as-the-engine-of-application-state: any element can issue a request and swap the returned HTML. **Phoenix LiveView** (Chris McCord, public around 2019) took the boldest line -- the server holds the UI state per connection, diffs the rendered HTML, and pushes minimal diffs over a WebSocket. *Why* did this road accept its own trade-off -- a network round trip per interaction? Because for server-rendered apps, the SPA's client-state complexity simply was not worth its cost, and a round trip is cheap when the server already owns the truth. None of these "came back" to the server. They were always there.
+
+## Why we choose the server
+
+Now the decision is not a leap; it is the conclusion of the trade-offs above. Lay our preconditions next to the history: **we own the backend, the app is data- and content-shaped, and it is read-mostly.** Those are exactly the conditions under which the motivation that justified client-owned state never applies. We have no Facebook-feed problem driving us to the client, so we are free not to pay the bill that came with it.
+
+Choosing the server therefore *buys* us the things the application lineage spent a decade trying to recover, for free:
+
+- **Addressability by construction.** Truth is the URL plus the server, so refresh, deep-link, back/forward, and share-a-link all work without effort. We would have to go out of our way to break them.
+- **One source of truth and one renderer.** No client/server model duplication, no hydration mismatch, no "the API returns this shape but the UI assumed that one." Validation, authorization, and rendering live in one place.
+- **Security where the secrets are.** The browser receives HTML, not our data model and not our rules. There is less to expose, so less to get wrong.
+- **Fewer moving parts.** No bundler in the request path, no client cache to invalidate, no second build artifact, no recovery machinery -- because there is nothing to recover.
+
+And it lets us make three deliberate breaks, each with a clear *why* and an honestly-named trade-off:
+
+- **We break from the in-memory store as truth** (Redux's store, re-frame's `app-db`). *Why:* it is the precise thing that costs addressability. *Trade-off accepted:* domain state lives in the database and the URL, so some interactions that an SPA keeps purely local become a server round trip.
+- **We break from hydration.** *Why:* there is no client application to revive. The server renders HTML and the client *morphs* the next server-rendered HTML into the live DOM (see [the morph hot-reload chapter](13-morph-reload.md)); the only stateful bits are small islands, where the platform's own element lifecycle handles setup and teardown. *Trade-off accepted:* we build a little of that morphing plumbing ourselves rather than buying a framework that includes it.
+- **We break from the framework runtime and the bundler.** *Why:* a handful of hand-written ES modules under a strict, no-`eval` CSP (see [the asset pipeline chapter](18-asset-pipeline.md)) is all the client behavior we need, and the server's Hiccup is the single source of markup. *Trade-off accepted:* we forgo the rich component ecosystems those runtimes bring.
+
+The reason this is not contrarian is the through-line of the whole history: the application frameworks are solving, at great expense, a problem we decline to create. Server Components, islands, and resumability are ingenious ways to recover server authority *after* moving it to the client. If you never move it, you never need them.
+
+It is worth naming which neighbors earn respect, because this is emphatically not "client bad." Svelte's compiler instincts and SvelteKit's progressive enhancement share our values almost exactly; we differ on language and on shipping a framework at all, not on philosophy. Qwik's resumability is the most serious attack on the hydration tax anyone has mounted. Phoenix LiveView is a sibling -- arguably *more* server-authoritative than we are, since it keeps even ephemeral UI state on the server, at the cost of a stateful socket and server memory per connected client. And in the Clojure world, Hyperfiddle's **Electric** is a genuinely radical bet: a reactive compiler that erases the client/server boundary entirely. We do not take it -- it is heavier and more statefully-connected than we want -- but it is the kind of break worth admiring. We choose the *simplest* expression of server authority, not the only one.
+
+## Why -- and when -- you would choose differently
+
+A position is only honest if it names its price and its limits, and the symmetry of the trade-offs is the whole point.
+
+The price of server authority is that **every interaction is a round trip.** Morphing, prefetching, and optimistic updates hide most of the latency, but for high-frequency, latency-critical direct manipulation -- dragging nodes on a canvas, a spreadsheet recalculating as you type -- a round trip per keystroke is the wrong model, and no amount of cleverness changes that. You also maintain a little plumbing yourself; rich offline and real-time collaboration are reachable only as deliberately islanded features with their own sync; the discipline is cultural rather than enforced by a compiler; and it is a less common skill set than React, which is a real hiring and community cost.
+
+And there are whole categories where a single-page app is simply correct -- for the same structural reason server authority is correct for us:
+
+- **You do not control the backend.** Building against third-party APIs, a headless CMS, or a public API you do not own -- or with no server of yours to render on -- leaves the client as the only place your app's state can live. A SPA is then the right call, and client-owned state stops being an antipattern, because the client is the only authority you have.
+- **The product is app-shaped, with heavy client state** -- editors, IDEs, design tools, collaborative canvases. Building Figma on server authority would be as wrong as building a content SaaS as a from-scratch SPA.
+- **Offline-first or latency-critical interaction**, where the client must own working state and reconcile later, or where the round trip *is* the bottleneck.
+
+The same reasoning that places us on the server places these on the client. Server authority is right when you own the backend and the app is data-shaped; a SPA is right when you do not, or it is not.
+
+## The lesson, and the position
+
+So the takeaway from the history is not "the server is good and the client is bad," and it is not "everyone made the same mistake." It is narrower and far more useful: **one tradition made one bet -- that the application belongs in the browser -- to solve a real problem of large interactive UIs, and a decade of extraordinary engineering has gone into paying that bet down for everyone else who inherited it by default.** The other roads -- hypermedia, compile-to-minimal-JS, the progressive frameworks -- mostly never made the bet, and so never owed the debt. If you own your backend and your app is shaped like data, you can simply decline it, and most of that decade's churn was never your problem.
+
+This book teaches the server-authority road thoroughly, for two reasons: it is the right call for the database-backed application we build here, and it is the road the application lineage skipped by reflex and is now rediscovering the hard way. It does not claim to be universal. The best-engineering stance the whole book argues is not a camp; it is a question you answer on purpose, having seen everyone's motivations and trade-offs laid out: **know which road your project is on, choose it deliberately, and be honest about what it costs.** We put ours on the server -- and the rest of the book is what that decision makes possible.
+
+## Sources and further reading
+
+The historical claims above are drawn from primary and secondary sources, kept here so the narrative is transparent and checkable:
+
+- **React, and React Server Components** -- [React (software), Wikipedia](https://en.wikipedia.org/wiki/React_(software)); [Introducing Zero-Bundle-Size React Server Components (React blog, December 2020)](https://legacy.reactjs.org/blog/2020/12/21/data-fetching-with-react-server-components.html)
+- **Redux, Reagent, and re-frame** -- [re-frame: historical notes](https://github.com/day8/re-frame/blob/master/docs/historical.md); [Reagent](https://holmsand.github.io/reagent/)
+- **Vue** -- [Vue.js](https://vuejs.org/); [How one idea grew into a popular JavaScript ecosystem (GitHub README)](https://github.com/readme/podcast/growing-vue)
+- **Svelte and SvelteKit** -- [Svelte, Wikipedia](https://en.wikipedia.org/wiki/Svelte); [Rich Harris: The story of Svelte (OfferZen)](https://www.offerzen.com/blog/rich-harris-the-story-of-svelte); [Changelog Interviews #332, Rich Harris](https://changelog.com/podcast/332)
+- **Hotwire, Turbo, and Turbolinks** -- [Turbo Handbook](https://turbo.hotwired.dev/handbook/introduction); [DHH: Stimulus 3 + Turbo 7 = Hotwire 1.0](https://world.hey.com/dhh/stimulus-3-turbo-7-hotwire-1-0-9d507133)
+- **htmx and intercooler.js** -- [htmx, Wikipedia](https://en.wikipedia.org/wiki/Htmx); [JS Jabber #513: htmx and InterCooler with Carson Gross](https://topenddevs.com/podcasts/javascript-jabber/episodes/htmx-and-intercooler-ft-carson-gross-jsj-513)
+- **Phoenix LiveView** -- [How We Got to LiveView (Fly.io)](https://fly.io/blog/how-we-got-to-liveview/)
+- **Islands architecture** -- [Islands Architecture (patterns.dev)](https://www.patterns.dev/vanilla/islands-architecture/); [Astro: Islands architecture](https://docs.astro.build/en/concepts/islands/)
+- **Qwik and resumability** -- [Resumability vs Hydration (Builder.io)](https://www.builder.io/blog/resumability-vs-hydration)

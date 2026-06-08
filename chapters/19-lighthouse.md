@@ -59,7 +59,7 @@ Lighthouse needs to see authenticated pages, but it has no way to perform a logi
   (fn [request] (handler (assoc-in request [:session :user-email] (test-email)))))
 ```
 
-Two things to note here. First, the test email comes from the admin email in config, resolved at request time -- a function, not a top-level `def`, so it tracks whatever profile the server starts under rather than freezing the value when the namespace loads (the same runtime-config discipline as [the web-server chapter](04-web-server.md)'s `delay` and [the email login-flow chapter](14-auth-email-flow.md)'s SMTP config). This means the auto-authenticated user has admin privileges, so Lighthouse can audit admin pages too. Second, `wrap-auto-auth` is trivial -- one line of middleware that sets `:user-email` in the session map. The rest of the application sees a normal authenticated request.
+Two things to note here. First, the test email comes from the admin email in config, resolved at request time -- a function, not a top-level `def`, so it tracks whatever profile the server starts under rather than freezing the value when the namespace loads (the same runtime-config discipline as [the web-server chapter](05-web-server.md)'s `delay` and [the email login-flow chapter](15-auth-email-flow.md)'s SMTP config). This means the auto-authenticated user has admin privileges, so Lighthouse can audit admin pages too. Second, `wrap-auto-auth` is trivial -- one line of middleware that sets `:user-email` in the session map. The rest of the application sees a normal authenticated request.
 
 ### Seeding Test Data
 
@@ -106,11 +106,11 @@ The test server reconstructs the Ring handler from the same route table the prod
                     [wrap-auto-auth] [routes/wrap-locale]]})))
 ```
 
-The middleware ordering matters. `wrap-params` and `wrap-keyword-params` run first to parse the request. `wrap-session` sets up cookie-based sessions. Then `wrap-auto-auth` injects the test user identity. Finally `wrap-locale` determines the locale for i18n. The handlers see a request that looks identical to a real authenticated request. As with the e2e server in [the e2e-testing chapter](15-e2e-testing.md), we keep `:same-site :lax` to match production but omit `:secure`, because this server runs over plain HTTP on `localhost`.
+The middleware ordering matters. `wrap-params` and `wrap-keyword-params` run first to parse the request. `wrap-session` sets up cookie-based sessions. Then `wrap-auto-auth` injects the test user identity. Finally `wrap-locale` determines the locale for i18n. The handlers see a request that looks identical to a real authenticated request. As with the e2e server in [the e2e-testing chapter](16-e2e-testing.md), we keep `:same-site :lax` to match production but omit `:secure`, because this server runs over plain HTTP on `localhost`.
 
 ### The Entry Point
 
-The `start!` function ties everything together. It creates fresh databases, discovers the CSS asset path, seeds the test user, and starts an HTTP server. It defaults to port 9876 -- the same port the e2e server in [the e2e-testing chapter](15-e2e-testing.md) uses; that is safe because the two run as separate, sequential CI steps and never bind the port at the same time:
+The `start!` function ties everything together. It creates fresh databases, discovers the CSS asset path, seeds the test user, and starts an HTTP server. It defaults to port 9876 -- the same port the e2e server in [the e2e-testing chapter](16-e2e-testing.md) uses; that is safe because the two run as separate, sequential CI steps and never bind the port at the same time:
 
 ```clojure
 (defn start!

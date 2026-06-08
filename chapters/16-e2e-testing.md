@@ -153,7 +153,7 @@ The app handler is assembled the same way as production, but using the extended 
 
 The middleware stack is real. The session handling is real. The cookie store is real (just with a deterministic key). This is important: the E2E server must exercise the same middleware chain as production, or you are not testing what you think you are testing. The only differences should be external integrations (email, databases) and the addition of test control endpoints.
 
-We keep `:same-site :lax` to match production -- the magic-link flow is a cross-context GET, and `:strict` would block the cookie on that navigation (more on this in [the email login-flow chapter](14-auth-email-flow.md)). We do drop `:secure`, because the e2e server runs over plain HTTP on `localhost`; a `:secure` cookie would never be sent. Those are the only deliberate cookie differences.
+We keep `:same-site :lax` to match production -- the magic-link flow is a cross-context GET, and `:strict` would block the cookie on that navigation (more on this in [the email login-flow chapter](15-auth-email-flow.md)). We do drop `:secure`, because the e2e server runs over plain HTTP on `localhost`; a `:secure` cookie would never be sent. Those are the only deliberate cookie differences.
 
 ### The Start Function
 
