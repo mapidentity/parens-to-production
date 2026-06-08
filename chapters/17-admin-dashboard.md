@@ -290,7 +290,7 @@ The JVM memory query is pure Java interop -- no Datomic involved:
 
 Four numbers: max (what the JVM is allowed to use), total (what it has claimed from the OS), free (unused within the claimed space), and used (total minus free). The `mb` helper converts bytes to megabytes with no decimal places.
 
-Note the `^long` type hint on the `mb` function parameter. Without it, the division would trigger a boxed math warning -- exactly the kind of thing the strict compilation setup from [the strict-compilation chapter](03-build-hardening.md) catches.
+Note the `^long` type hint on the `mb` function parameter. Without it, the division would trigger a boxed math warning -- exactly the kind of thing the strict compilation setup from [the strict-compilation chapter](04-build-hardening.md) catches.
 
 ### The Polling Endpoint
 

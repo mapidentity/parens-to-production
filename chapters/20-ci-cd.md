@@ -342,7 +342,7 @@ Note that this step does not mount the cache volumes. Formatting does not need M
     clj-kondo --lint src test
 ```
 
-Static analysis across all source and test files. clj-kondo reads the `.clj-kondo/config.edn` from the project root for linter configuration (covered in detail in [the strict-compilation chapter](03-build-hardening.md)). Like formatting, this step does not need the cache volumes -- clj-kondo analyzes source code directly without resolving dependencies.
+Static analysis across all source and test files. clj-kondo reads the `.clj-kondo/config.edn` from the project root for linter configuration (covered in detail in [the strict-compilation chapter](04-build-hardening.md)). Like formatting, this step does not need the cache volumes -- clj-kondo analyzes source code directly without resolving dependencies.
 
 ### Build Static Assets and Verify Their Integrity
 
@@ -440,7 +440,7 @@ If performance drops below the threshold -- maybe someone added a render-blockin
   run: test -f myapp/target/myapp.jar
 ```
 
-The uberjar build compiles all Clojure source with strict compilation flags (`*warn-on-reflection*` and `*unchecked-math* :warn-on-boxed`), copies resources, and packages everything into a single JAR file. As covered in [the strict-compilation chapter](03-build-hardening.md), the build fails if any reflection or boxed math warnings are detected in application code.
+The uberjar build compiles all Clojure source with strict compilation flags (`*warn-on-reflection*` and `*unchecked-math* :warn-on-boxed`), copies resources, and packages everything into a single JAR file. As covered in [the strict-compilation chapter](04-build-hardening.md), the build fails if any reflection or boxed math warnings are detected in application code.
 
 The `Verify jar exists` step is a simple sanity check that runs on the host (not in a container). If the uberjar build succeeded but somehow did not produce the expected file, this catches it.
 
