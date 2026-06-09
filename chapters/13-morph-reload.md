@@ -151,7 +151,7 @@ The better design decouples them. Tailwind v4 has its own watch mode: point it a
 
 Two non-obvious choices here:
 
-**Why `--watch=always` and not plain `--watch`?** Plain `--watch` exits as soon as its stdin closes. That is fine when you run it by hand in a terminal, but a process you launch from a script or the REPL doesn't keep a TTY attached to its stdin, so plain `--watch` would exit almost immediately. `--watch=always` tells Tailwind to keep watching regardless of stdin. This is exactly the kind of thing you only discover by hitting it; the flag is load-bearing.
+**Why `--watch=always` and not plain `--watch`?** Plain `--watch` exits as soon as its stdin closes. That is fine when you run it by hand in a terminal, but a process you launch from a script or the REPL doesn't keep a TTY attached to its stdin, so plain `--watch` would exit almost immediately. `--watch=always` tells Tailwind to keep watching regardless of stdin. This is exactly the kind of thing you only discover by hitting it, and the flag is essential.
 
 **Why keep `--minify` in dev?** Because of the "one artifact, two deliveries" rule. Production minifies the CSS, so dev minifies it too -- the dev stylesheet is byte-for-byte what production builds from the same `input.css`. If dev served unminified CSS and prod served minified, you would have two artifacts and a class of "works in dev, breaks in prod" surprises. The minification cost is invisible (Tailwind is fast and incremental), so there is no reason to introduce the drift.
 

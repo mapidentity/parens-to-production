@@ -506,7 +506,7 @@ Some content we *do* want emitted verbatim, and only those places use `h/raw`:
 
 Each `h/raw` is a deliberate, auditable decision. The rule of thumb: grep for `h/raw`, and every hit should be either a literal you wrote or output from a renderer you trust. Everything else flows through `h/html` and is escaped.
 
-A correctly-escaped output layer is the load-bearing defense here. (The app also ships a strict, hash-based Content-Security-Policy with no `'unsafe-inline'` for scripts, which would *additionally* block an injected inline script -- but that is defense-in-depth sitting behind escaping, and it is the subject of its own post. The escaping is what makes the XSS not happen in the first place.)
+A correctly-escaped output layer is the primary defense here. (The app also ships a strict, hash-based Content-Security-Policy with no `'unsafe-inline'` for scripts, which would *additionally* block an injected inline script -- but that is defense-in-depth sitting behind escaping, and it is the subject of its own post. The escaping is what makes the XSS not happen in the first place.)
 
 ## CommonMark for Markdown Content
 

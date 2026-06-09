@@ -7,7 +7,7 @@ Most Clojure projects add performance checks late -- after mysterious slowdowns 
 
 There is a better way. If you wire up strict compilation from the very first commit, you catch reflection warnings and boxed math warnings the moment they appear. One warning at a time is easy to fix. Three hundred is a project.
 
-This post walks through the build hardening setup I use: `tools.build` with fail-on-warnings, zprint for consistent formatting, and clj-kondo for static analysis. By the end you will have a build that refuses to produce an artifact with performance problems baked in, plus formatting and linting scripts that keep the codebase clean with minimal effort.
+This post walks through the build hardening setup we use: `tools.build` with fail-on-warnings, zprint for consistent formatting, and clj-kondo for static analysis. By the end you will have a build that refuses to produce an artifact with performance problems baked in, plus formatting and linting scripts that keep the codebase clean with minimal effort.
 
 ## The `:build` Alias
 
@@ -90,7 +90,7 @@ Here is the full `build.clj`:
      :main 'myapp.core}))
 ```
 
-Let me break down the important parts.
+Let us break down the important parts.
 
 ### Delayed Basis
 
@@ -182,7 +182,7 @@ clojure -T:build uber
 
 ## Code Formatting with zprint
 
-Consistent formatting eliminates an entire class of review noise. I use [zprint](https://github.com/kkinnear/zprint) with a `.zprintrc` at the project root:
+Consistent formatting eliminates an entire class of review noise. We use [zprint](https://github.com/kkinnear/zprint) with a `.zprintrc` at the project root:
 
 ```clojure
 {:width 100

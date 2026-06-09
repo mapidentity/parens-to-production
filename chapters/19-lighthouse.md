@@ -170,7 +170,7 @@ module.exports = {
 };
 ```
 
-Let me walk through each section.
+Let us walk through each section.
 
 ### `collect`
 
