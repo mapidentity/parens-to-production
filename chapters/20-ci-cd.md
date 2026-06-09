@@ -7,7 +7,7 @@ Over the past fifteen posts we have built a Clojure/Datomic SaaS piece by piece:
 
 This final post wires everything into a single automated pipeline. Push to main, and the system formats, lints, builds the static assets and verifies their integrity, runs tests with coverage, executes end-to-end tests in a real browser, audits performance with Lighthouse, builds an uberjar, and deploys -- all without human intervention. That is the goal. Let's build it.
 
-> **A note on what is actually wired up in the companion repository.** The pipeline in this chapter is the *application* deployment pipeline -- the one you would run for the SaaS itself. The companion repository for this book runs a *different*, much smaller CI workflow: a single GitHub Actions job that builds these chapters with mdBook and publishes the result to GitHub Pages. The application pipeline below (uberjar, Tailwind, esbuild, asset verification, Caddy, SSH deploy) is taught here in full, but it is not the workflow that ships this book's prose. Where it matters -- the asset-integrity gate especially -- I will be explicit about whether a step runs continuously or as a local pre-deploy check. Treat the application pipeline as the design you would adopt the day you stand up your own forge runner; the asset-integrity gate is useful *today*, even run by hand before a deploy.
+> **A note on what is actually wired up in the companion repository.** The pipeline in this chapter is the *application* deployment pipeline -- the one you would run for the SaaS itself. The companion repository for this book runs a *different*, much smaller CI workflow: a single GitHub Actions job that builds these chapters with mdBook and publishes the result to GitHub Pages. The application pipeline below (uberjar, Tailwind, esbuild, asset verification, Caddy, SSH deploy) is taught here in full, but it is not the workflow that ships this book's prose. Where it matters -- the asset-integrity gate especially -- we will be explicit about whether a step runs continuously or as a local pre-deploy check. Treat the application pipeline as the design you would adopt the day you stand up your own forge runner; the asset-integrity gate is useful *today*, even run by hand before a deploy.
 
 ## Why Forgejo Actions
 
@@ -374,7 +374,7 @@ These two steps are where the asset pipeline from earlier in the series (the `as
 2. Every URL named in the manifest points at a file that actually exists on disk.
 3. Every content-hashed filename matches the SHA-256 of its own bytes -- so a filename can never lie about its contents. A `styles.2c7c3332.css` whose bytes hash to something other than `2c7c3332` fails the gate.
 
-That third invariant is the load-bearing one. Because Caddy serves content-hashed assets with `Cache-Control: public, max-age=31536000, immutable`, a wrong hash is not a cosmetic bug -- it is a year-long cache poisoning. `verify-assets` catches a corrupted or hand-edited build artifact before it can be deployed under an immutable URL. Run it locally right before you ship; if you stand up an application CI runner, it slots in immediately after the `assets` step, exactly as shown above.
+That third invariant is the critical one. Because Caddy serves content-hashed assets with `Cache-Control: public, max-age=31536000, immutable`, a wrong hash is not a cosmetic bug -- it is a year-long cache poisoning. `verify-assets` catches a corrupted or hand-edited build artifact before it can be deployed under an immutable URL. Run it locally right before you ship; if you stand up an application CI runner, it slots in immediately after the `assets` step, exactly as shown above.
 
 There is no separate `scripts/verify-css-hash.bb` or `verify-css` task; asset integrity lives entirely in `build.clj` as `verify-assets`, covering CSS, JavaScript and the manifest in one pass.
 
@@ -518,6 +518,6 @@ Every piece was built to be understood by one person. No magic frameworks, no hi
 
 That simplicity is the point. A solo operator building a SaaS does not have the luxury of complexity. Every moving part is a part that can break at 2 AM with no one else to call. The system we have built is not sophisticated -- it is simple, transparent, and entirely within one person's ability to understand, debug, and maintain.
 
-Whether you followed along post by post or jumped straight to the topics that interested you, I hope this series demonstrated that building a production SaaS with Clojure and Datomic is not only feasible but genuinely enjoyable. The tools are mature. The ecosystem is stable. And the language rewards you with a codebase that stays manageable as it grows.
+Whether you followed along post by post or jumped straight to the topics that interested you, we hope this series demonstrated that building a production SaaS with Clojure and Datomic is not only feasible but genuinely enjoyable. The tools are mature. The ecosystem is stable. And the language rewards you with a codebase that stays manageable as it grows.
 
 Now go build something.

@@ -5,7 +5,7 @@
 
 You have a web app. It loads config, connects to Datomic, defines routes, renders pages. It works when you try it in the browser. But "works when I try it" is not a testing strategy. The moment you refactor a handler or change a route, you need something that tells you -- in seconds -- whether you broke anything.
 
-This post covers the testing infrastructure I put in place early: a test helpers module with fixtures for fresh in-memory databases and deterministic config, a set of initial tests for configuration and routing, a coverage tool with a minimum threshold, and a shell script that ties it all together. None of this is exotic. That is the point. Setting up boring, reliable test infrastructure early pays dividends for every feature that follows.
+This post covers the testing infrastructure we put in place early: a test helpers module with fixtures for fresh in-memory databases and deterministic config, a set of initial tests for configuration and routing, a coverage tool with a minimum threshold, and a shell script that ties it all together. None of this is exotic. That is the point. Setting up boring, reliable test infrastructure early pays dividends for every feature that follows.
 
 ## The Testing Philosophy: Fresh State Per Test
 
