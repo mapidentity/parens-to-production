@@ -13,6 +13,16 @@ This repository is **two things at once**:
 
 ---
 
+## Demo
+
+the dev source inspector in action: click a
+rendered element and your editor opens the exact Hiccup that made it; put your
+cursor on a view and the matching element lights up in the browser.
+
+https://github.com/user-attachments/assets/5e2302ab-0a62-41b2-ba2c-b069366a606f
+
+---
+
 ## The demo app: a recipe versioning site
 
 The companion app is **"Git for recipes."** Users fork recipes, tweak them, and
