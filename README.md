@@ -2,7 +2,7 @@
 
 This repository is **two things at once**:
 
-1. **An online book** — 16 chapters (in [`chapters/`](chapters/)) that walk through
+1. **An online book** — 20 chapters (in [`chapters/`](chapters/)) that walk through
    building a production-grade SaaS in Clojure and Datomic, from a reproducible
    dev environment to automated CI/CD. Built with [mdBook](https://rust-lang.github.io/mdBook/)
    and published to GitHub Pages.
@@ -15,7 +15,7 @@ This repository is **two things at once**:
 
 ## Demo
 
-the dev source inspector in action: click a
+The dev source inspector in action: click a
 rendered element and your editor opens the exact Hiccup that made it; put your
 cursor on a view and the matching element lights up in the browser.
 
@@ -47,7 +47,7 @@ The interesting code lives in [`src/myapp/recipe/core.clj`](src/myapp/recipe/cor
 
 ## Prerequisites
 
-The book's [chapter 1](chapters/01-devcontainer.md) sets all of this up
+The book's [devcontainer chapter](chapters/03-devcontainer.md) sets all of this up
 reproducibly with a devcontainer (Docker + Caddy + Mailpit). To run it directly
 you need:
 
@@ -97,7 +97,7 @@ clojure -M -e "(require 'myapp.core)(myapp.core/start-server!)@(promise)"
 
 ```sh
 clojure -X:test                  # unit + integration tests (in-memory Datomic)
-clojure -T:build compile-strict  # AOT compile; fails on reflection / boxed-math warnings (ch.2)
+clojure -T:build compile-strict  # AOT compile; fails on reflection / boxed-math warnings (ch.4)
 ./lint                           # clj-kondo + the "read time only through myapp.time" guard
 npx playwright test              # end-to-end browser tests (auto-starts the e2e server)
 ```
@@ -120,10 +120,10 @@ src/myapp/           the application
   web/                 routes, handlers, Hiccup views, the dev source inspector
   admin/, analytics/   admin dashboard + the signup funnel
   i18n*                en/nl translations
-dev/                 REPL helpers, hot-reload, CSS hashing, demo seed data
+dev/                 REPL helpers, live/hot reload, the inspector loader, demo seed data
 test/myapp/          tests
 e2e/                 Playwright specs
-.devcontainer/, caddy/, certificates/, compose.yml   the dev environment (ch.1)
+.devcontainer/, caddy/, certificates/, compose.yml   the dev environment (ch.3)
 ```
 
 ---
