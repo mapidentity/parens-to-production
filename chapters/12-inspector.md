@@ -502,10 +502,11 @@ Making the editor **survive a REPL/server restart on its own** took longer than 
 
 ### The browser highlighter
 
-The browser handles `{type: "highlight", component, file, defn-lines, element, callsite}` with **DOM-as-truth precedence**: the server proposes coordinates, but the browser highlights based on what actually rendered.
+The browser handles `{type: "highlight", component, file, defn-lines, element, callsite}` with **DOM-as-truth precedence**: the server proposes coordinates, but the browser highlights based on what actually rendered. The first line gates the whole reverse direction on the same `enabled` flag as the forward one — the inspect badge is a single master switch for *both* directions, so a disengaged inspector leaves the page untouched. (Turning it off clears any live boxes; turning it on re-requests the cursor so the current position lights up at once.)
 
 ```javascript
 function handleHighlight(m) {
+  if (!enabled) return;   // reverse highlight follows the inspect toggle
   clearReverse();
   if (!m.component) return;
   var compNodes = bySel('data-myapp-name', m.component);

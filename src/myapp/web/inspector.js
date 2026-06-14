@@ -9,10 +9,11 @@
 // Alt+wheel walks the ancestor chain without moving the mouse; a click opens the
 // CURRENT selection via {type:"open"} to the server (which pushes to the editor).
 //
-// REVERSE (code → element): the server pushes {type:"highlight", component, file,
-// defn-lines, element, callsite} as the editor cursor moves; handleHighlight
-// frames the component and strong-highlights the element (callsite → element →
-// component-root precedence).
+// REVERSE (code → element): with the inspector engaged, the server pushes
+// {type:"highlight", component, file, defn-lines, element, callsite} as the
+// editor cursor moves; handleHighlight frames the component and strong-
+// highlights the element (callsite → element → component-root precedence). The
+// inspect toggle is the single on/off for both directions.
 //
 // Source tags come from the dev loader instrumenting view fns (myapp.web.inspector).
 (function () {
@@ -55,8 +56,8 @@
     // signal it with a magnifying-glass cursor everywhere — except our own UI.
     'html.fy-insp-on,html.fy-insp-on *{cursor:zoom-in !important}' +
     'html.fy-insp-on .fy-insp-badge,html.fy-insp-on .fy-insp-crumb{cursor:pointer !important}' +
-    // Reverse highlight (editor cursor → element). Always active in dev; soft
-    // frame on every component instance, strong box + pulse on the element.
+    // Reverse highlight (editor cursor → element), shown only while inspecting;
+    // soft frame on every component instance, strong box + pulse on the element.
     '.fy-insp-zoom{position:fixed;z-index:2147483640;pointer-events:none;' +
       'border:2px solid rgba(99,102,241,.55);border-radius:3px;display:none}' +
     '.fy-insp-hl{position:fixed;z-index:2147483644;pointer-events:none;' +
@@ -300,12 +301,29 @@
     badge.textContent = (enabled ? '⌖ inspecting' : '⌖ inspect')
                       + (wsConnected ? '' : ' · ws disconnected');
     document.documentElement.classList.toggle('fy-insp-on', enabled);
-    if (!enabled) { hide(); hoverChain = []; hoverIdx = 0; } // drop stale selection
+    if (!enabled) {
+      // Drop the stale forward selection AND any reverse-highlight boxes — the
+      // settled border-only state would otherwise linger after leaving inspect
+      // mode. Reset the target key so the next editor-cursor event re-lights
+      // the same element cleanly (fresh pulse) instead of staying quiet.
+      hide(); hoverChain = []; hoverIdx = 0;
+      clearReverse(); revTargetKey = null; revSettled = false; clearTimeout(revSettleTimer);
+    }
+  }
+  // Ask the editor (via the server) to re-emit its current cursor, so the
+  // reverse highlight reappears without a manual cursor move — used when enabling
+  // inspect and after a morph swaps the DOM out from under the live boxes.
+  function requestResend() {
+    try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'request-resend' })); } catch (e) {}
   }
   function setEnabled(v) {
     enabled = v;
     try { localStorage.setItem(STORE, v ? '1' : '0'); } catch (e) {}
     apply();
+    // Turning inspect ON: pull in the current cursor's highlight now (apply()
+    // cleared the boxes when turning OFF). A fresh page load is already covered
+    // by the server's on-connect resend, so only the live toggle needs this.
+    if (v) requestResend();
   }
 
   badge.addEventListener('click', function (e) { e.stopPropagation(); setEnabled(!enabled); });
@@ -323,8 +341,10 @@
   // ---- reverse highlight: editor cursor → on-screen element ----
   // Driven by {type:"highlight", component:"ns/fn", element:"file:line:col", seq}
   // pushed from the server (which resolved the cursor via the source index).
-  // Independent of the forward "inspect" toggle — it only lights up when the
-  // cursor sits in a view that's currently on screen, so it stays quiet.
+  // Gated by the same "inspect" toggle as the forward direction — the badge is
+  // the single on/off for ALL inspector visuals, so the page stays untouched
+  // until you engage it: handleHighlight drops pushes while disabled, apply()
+  // clears the boxes on the way out, and enabling re-requests the cursor.
   var zoomBoxes = [];          // soft frames (component)
   var hlBoxes = [];            // strong boxes (element/callsite target)
   var revFrameNodes = [];      // nodes the frame tracks (for reposition)
@@ -409,6 +429,10 @@
   }
   function repositionReverse() { drawFrame(); drawEl(); }
   function handleHighlight(m) {
+    // Reverse highlight follows the inspect toggle: while disabled, drop the
+    // editor-cursor pushes entirely (apply() already cleared any boxes on the
+    // way out, and enabling re-requests the cursor — see setEnabled).
+    if (!enabled) return;
     // No drop-stale guard: highlights arrive over an ordered WS (already in
     // order), so a seq guard buys nothing and risks stalling if the server's
     // counter resets on a hot-reload. Each highlight simply replaces the last.
@@ -461,12 +485,13 @@
   apply();
 
   // After a dev morph (the dispatcher swapped <main>), the reverse-highlight boxes
-  // track nodes that were just replaced. Clear them and ask the server to re-emit
-  // the editor's cursor so the highlight reappears against the fresh DOM — the WS
-  // stays open across a morph, so the on-connect resend never fires on its own.
+  // track nodes that were just replaced. Clear them and — if inspecting — ask the
+  // server to re-emit the editor's cursor so the highlight reappears against the
+  // fresh DOM; the WS stays open across a morph, so the on-connect resend never
+  // fires on its own.
   document.addEventListener('dispatcher:morphed', function () {
     clearReverse();
     revTargetKey = null; revSettled = false; clearTimeout(revSettleTimer);
-    try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'request-resend' })); } catch (e) {}
+    if (enabled) requestResend(); // nothing to re-light while inspect is off
   });
 })();

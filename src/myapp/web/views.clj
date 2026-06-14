@@ -154,9 +154,10 @@
      [:div.max-w-md.w-full body]]))
 
 (defn app-layout
-  "Layout with the top navigation. Used for recipe browsing (public OR signed
-  in), the dashboard, and admin. `opts` may include `:admin?`. `user-email`
-  may be nil for anonymous visitors browsing recipes."
+  "Layout with the top navigation.
+   Used for recipe browsing (public OR signed in), the dashboard, and admin.
+   `opts` may include `:admin?`. `user-email`may be nil for anonymous visitors
+   browsing recipes."
   [locale user-email active-tab opts & body]
   (let [admin? (:admin? opts)]
     (base-layout
