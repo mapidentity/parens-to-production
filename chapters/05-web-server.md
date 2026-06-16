@@ -124,7 +124,7 @@ Before we write routes, we need configuration. Aero reads an EDN file and suppor
 
 The `#profile` reader tag selects a value based on the active profile. In dev, the server binds to `0.0.0.0` (all interfaces); in prod, to `127.0.0.1` (localhost only, behind a reverse proxy). The `#env` tag reads from environment variables.
 
-`:base-url` and `:smtp` are placeholders for now -- we use them later for magic-link emails ([the email login-flow chapter](15-auth-email-flow.md)). They live in config from the start so every environment has them, and so the config test we write in [the testing chapter](08-unit-testing.md) can assert their presence.
+`:base-url` and `:smtp` are placeholders for now -- we use them later for magic-link emails ([the email login-flow chapter](16-auth-email-flow.md)). They live in config from the start so every environment has them, and so the config test we write in [the testing chapter](08-unit-testing.md) can assert their presence.
 
 Now the configuration namespace:
 

@@ -20,6 +20,7 @@
 (defn-asset toast-script "myapp/web/toast.js")
 (defn-asset dev-reload-script "myapp/web/dev-reload.js")
 (defn-asset inspector-script "myapp/web/inspector.js")
+(defn-asset trace-overlay-script "myapp/web/trace-overlay.js")
 
 (def ^:private ^DateTimeFormatter dt-fmt
   (.withZone (DateTimeFormatter/ofPattern "d MMM yyyy, HH:mm" Locale/ENGLISH)
@@ -89,7 +90,7 @@
         (try
           (requiring-resolve 'dev-reload/websocket-handler)
           (catch Exception _ nil))
-        (list (dev-reload-script) (inspector-script)))]]))
+        (list (dev-reload-script) (inspector-script) (trace-overlay-script)))]]))
 
 (defn- hero-icon
   "Inline 24x24 Heroicon-style outline SVG. `paths` is a seq of d-strings."

@@ -160,7 +160,102 @@
     {:get (fn [request]
             (if-let [handler (requiring-resolve 'dev-reload/websocket-handler)]
               (handler request)
-              {:status 404}))}]])
+              {:status 404}))}]
+   ;; Construction-view tracer (dev+storm only): the overlay fetches a page's
+   ;; recorded trace by the id it reads from <html data-myapp-trace-id>.
+   ;; requiring-resolve is nil without the :dev trace ns, so this 404s in prod.
+   ["/dev/__trace/:id"
+    {:get (fn [request]
+            (or (try
+                  (when-let [gj (requiring-resolve 'trace/get-trace-json)]
+                    (when-let [j (gj (get-in request [:path-params :id]))]
+                      {:status 200
+                       :headers {"Content-Type" "application/json"
+                                 "Cache-Control" "no-store"}
+                       :body j}))
+                  (catch Throwable _ nil))
+                {:status 404
+                 :headers {"Content-Type" "application/json"}
+                 :body "{}"}))}]
+   ;; Flow drill-down: ?name=<data-myapp-name>&idx=<instance>&src=<file:line:col>
+   ["/dev/__flow/:id"
+    {:get (fn [request]
+            (or (try
+                  (when-let [gf (requiring-resolve 'trace/get-flow-json)]
+                    (let [{:keys [name idx src]} (:params request)
+                          line (some-> src (str/split #":") (nth 1 nil) (->> (re-find #"\d+")) parse-long)]
+                      (when-let [j (gf (get-in request [:path-params :id])
+                                       name (or (some-> idx parse-long) 0) line)]
+                        {:status 200
+                         :headers {"Content-Type" "application/json" "Cache-Control" "no-store"}
+                         :body j})))
+                  (catch Throwable _ nil))
+                {:status 404
+                 :headers {"Content-Type" "application/json"}
+                 :body "{}"}))}]
+   ;; On-demand recorder clear: lets a long dev session reclaim memory.
+   ;; requiring-resolve is nil in prod, so this is a harmless no-op there.
+   ["/dev/__trace-clear"
+    {:get (fn [_]
+            (when-let [c (requiring-resolve 'trace/clear-recordings!)] (c))
+            {:status 200 :headers {"Content-Type" "application/json" "Cache-Control" "no-store"} :body "{\"cleared\":true}"})}]
+   ;; The most recent uncaught-error trace (so a good page can surface a prior 500)
+   ["/dev/__last-error"
+    {:get (fn [_]
+            (or (try
+                  (when-let [le (requiring-resolve 'trace/get-last-error-json)]
+                    {:status 200 :headers {"Content-Type" "application/json" "Cache-Control" "no-store"} :body (le)})
+                  (catch Throwable _ nil))
+                {:status 404 :headers {"Content-Type" "application/json"} :body "{}"}))}]
+   ;; Expand a recorded value one level: ?frame=<id>&slot=arg0|ret&path=0,2,1
+   ["/dev/__value/:id"
+    {:get (fn [request]
+            (or (try
+                  (when-let [gv (requiring-resolve 'trace/get-value-json)]
+                    (let [{:keys [frame slot path]} (:params request)
+                          p (if (seq path) (vec (keep parse-long (str/split path #","))) [])]
+                      (when-let [j (gv (get-in request [:path-params :id]) (some-> frame parse-long) slot p)]
+                        {:status 200 :headers {"Content-Type" "application/json" "Cache-Control" "no-store"} :body j})))
+                  (catch Throwable _ nil))
+                {:status 404 :headers {"Content-Type" "application/json"} :body "{}"}))}]
+   ;; Conditionals in a frame that didn't render (why a section is empty): ?frame=<id>
+   ["/dev/__branches/:id"
+    {:get (fn [request]
+            (or (try
+                  (when-let [gb (requiring-resolve 'trace/get-branches-json)]
+                    (when-let [j (gb (get-in request [:path-params :id]) (some-> (get-in request [:params :frame]) parse-long))]
+                      {:status 200 :headers {"Content-Type" "application/json" "Cache-Control" "no-store"} :body j}))
+                  (catch Throwable _ nil))
+                {:status 404 :headers {"Content-Type" "application/json"} :body "{}"}))}]
+   ;; Where a frame's entity came from (producing DB reads): ?frame=<id>
+   ["/dev/__source/:id"
+    {:get (fn [request]
+            (or (try
+                  (when-let [gs (requiring-resolve 'trace/get-source-json)]
+                    (when-let [j (gs (get-in request [:path-params :id]) (some-> (get-in request [:params :frame]) parse-long))]
+                      {:status 200 :headers {"Content-Type" "application/json" "Cache-Control" "no-store"} :body j}))
+                  (catch Throwable _ nil))
+                {:status 404 :headers {"Content-Type" "application/json"} :body "{}"}))}]
+   ;; The produced-markup (Hiccup) tree of a frame: ?frame=<id>&slot=ret
+   ["/dev/__hiccup/:id"
+    {:get (fn [request]
+            (or (try
+                  (when-let [gh (requiring-resolve 'trace/get-hiccup-json)]
+                    (let [{:keys [frame slot]} (:params request)]
+                      (when-let [j (gh (get-in request [:path-params :id]) (some-> frame parse-long) slot)]
+                        {:status 200 :headers {"Content-Type" "application/json" "Cache-Control" "no-store"} :body j})))
+                  (catch Throwable _ nil))
+                {:status 404 :headers {"Content-Type" "application/json"} :body "{}"}))}]
+   ;; Every frame a value flows through: ?frame=<id>&slot=arg0|ret
+   ["/dev/__value-threads/:id"
+    {:get (fn [request]
+            (or (try
+                  (when-let [gt (requiring-resolve 'trace/get-threads-json)]
+                    (let [{:keys [frame slot]} (:params request)]
+                      (when-let [j (gt (get-in request [:path-params :id]) (some-> frame parse-long) slot)]
+                        {:status 200 :headers {"Content-Type" "application/json" "Cache-Control" "no-store"} :body j})))
+                  (catch Throwable _ nil))
+                {:status 404 :headers {"Content-Type" "application/json"} :body "{}"}))}]])
 
 (defn wrap-dev-no-store
   "Dev only: Cache-Control: no-store on served .css/.js so a stable (unhashed) dev
@@ -188,28 +283,39 @@
 (def ^:private app*
   "Compiled Ring handler, built lazily to avoid loading config at compile time."
   (delay
-    (ring/ring-handler
-      ;; `:conflicts nil` tolerates the static `/recipes/new` vs dynamic
-      ;; `/recipes/:id` overlap — reitit routes the static path first, so only
-      ;; non-\"new\" ids fall through to `recipe-show`.
-      (ring/router routes {:conflicts nil})
-      ;; Serve static assets (CSS, JS, SVGs, fonts) from the static/ dir, then
-      ;; fall back to the default 404 handler.
-      (ring/routes
-        (cond-> (ring/create-file-handler {:path "/" :root assets/static-root})
-          assets/dev? wrap-dev-no-store)
-        (ring/create-default-handler))
-      {:middleware [[params/wrap-params] [keyword-params/wrap-keyword-params]
-                    [session/wrap-session
-                     {:store (cookie/cookie-store {:key (config/get-config :session-key)})
-                      :cookie-name "session"
-                      :cookie-attrs {:http-only true
-                                     :secure true
-                                     :same-site :lax
-                                     :max-age (* 30 24 60 60)}}]
-                    [wrap-locale]
-                    [wrap-no-cache-authenticated]
-                    [wrap-csp]]})))
+    (let [base-mw [[params/wrap-params] [keyword-params/wrap-keyword-params]
+                   [session/wrap-session
+                    {:store (cookie/cookie-store {:key (config/get-config :session-key)})
+                     :cookie-name "session"
+                     :cookie-attrs {:http-only true
+                                    :secure true
+                                    :same-site :lax
+                                    :max-age (* 30 24 60 60)}}]
+                   [wrap-locale]
+                   [wrap-no-cache-authenticated]
+                   [wrap-csp]]
+          ;; DEV + STORM only: the construction-view tracer, OUTERMOST so its
+          ;; per-request timeline window spans the whole synchronous handler
+          ;; (incl. the myapp middleware below). Gated on the ClojureStorm system
+          ;; property so plain :dev and prod never resolve (or load) the dev ns.
+          ;; deref to the middleware FN — reitit's IntoMiddleware has no impl for a Var
+          mw (if-let [wt (when (System/getProperty "clojure.storm.instrumentEnable")
+                           (try (some-> (requiring-resolve 'trace/wrap-trace) deref)
+                                (catch Throwable _ nil)))]
+               (into [[wt]] base-mw)
+               base-mw)]
+      (ring/ring-handler
+        ;; `:conflicts nil` tolerates the static `/recipes/new` vs dynamic
+        ;; `/recipes/:id` overlap — reitit routes the static path first, so only
+        ;; non-\"new\" ids fall through to `recipe-show`.
+        (ring/router routes {:conflicts nil})
+        ;; Serve static assets (CSS, JS, SVGs, fonts) from the static/ dir, then
+        ;; fall back to the default 404 handler.
+        (ring/routes
+          (cond-> (ring/create-file-handler {:path "/" :root assets/static-root})
+            assets/dev? wrap-dev-no-store)
+          (ring/create-default-handler))
+        {:middleware mw}))))
 
 (defn app
   "Ring handler entry point. Delegates to the lazily-compiled handler."

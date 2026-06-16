@@ -59,7 +59,7 @@ Lighthouse needs to see authenticated pages, but it has no way to perform a logi
   (fn [request] (handler (assoc-in request [:session :user-email] (test-email)))))
 ```
 
-Two things to note here. First, the test email comes from the admin email in config, resolved at request time -- a function, not a top-level `def`, so it tracks whatever profile the server starts under rather than freezing the value when the namespace loads (the same runtime-config discipline as [the web-server chapter](05-web-server.md)'s `delay` and [the email login-flow chapter](15-auth-email-flow.md)'s SMTP config). This means the auto-authenticated user has admin privileges, so Lighthouse can audit admin pages too. Second, `wrap-auto-auth` is trivial -- one line of middleware that sets `:user-email` in the session map. The rest of the application sees a normal authenticated request.
+Two things to note here. First, the test email comes from the admin email in config, resolved at request time -- a function, not a top-level `def`, so it tracks whatever profile the server starts under rather than freezing the value when the namespace loads (the same runtime-config discipline as [the web-server chapter](05-web-server.md)'s `delay` and [the email login-flow chapter](16-auth-email-flow.md)'s SMTP config). This means the auto-authenticated user has admin privileges, so Lighthouse can audit admin pages too. Second, `wrap-auto-auth` is trivial -- one line of middleware that sets `:user-email` in the session map. The rest of the application sees a normal authenticated request.
 
 ### Seeding Test Data
 

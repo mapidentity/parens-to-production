@@ -33,3 +33,6 @@
 
 # nREPL port file (transient)
 /.nrepl-port
+
+# FlowStorm (dev construction-view tracer) debugger cache
+.fsx/

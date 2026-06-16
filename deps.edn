@@ -46,6 +46,23 @@
                      nrepl/nrepl {:mvn/version "1.5.1"}
                      cider/cider-nrepl {:mvn/version "0.58.0"}}}
 
+  ;; ClojureStorm: a DEV-ONLY compiler swap that records execution for the
+  ;; construction-view tracer (the runtime half of the inspector). It replaces
+  ;; org.clojure/clojure with FlowStorm's drop-in compiler build, which emits
+  ;; instrumentation into every myapp.* namespace it compiles. Combine with the
+  ;; dev alias:   clojure -M:dev:storm:repl
+  ;; Structurally absent from prod: prod resolves org.clojure/clojure with no
+  ;; storm artifact, no JVM opts, no recording — same posture as the inspector.
+  :storm {:classpath-overrides {org.clojure/clojure nil}
+          :extra-deps {com.github.flow-storm/clojure {:mvn/version "1.12.5-1"}
+                       com.github.flow-storm/flow-storm-dbg {:mvn/version "4.6.0"}}
+          :jvm-opts ["-Dclojure.storm.instrumentEnable=true"
+                     "-Dclojure.storm.instrumentOnlyPrefixes=myapp."
+                     "-Dclojure.storm.instrumentAutoPrefixes=false"
+                     ;; record from boot; the GUI is never started (headless)
+                     "-Dflowstorm.startRecording=true"
+                     "-Dmyapp.dev=true"]}
+
   :repl {:main-opts ["-m" "nrepl.cmdline" "--port" "7888" "--interactive"
                      "--middleware" "[cider.nrepl/cider-middleware]"]}
 

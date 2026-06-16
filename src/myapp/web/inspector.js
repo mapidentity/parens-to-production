@@ -56,6 +56,9 @@
     // signal it with a magnifying-glass cursor everywhere — except our own UI.
     'html.fy-insp-on,html.fy-insp-on *{cursor:zoom-in !important}' +
     'html.fy-insp-on .fy-insp-badge,html.fy-insp-on .fy-insp-crumb{cursor:pointer !important}' +
+    // The construction-view overlay is our own UI, not inspectable page — give it a
+    // normal cursor (a higher-specificity rule beats the zoom-in above).
+    'html.fy-insp-on [data-myapp-overlay],html.fy-insp-on [data-myapp-overlay] *{cursor:default !important}' +
     // Reverse highlight (editor cursor → element), shown only while inspecting;
     // soft frame on every component instance, strong box + pulse on the element.
     '.fy-insp-zoom{position:fixed;z-index:2147483640;pointer-events:none;' +
@@ -77,7 +80,11 @@
   [box, label, badge, toast].forEach(function (n) { document.body.appendChild(n); });
 
   function el(tag, cls) { var n = document.createElement(tag); n.className = cls; return n; }
-  function ours(t) { return t === box || t === badge || label.contains(t) || badge.contains(t); }
+  // Treat our own UI AND any sibling dev overlay (e.g. the construction view,
+  // marked data-myapp-overlay) as "ours" — so inspect-mode's capturing click
+  // handler doesn't preventDefault/stopPropagation their clicks out from under them.
+  function ours(t) { return t === box || t === badge || label.contains(t) || badge.contains(t)
+                          || !!(t && t.closest && t.closest('[data-myapp-overlay]')); }
 
   // ---- dev WebSocket: send open requests, receive results ----
   var ws = null, wsAttempt = 0, wsConnected = false, wsGen = 0;
@@ -254,7 +261,14 @@
   function onMove(e) {
     // While Alt is held the dev is wheel-walking the ancestor chain — freeze the
     // selection so pointer motion (or jitter during scroll) can't reset it.
-    if (!enabled || ours(e.target) || e.altKey) return; // over our own UI → don't recompute (keeps crumbs clickable)
+    if (!enabled || e.altKey) return;
+    if (ours(e.target)) {
+      // moved over our own UI: keep the forward box while interacting with the
+      // crumb/label, but DROP it when over the construction-view overlay (its own
+      // row-hover drives the highlight) so the purple forward box doesn't linger.
+      if (e.target.closest && e.target.closest('[data-myapp-overlay]')) hide();
+      return;
+    }
     pending = e.target;
     if (rafId) return;
     rafId = requestAnimationFrame(function () {
@@ -301,6 +315,10 @@
     badge.textContent = (enabled ? '⌖ inspecting' : '⌖ inspect')
                       + (wsConnected ? '' : ' · ws disconnected');
     document.documentElement.classList.toggle('fy-insp-on', enabled);
+    // Announce inspect state so the construction-view overlay can ride the SAME
+    // toggle (one switch for both); it listens for this and reads the initial
+    // state from our localStorage key on load.
+    try { document.dispatchEvent(new CustomEvent('myapp:inspect', { detail: { enabled: enabled } })); } catch (e) {}
     if (!enabled) {
       // Drop the stale forward selection AND any reverse-highlight boxes — the
       // settled border-only state would otherwise linger after leaving inspect
@@ -308,6 +326,7 @@
       // the same element cleanly (fresh pulse) instead of staying quiet.
       hide(); hoverChain = []; hoverIdx = 0;
       clearReverse(); revTargetKey = null; revSettled = false; clearTimeout(revSettleTimer);
+      broadcastSelect({ name: null });   // tell the overlay the selection is gone too
     }
   }
   // Ask the editor (via the server) to re-emit its current cursor, so the
@@ -354,6 +373,19 @@
                                // SAME one (cursor moving while you edit) stays quiet
   var revSettleTimer = 0, revSettled = false; // fill flashes on arrival, then fades
                                // to border-only after a beat so it stops tinting edits
+  // Selection bus shared with the construction-view overlay: editor cursor ⇄ trace
+  // row ⇄ on-screen element. `selApplying` guards against reacting to our own echo.
+  var selApplying = false;
+  // after a construction-view selection we open its source; the server's reverse-
+  // highlight for that location echoes back (often resolving to the CALL SITE's
+  // component, i.e. the parent) — suppress it briefly so it can't override the box
+  // we just set for the selected element.
+  var selGuardUntil = 0;
+  function broadcastSelect(detail) {
+    selApplying = true;
+    try { document.dispatchEvent(new CustomEvent('myapp:select', { detail: detail })); } catch (e) {}
+    selApplying = false;
+  }
 
   // Attribute-value escape: inside [a="…"] only \\ and " are special, so do NOT
   // use CSS.escape here (it would escape the /, ., : in our keys and break it).
@@ -433,11 +465,14 @@
     // editor-cursor pushes entirely (apply() already cleared any boxes on the
     // way out, and enabling re-requests the cursor — see setEnabled).
     if (!enabled) return;
+    // A construction-view selection just opened a source; this push is its echo —
+    // keep the box we set for the selected element instead of jumping to the caller.
+    if (Date.now() < selGuardUntil) return;
     // No drop-stale guard: highlights arrive over an ordered WS (already in
     // order), so a seq guard buys nothing and risks stalling if the server's
     // counter resets on a hot-reload. Each highlight simply replaces the last.
     clearReverse();
-    if (!m.component) return;
+    if (!m.component) { broadcastSelect({ name: null }); return; }
     var compNodes = bySel('data-myapp-name', m.component);
     // Element target (strong), DOM-as-truth precedence:
     //   callsite (this invocation's output) → element literal → component root.
@@ -449,7 +484,10 @@
     if (compNodes.length) { revFrameNodes = compNodes; revFrameBBox = false; }
     else { revFrameNodes = spanNodes(m.file, m['defn-lines']); revFrameBBox = true; }
     revElNodes = elNodes;
-    if (!revFrameNodes.length && !revElNodes.length) return;
+    if (!revFrameNodes.length && !revElNodes.length) { broadcastSelect({ name: null }); return; }   // cursor is off-screen → clear everywhere
+    // announce the selection so the construction-view overlay marks the matching row
+    var selFocus = elNodes[0] || revFrameNodes[0], selIdx = compNodes.indexOf(selFocus);
+    broadcastSelect({ name: m.component, idx: selIdx < 0 ? 0 : selIdx });
     // Same element as last time? Then the cursor is just moving WITHIN it (you're
     // editing) — keep it quiet: no pulse, no re-flash, no re-scroll, and hold the
     // border-only state if we'd already settled there.
@@ -458,7 +496,7 @@
     revTargetKey = key;
     drawFrame();
     var focus = elNodes[0] || revFrameNodes[0];
-    if (!sameTarget && focus && focus.scrollIntoView) {
+    if (!sameTarget && focus && focus.scrollIntoView && offscreen(focus)) {
       var fr = focus.getBoundingClientRect();
       if (fr.width || fr.height) focus.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
     }
@@ -480,6 +518,67 @@
   }
   window.addEventListener('scroll', repositionReverse, true);
   window.addEventListener('resize', repositionReverse);
+
+  // Construction-view overlay selected a row (or cleared it) → light / clear the
+  // matching on-screen element so inspector and trace agree. Ignore our own echoes.
+  // Only scroll when the node is actually out of view — scrolling a visible element
+  // moves the page under a stationary cursor, which fires mouseover churn and makes
+  // the highlight jitter on every click/selection.
+  function offscreen(node) {
+    var r = node.getBoundingClientRect();
+    if (!(r.width || r.height)) return false;
+    var vh = window.innerHeight || document.documentElement.clientHeight;
+    return r.bottom <= 0 || r.top >= vh;
+  }
+  function lightElement(node) {        // strong-box the exact element + soft-frame its component
+    clearReverse();
+    var comp = node.closest && node.closest('[data-myapp-name^="myapp"]');
+    revElNodes = [node];
+    revFrameNodes = (comp && comp !== node) ? [comp] : [];   // frame the containing component (unless node IS it)
+    revFrameBBox = false;
+    if (offscreen(node)) node.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+    requestAnimationFrame(function () {
+      drawFrame(); drawEl(); applySettled(false);
+      var b = hlBoxes[0]; if (b) { b.classList.remove('pulse'); void b.offsetWidth; b.classList.add('pulse'); }
+      clearTimeout(revSettleTimer); revSettleTimer = setTimeout(function () { revSettled = true; applySettled(true); }, 500);
+    });
+  }
+  // transient hover-preview from the construction view: light the element the SAME
+  // way selection does (so hovering a trace row visually matches the inspector),
+  // then restore the real selection's highlight on the way out. No pulse/scroll.
+  var peekSaved = null;
+  function peekDraw(node) {
+    var comp = node.closest && node.closest('[data-myapp-name^="myapp"]');
+    clearReverse();
+    revElNodes = [node]; revFrameNodes = (comp && comp !== node) ? [comp] : []; revFrameBBox = false;
+    drawFrame(); drawEl(); applySettled(true);
+  }
+  document.addEventListener('myapp:peek', function (e) {
+    if (!enabled) return;
+    var d = e.detail || {};
+    if (d.name) {
+      if (!peekSaved) peekSaved = { el: revElNodes.slice(0), fr: revFrameNodes.slice(0), bbox: revFrameBBox, key: revTargetKey, settled: revSettled };
+      var nodes = bySel('data-myapp-name', d.name), node = (d.idx != null && nodes[d.idx]) || nodes[0];
+      if (node) peekDraw(node); else clearReverse();
+    } else if (peekSaved) {                         // restore the pre-peek highlight
+      clearReverse();
+      revElNodes = peekSaved.el; revFrameNodes = peekSaved.fr; revFrameBBox = peekSaved.bbox; revTargetKey = peekSaved.key; revSettled = peekSaved.settled;
+      if (revElNodes.length || revFrameNodes.length) { drawFrame(); drawEl(); applySettled(revSettled); }
+      peekSaved = null;
+    }
+  });
+  document.addEventListener('myapp:select', function (e) {
+    if (selApplying || !enabled) return;
+    var d = e.detail || {};
+    peekSaved = null;                   // a real selection supersedes any peek
+    selGuardUntil = Date.now() + 800;   // this selection will openSrc — suppress its echo
+    if (d.name) {
+      // prefer the exact clicked node (precise element + its frame); else resolve by component+instance
+      var node = (d.node && d.node.nodeType === 1) ? d.node : null;
+      if (!node) { var nodes = bySel('data-myapp-name', d.name); node = (d.idx != null && nodes[d.idx]) || nodes[0]; }
+      if (node) { revTargetKey = null; lightElement(node); } else { clearReverse(); revTargetKey = null; }
+    } else { clearReverse(); revTargetKey = null; revSettled = false; clearTimeout(revSettleTimer); }
+  });
 
   connect();
   apply();

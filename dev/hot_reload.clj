@@ -204,6 +204,14 @@
   ;; Re-load view namespaces through tools.reader so Hiccup carries element-level
   ;; source metadata from boot (the inspector overlay reads it). Dev-only.
   (inspector-load/load-all-views!)
+  ;; Under the :storm alias (ClojureStorm compiler), enable the construction-view
+  ;; recorder. Guarded on the storm system property so a plain :dev REPL never
+  ;; tries to load flow-storm.
+  (when (System/getProperty "clojure.storm.instrumentEnable")
+    (try
+      (when-let [setup (requiring-resolve 'trace/setup!)] (setup))
+      (log/info "Construction-view tracer enabled (ClojureStorm)")
+      (catch Throwable e (log/warn e "Trace setup failed"))))
   (start-file-watcher)
   (log/info "Development environment ready"
     {:websocket-reload true
