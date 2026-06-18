@@ -102,11 +102,20 @@ The base layout is the HTML5 shell that every page shares. It is private -- page
       (script-tag "js/live-form.js" {:type "module"})
       (script-tag "js/defer-details.js" {:type "module"})
       (script-tag "js/server-preview.js" {:type "module"})
-      (script-tag "js/admin-stats.js" {:type "module"})]
+      (script-tag "js/admin-stats.js" {:type "module"})
+      [:style
+       (h/raw "@keyframes page-enter{from{opacity:.92;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}main{animation:page-enter .12s ease-out}")]]
      [:body (tag-root body)
       [:div#toast-container.fixed.bottom-4.right-4.z-50
        {:aria-live "polite" :aria-atomic "true"}]
-      (toast-script)]]))
+      (toast-script)
+      ;; Dev-only: live-reload client + source inspector + construction-view overlay.
+      ;; The requiring-resolve gate makes the whole block absent in production.
+      (when
+        (try
+          (requiring-resolve 'dev-reload/websocket-handler)
+          (catch Exception _ nil))
+        (list (dev-reload-script) (inspector-script) (trace-overlay-script)))]]))
 ```
 
 A few things to note:
@@ -117,6 +126,8 @@ A few things to note:
 - **`(script-tag "js/dispatcher.js" {:type "module"})`** loads the dispatcher, the script that powers progressive enhancement (covered in detail below). It is a normal ES module, served from the classpath through the asset pipeline -- not inlined.
 - **`(toast-script)`** inlines a small toast helper. The `defn-asset` macro and inline scripts are covered later in this post.
 - **`(tag-root body)`** wraps the page body for the development source inspector. In production it is the identity function; the body is unchanged.
+- **The final body block is dev-only.** `(when (requiring-resolve 'dev-reload/websocket-handler) (list (dev-reload-script) (inspector-script) (trace-overlay-script)))` emits three small scripts — the live-reload client ([live reload](06-live-reload.md)), the source inspector ([the inspector](12-inspector.md)), and the construction-view overlay ([the construction view](13-construction-view.md)) — and nothing else. This is the single place those overlays mount, so as you build each of those chapters you add its script to this list. The `requiring-resolve` check returns `nil` when the dev namespace is not on the classpath, so the whole block is *structurally absent* in production; the `defn-asset` declarations behind `dev-reload-script`/`inspector-script`/`trace-overlay-script` arrive with [the asset pipeline](19-asset-pipeline.md). (If you are following along before those chapters exist, drop the names you have not built yet — the block renders nothing until the dev namespace is present anyway.)
+- **The `page-enter` keyframes** give each freshly rendered `<main>` a subtle entrance; it pairs with the DOM-morphing reload in [the morph-reload chapter](14-morph-reload.md).
 - **`body` uses `& body` (rest args)** so callers can pass multiple elements naturally without wrapping them in a container.
 
 ### Public Layout
@@ -385,7 +396,7 @@ Forms are similar -- the dispatcher reads `action` and `method` straight off the
 
 ### The core primitive: fetchAndMorph
 
-Both the click and submit handlers funnel into one exported function, `fetchAndMorph`. It fetches, picks the fragment to apply, morphs, and updates history:
+Both the click and submit handlers funnel into one exported function, `fetchAndMorph`. It fetches, picks the fragment to apply, morphs, and updates history. The skeleton below shows the shape; the full `static/js/dispatcher.js` in the companion repo fills in the robustness details called out beneath it (in-flight de-duplication via `AbortController`, `formaction`/`formmethod` discovery, re-executing `<script>` tags the morph carried in), which are mechanical once the shape is clear:
 
 ```javascript
 export async function fetchAndMorph(url, opts = {}) {

@@ -8,6 +8,8 @@ The inspector is the *spatial* half — element to code. This is the *temporal* 
 
 Everything here is dev-only and **structurally absent** from production, the same standard the rest of our dev infrastructure holds itself to. But this feature reaches that standard a different way than the inspector did, and the difference is the first decision worth explaining.
 
+> **A note on scope.** This feature is two substantial dev-only files — `dev/trace.clj`, which projects a recording into JSON, and `src/myapp/web/trace-overlay.js`, which renders it in the page — and both ship in full in the companion repo. This chapter is a *tour* of how they work and why they are shaped the way they are, not a line-by-line transcription: the listings below are representative excerpts, occasionally simplified to foreground the idea. The design is the reusable part, and the design is what we walk.
+
 ---
 
 ## Why not just extend the inspector?
@@ -31,7 +33,7 @@ You could push harder — instrument more, propagate context across threads, cap
 [FlowStorm](https://www.flow-storm.org/) is a time-travel debugger for Clojure. Its companion, **ClojureStorm**, is a drop-in build of the Clojure compiler that emits instrumentation into every namespace it compiles, recording each sub-expression's value as your program runs. You opt in by *swapping the compiler*, which sounds drastic until you realise it is exactly the dev/prod split we already use everywhere else — a `:dev`-only dependency.
 
 ```clojure
-;; deps.edn — a dev-only alias. Run with: clojure -M:dev:storm
+;; deps.edn — a dev-only alias. Run with: clojure -M:dev:storm:repl
 :storm {:classpath-overrides {org.clojure/clojure nil}        ; remove vanilla Clojure
         :extra-deps {com.github.flow-storm/clojure {:mvn/version "1.12.5-1"}
                      com.github.flow-storm/flow-storm-dbg {:mvn/version "4.6.0"}}
@@ -43,6 +45,8 @@ You could push harder — instrument more, propagate context across threads, cap
 ```
 
 `:classpath-overrides {org.clojure/clojure nil}` drops the normal Clojure jar so ClojureStorm's build provides `clojure.core`; `instrumentOnlyPrefixes=myapp.` keeps the recording to *our* functions (instrumenting `clojure.core` would bury the signal under millions of frames). Production never sees any of this: it resolves `org.clojure/clojure`, sets no storm properties, records nothing. The compiler swap is the heaviest dev affordance in the book — it slows startup and makes the first hit to a page noticeably slower — which is precisely why it lives behind an alias you choose to type.
+
+The `startRecording` flag asks ClojureStorm to record from boot, but we do not lean on it alone: when the dev system starts under `:storm` (the `instrumentEnable` property is present), it also calls `(trace/setup!)`, which flips recording on through the debugger API. That call is the one place recording is turned on deliberately, and the same handle we use to *clear* the recorder later — so a reader who finds the flag alone insufficient on their FlowStorm version is still covered.
 
 > **Why a compiler and not a Java agent or OpenTelemetry?** A Java agent (Byte Buddy, AspectJ) is the same idea, less Clojure-aware — dominated. OpenTelemetry is the industrial answer and the right tool when you want spans to *leave the process* into Jaeger or Tempo; but its spans are coarse (HTTP, JDBC, manual boundaries) and exported elsewhere, neither of which serves an *in-page* view at *expression* granularity. We are building a debugger affordance, not an observability pipeline. The two are answers to different questions, and conflating them gets you the worst of both.
 
@@ -222,7 +226,7 @@ Trace every piece and confirm it vanishes:
 
 - **The compiler.** `:storm` is a dev alias. Production resolves `org.clojure/clojure`, sets no storm properties, and records nothing. With no recording there is no timeline to read.
 - **The middleware.** `wrap-trace` is added to the stack only when the `clojure.storm.instrumentEnable` system property is present, and only via `requiring-resolve` of a namespace that lives under `dev/`. Plain `:dev` — never mind prod — neither adds it nor loads the namespace.
-- **The endpoints.** `/dev/__trace/:id` and `/dev/__flow/:id` resolve their handler through `requiring-resolve`, which is `nil` without the dev namespace, so they 404 in production.
+- **The endpoints.** Every `/dev/__*` route — the two core ones, `/dev/__trace/:id` and `/dev/__flow/:id`, and the detail endpoints behind them — resolves its handler through `requiring-resolve`, which is `nil` without the dev namespace, so they 404 in production.
 - **The endpoints are unauthenticated, and return real recorded values.** Anything that can reach `/dev/__trace` or `/dev/__flow` gets the actual recording — argument and result previews that can include user emails and recipe content. That is acceptable for a dev-only, loopback service — the same posture as `/dev/ws` from the inspector chapter — don't expose the dev server.
 - **The trace id and the overlay.** Two different gates, worth separating. The trace id is reached *via the storm property*: `data-myapp-trace-id` is stamped only by the middleware, which is itself only mounted when `clojure.storm.instrumentEnable` is set. The overlay is not gated on the storm property at all — it ships in the **dev asset block** (the same `requiring-resolve` gate as the inspector, so it's prod-absent), and at runtime it is simply *inert* without a storm-stamped `data-myapp-trace-id` to act on. So in production the script is absent; under plain `:dev` (no `:storm`) it may load but finds no trace id and does nothing.
 
@@ -237,9 +241,9 @@ The feature is structurally absent, not merely disabled — the same bar as the 
 
 ## What you now have
 
-Building on the inspector's welded coordinate, with one dev alias, one dev namespace (`trace`), two dev endpoints, and one inlined script, you get a **construction view**:
+Building on the inspector's welded coordinate, with one dev alias, one dev namespace (`trace`), a small set of dev endpoints, and one dev-only script, you get a **construction view**:
 
-- Press `Alt+Shift+I` and the inspector still answers *where is this element from?* Press `Alt+Shift+C` and the construction view answers *how was this whole page built?* — the middleware-to-handler-to-domain-to-view call tree, each frame's return, and every Datomic read as real datalog at its basis-t, including the raw `d/as-of`/`d/history` time-travel reads.
+- It rides the same toggle as the inspector — `Alt+Shift+I` (or the corner badge) brings up both at once, because the overlay opens on the inspector's `myapp:inspect` event rather than a key of its own. With them up, the inspector still answers *where is this element from?* while the construction view answers *how was this whole page built?* — the middleware-to-handler-to-domain-to-view call tree, each frame's return, and every Datomic read as real datalog at its basis-t, including the raw `d/as-of`/`d/history` time-travel reads.
 - **Alt+click** any element and flow mode resolves the exact instance, walks its data path, and flags the one query and the one pull that produced its entity — then points at `d/history` for the question a read-trace honestly can't answer.
 - Zero production footprint — no compiler swap, no middleware, no endpoints, no script; all structurally excluded.
 

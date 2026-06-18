@@ -142,7 +142,7 @@ The care to re-attach `(meta form)` on lists/maps/sets matters: `clojure.walk/po
 
 The *component* coordinate — which view function produced a given root element — can't come from a literal's source position; it needs the enclosing `defn`. The loader supplies it invisibly by instrumenting every function a view namespace defines, so views stay plain `defn` with no annotation.
 
-The loader, under `dev/` (never on the prod classpath), reads each file with tools.reader, and then does three things to it: stamps file metadata (element layer), **auto-instruments every function the namespace defined** (component layer), and **indexes** it (for the reverse direction, Part II).
+The loader — `dev/inspector_load.clj`, under `dev/` and so never on the prod classpath — reads each file with tools.reader, and then does three things to it: stamps file metadata (element layer), **auto-instruments every function the namespace defined** (component layer), and **indexes** it (for the reverse direction, Part II).
 
 ```clojure
 (ns inspector-load

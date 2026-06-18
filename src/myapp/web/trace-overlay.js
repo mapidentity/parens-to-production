@@ -2,7 +2,8 @@
 //
 // Reads <html data-myapp-trace-id> (stamped by trace/wrap-trace under :storm),
 // fetches the recorded Trace for THIS page, and renders the call tree + DB ops.
-//   - Toggle the panel: corner badge or Alt+Shift+C.
+//   - Toggle the panel: rides the inspector's toggle (corner badge or Alt+Shift+I),
+//     opening on its `myapp:inspect` event — no key of its own.
 //   - Hover a tree node → highlight the SPECIFIC rendered instance it produced.
 //   - Click a node's name → open its source in the editor (via /dev/ws → Joyride);
 //     click the row → expand its args/return; ▸/▾ collapses children.

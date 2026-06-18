@@ -29,7 +29,7 @@ Clojure projects use `deps.edn` to declare dependencies and paths. Here is the r
         metosin/reitit-ring {:mvn/version "0.10.0"}
 
         ;; JSON
-        metosin/jsonista {:mvn/version "0.3.12"}
+        org.clojure/data.json {:mvn/version "2.5.2"}
 
         ;; Secure random (dev key generation, tokens)
         crypto-random/crypto-random {:mvn/version "1.2.1"}
@@ -193,9 +193,10 @@ Reitit represents routes as data -- nested vectors that describe your URL tree. 
     [ring.middleware.keyword-params :as keyword-params]
     [ring.middleware.params :as params]
     [ring.middleware.session :as session]
-    [ring.middleware.session.cookie :as cookie]
-    [ring.util.response :as response]))
+    [ring.middleware.session.cookie :as cookie]))
 ```
+
+This requires `myapp.web.handler`, which we create in the next section.
 
 ### The Route Tree
 
@@ -204,28 +205,41 @@ Reitit represents routes as data -- nested vectors that describe your URL tree. 
   [[""
     ["/" {:get handler/home}]
     ["/health"
-     {:get (fn [_] (handler/json-response {:status "ok"}))}]
-    ["/auth/request" {:post handler/request-magic-link}]
-    ["/auth/verify" {:get handler/verify-magic-link}]
-    ["/dashboard" {:get handler/dashboard}]]])
+     {:get (fn [_] (handler/json-response {:status "ok"}))}]]])
 ```
 
 Each route is a vector of `[path data]`. The data map associates HTTP methods with handler functions. Routes nest naturally -- you can group related paths under a common prefix.
 
-The `/health` endpoint is defined inline since it's trivial: return `{"status":"ok"}` with a 200. This is the endpoint your load balancer or monitoring tool will poll.
+We start with just two routes, because they are the two we can actually serve today: a home page and a health check. The real application grows this tree substantially -- auth endpoints, a dashboard, the recipe pages, an admin area -- but each of those needs machinery we have not built yet (sessions that mean something, a database, the view layer), so we add them in the chapters that introduce that machinery. Just as important, the *shape* of this tree changes too: the flat list here becomes a set of nested groups, each wrapped in its own middleware (current-user, auth, terms-accepted, admin) once those exist. So treat this as the seed, not the final form.
 
-The `json-response` helper is straightforward:
+The `/health` endpoint is defined inline since it's trivial: return `{"status":"ok"}` with a 200. This is the endpoint your load balancer or monitoring tool will poll. The other route points at `myapp.web.handler`, which we create next.
+
+### The Handler Namespace
+
+A *handler* is a plain function from a Ring request map to a Ring response map. We keep them in their own namespace, `myapp.web.handler`, so routing stays a pure description of the URL tree and the request-handling logic lives apart from it. At this point the namespace is tiny -- it grows into the orchestration layer for auth, the recipe domain, and the views as those arrive:
 
 ```clojure
+(ns myapp.web.handler
+  (:require
+    [clojure.data.json :as json]))
+
 (defn json-response
+  "Ring response with JSON content-type, no-store caching, and serialized body."
   [data & {:keys [status] :or {status 200}}]
   {:status status
    :headers {"Content-Type" "application/json"
              "Cache-Control" "no-store"}
-   :body (json/write-value-as-string data)})
+   :body (if (string? data) data (json/write-str data))})
+
+(defn home
+  "Placeholder home page. Becomes a real Hiccup view in the views chapter."
+  [_request]
+  {:status 200
+   :headers {"Content-Type" "text/html; charset=UTF-8"}
+   :body "<!doctype html><h1>MyApp</h1>"})
 ```
 
-It builds a plain Ring response map: set the content type, serialize the data to JSON, done. The `json` alias is `jsonista.core` (the `metosin/jsonista` dependency from our `deps.edn`); `write-value-as-string` turns a Clojure value into a JSON string.
+`json-response` builds a plain Ring response map: set the content type, serialize the data to JSON, done. The `json` alias is `clojure.data.json` (the `org.clojure/data.json` dependency from our `deps.edn`); `write-str` turns a Clojure value into a JSON string, and we pass a string body straight through unchanged. `home` returns a stub HTML page for now -- the [Hiccup views chapter](11-hiccup-views.md) replaces its body with a real server-rendered view, and the [auth](15-auth-tokens.md) and dashboard chapters add the handlers the fuller route tree calls.
 
 ### The Middleware Stack
 
@@ -264,6 +278,8 @@ Two structural choices worth noting:
 
 - **`app*` is a `delay`**, just like our config. This prevents the middleware stack from being built at compile time (which would try to read config, which might not be available yet). It's built once on the first request.
 - **`app` is a plain function** that derefs the delay. The server receives `#'routes/app` (a var reference), which means you can redefine `app` at the REPL and the server picks up changes without restarting.
+
+This three-entry stack is the foundation, not the whole. Later chapters insert more middleware here -- locale negotiation ([i18n](09-i18n.md)), a no-cache guard for authenticated pages, the current-user/auth/terms/admin gates ([auth](15-auth-tokens.md), [admin](18-admin-dashboard.md)), and a strict Content-Security-Policy ([asset pipeline](19-asset-pipeline.md)) -- and `myapp.config` learns to resolve more keys (a `:signing-key` for magic-link HMAC, `:database-uri`, an `:admin-email`) the same way it resolves `:session-key` here. The mechanism does not change; the stack and the config just get longer.
 
 ## The Entry Point
 
@@ -323,6 +339,8 @@ Several important patterns here:
 **http-kit's stop function.** `http-kit/run-server` returns a zero-argument function. Calling it stops the server. We store this function in the atom and call it in `stop-server!`. The `:timeout 100` gives existing connections 100ms to complete before being closed.
 
 **`(:gen-class)`.** This tells the Clojure compiler to generate a Java class with a static `main` method, which is what `java -jar` expects when running the uberjar in production.
+
+**`start-server!` will gain startup steps.** Right now it only boots http-kit. As later chapters add a database and a content-hashed asset pipeline, this function grows a few lines at the front -- creating the Datomic database ([Datomic chapter](07-datomic.md)) and loading the asset manifest ([asset pipeline](19-asset-pipeline.md)) before the server accepts traffic. Likewise, `dev/user.clj`'s `start!` is rewired to go through the hot-reload entry point once [live reload](06-live-reload.md) exists. The skeleton here is deliberately the minimum that runs.
 
 ## REPL-Driven Development
 
@@ -400,6 +418,8 @@ Hit the health endpoint:
 curl http://localhost:3000/health
 # {"status":"ok"}
 ```
+
+That `curl` runs from inside the devcontainer, where the app listens on `0.0.0.0:3000`. From the host, go through Caddy at the `.lan` hostname set up in [the devcontainer chapter](03-devcontainer.md) -- `curl https://myapp.lan/health` -- which is also how a browser reaches the app.
 
 Stop it:
 
