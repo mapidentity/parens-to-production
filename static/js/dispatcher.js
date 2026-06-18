@@ -88,13 +88,6 @@ function executeScripts(root) {
   });
 }
 
-function findTarget(doc, selector) {
-  // Try the live doc first (selector against the new document's body), then
-  // fall back to the whole new HTML if no match — we always want to morph
-  // into the live page's matching element.
-  return doc.querySelector(selector);
-}
-
 function pickResponseFragment(htmlString, selector) {
   // Parse the response HTML once; pull out either the target subtree or
   // <main>, whichever the caller asked for.

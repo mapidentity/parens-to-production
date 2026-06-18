@@ -20,7 +20,7 @@
   var rowById = {}, childWrapById = {}, triById = {}, parentById = {};
   var ws = null, wsTimer = null;
   var popped = false, popWin = null, popTimer = null, popBtn = null, icicleEl = null, toggleBtn = null;
-  var threadedRows = [], focused = null, icicleCellById = {}, pageHoverId = null, pageHoverPrevOpacity = "";
+  var threadedRows = [], icicleCellById = {}, pageHoverId = null, pageHoverPrevOpacity = "";
   var selectedId = null, selectedElPath = null, selBroadcasting = false, selGuardUntil = 0;   // selected frame + element-path within it
   var temporal = false;   // tree order: false = lexical (source structure), true = temporal (runtime/execution order)
   var repeatSet = {};     // query forms that ran ≥2× this request (N+1 markers)
@@ -123,14 +123,6 @@
       default: return v.preview || v.type || "?";
     }
   }
-  function vfull(v) {
-    if (!v) return "nil";
-    if (v.kind === "db") return "db @t" + (v["basis-t"] != null ? v["basis-t"] : "?");
-    if (v.kind === "hiccup") return "<" + v.tag + ">  (" + v.n + "-element hiccup)";
-    var s = v.preview || vref(v);
-    if (v.kind === "map" && v.eid != null && String(s).indexOf("#" + v.eid) < 0) s = "#" + v.eid + " " + s;
-    return s;
-  }
   // preattentive type encoding: hue per kind (Bertin/Munzner — type is categorical)
   var VCOLOR = { map: "#a78bfa", coll: "#60a5fa", set: "#22d3ee", seq: "#64748b",
                  hiccup: "#34d399", db: "#fbbf24", scalar: "#cbd5e1", nil: "#475569", opaque: "#94a3b8" };
@@ -165,7 +157,7 @@
     return b;
   }
   // identity threading: highlight every frame a value flows through
-  function clearThread() { threadedRows.forEach(function (r) { r.style.borderLeft = ""; }); threadedRows = []; applyDOI(focused != null ? pathSet(focused) : null, false); }
+  function clearThread() { threadedRows.forEach(function (r) { r.style.borderLeft = ""; }); threadedRows = []; applyDOI(null, false); }
   function threadValue(frame, slot) {
     clearThread();
     fetch("/dev/__value-threads/" + encodeURIComponent(traceId) + "?frame=" + frame + "&slot=" + encodeURIComponent(slot), { headers: { Accept: "application/json" } })
@@ -584,12 +576,10 @@
     cont.style.height = Math.min((maxD + 1) * rowH + 2, 240) + "px";   // size to content (full depth), capped → scroll if very deep
     return cont;
   }
-  // ---- degree-of-interest focus+context: focus a frame's path, dim the rest ----
-  function descendants(id, acc) { acc[id] = true; var s = trace.spans[id]; if (s) childrenOf(s).forEach(function (c) { descendants(c, acc); }); return acc; }
+  // ---- degree-of-interest focus+context (value-threading) ----
   // dim the icicle cells outside `set`; only dim the TREE ROWS too when dimRows is
-  // set (value-threading wants to isolate a flow). Icicle-cell focus leaves the
-  // tree fully readable — dimming it made frames look "missing". The page-hovered
-  // row is never dimmed so inspect-sync stays clearly visible.
+  // set (value-threading isolates a flow). The page-hovered row is never dimmed so
+  // inspect-sync stays clearly visible.
   function applyDOI(set, dimRows) {
     Object.keys(trace.spans).forEach(function (id) {
       var on = !set || set[id];
@@ -597,12 +587,6 @@
       var cell = icicleCellById[id]; if (cell) cell.style.opacity = on ? "1" : "0.35";
     });
   }
-  function pathSet(id) { var set = descendants(id, {}); for (var p = parentById[id]; p != null; p = parentById[p]) set[p] = true; return set; }
-  function focusFrame(id) {
-    if (focused === id) { clearFocus(); return; }
-    focused = id; applyDOI(pathSet(id), false);   // dim the OVERVIEW, keep the tree readable
-  }
-  function clearFocus() { focused = null; applyDOI(null, false); }
 
   function buildPanel() {
     rowById = {}; childWrapById = {}; triById = {}; parentById = {};
@@ -683,7 +667,7 @@
     if (temporal === t || !panel) return;
     temporal = t;
     if (toggleBtn) toggleBtn.textContent = temporal ? "⇅ temporal order" : "⇅ lexical order";
-    focused = null; threadedRows = [];
+    threadedRows = [];
     var fresh = buildIcicle();
     if (icicleEl && icicleEl.parentNode) icicleEl.parentNode.replaceChild(fresh, icicleEl);
     icicleEl = fresh;

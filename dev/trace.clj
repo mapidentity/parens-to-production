@@ -29,8 +29,6 @@
     [myapp.web.inspector :as inspector]
     [jsonista.core :as json]))
 
-(def ^:const flow-id 0)
-
 ;; ---------------------------------------------------------------------------
 ;; Recording control + thread/timeline helpers
 ;; ---------------------------------------------------------------------------
@@ -169,7 +167,6 @@
     {:calls calls
      :exprs-by-call exprs-by-call
      :unwinds unwinds
-     :unwinds-by-call (group-by :fn-call-idx unwinds)
      :at (fn [abs] (let [j (- abs start)] (when (and (>= j 0) (< j (count slice))) (nth slice j))))}))
 
 (defn- db-t
@@ -459,7 +456,7 @@
   [{:keys [tid start end]} comp-name idx src-line]
   (let [{:keys [calls exprs-by-call at] :as w} (read-window tid start end)
         named (->> (keys calls) sort
-                   (filter #(= comp-name (str (:fn-ns (calls %)) "/" (:fn-name (calls %)))))
+                   (filter #(= comp-name (frame-name (calls %))))
                    ;; element-producing AND not a folded self-delegation — so the
                    ;; instance count matches the DOM node count (see build-spans).
                    (filterv (fn [i] (and (not (folded? calls i))
@@ -479,8 +476,8 @@
                      (recur (:parent-idx mk)
                        (if (noise? mk)
                          acc                       ; skip instrumentation/loop frames
-                         (conj acc {:short (short-name (str (:fn-ns mk) "/" (:fn-name mk)))
-                                    :name (str (:fn-ns mk) "/" (:fn-name mk))})))
+                         (conj acc {:short (short-name (frame-name mk))
+                                    :name (frame-name mk)})))
                      (vec (reverse acc))))
             value (when src-line
                     (->> (get exprs-by-call target)
@@ -633,11 +630,12 @@
                    (or (vector? v) (set? v) (seq? v))
                    (vec (map-indexed (fn [i x] {:i i :k (str i) :val (summarize x) :expandable (expandable? x)})
                           (take 50 (seq v))))
-                   :else nil)]
+                   :else nil)
+        table (try (table-of v) (catch Throwable _ nil))]
     (cond-> {:ref (summarize v)}
       children (assoc :children children
                       :truncated (boolean (and (counted? v) (> (count v) 50))))
-      (try (table-of v) (catch Throwable _ nil)) (assoc :table (table-of v)))))
+      table (assoc :table table))))
 
 (defn get-value-json
   "Expand the recorded value at frame/slot navigated by `path` (a vector of
