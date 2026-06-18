@@ -360,6 +360,8 @@ All auth-related routes in one place:
 ["/terms/accept" {:post handler/accept-terms}]
 ```
 
+> **Handler-gated here, middleware-gated in the repo.** The handlers above each read `[:session :user-email]` and run their own "are you signed in? have you accepted terms?" checks inline, which keeps this chapter self-contained -- every handler is readable on its own. The companion repo factors those two questions out into middleware instead: a `wrap-auth` resolves the signed-in user once and puts `:user-email`/`:user-eid` directly on the request (redirecting to `/` if there is none), and a `wrap-terms-accepted` enforces the terms gate (redirecting to `/terms/welcome` until `:user/terms-accepted-at` is set). The route tree then nests the protected routes under those wrappers, and the handlers shrink to their actual work -- `dashboard` becomes a three-line render that trusts `(:user-email request)` is present. It is the same logic, lifted from each handler into one place so it cannot be forgotten on a new route; the [admin chapter](18-admin-dashboard.md)'s `wrap-admin` is the next layer in that same stack. If you have built the middleware, prefer it; the inline form here is the minimal equivalent.
+
 State-changing operations (request link, logout, accept terms) are POST. Idempotent reads (sent page, verify link, welcome page) are GET. The verify endpoint is GET because the user clicks a link in an email -- email clients do not POST.
 
 ## Testing with GreenMail
@@ -439,7 +441,7 @@ The `^"[Lcom.icegreen.greenmail.util.ServerSetup;"` type hint is the JVM's notat
     (let [messages (.getReceivedMessages ^GreenMail *greenmail*)]
       (is (= 1 (alength messages)))
       (let [^MimeMessage msg (aget messages 0)]
-        (is (= "Inloggen bij myapp" (.getSubject msg)))
+        (is (= "Inloggen bij MyApp" (.getSubject msg)))
         (is (= "noreply@myapp.test" (str (first (.getFrom msg)))))
         (let [body (str (.getContent msg))]
           (is (str/includes? body

@@ -43,10 +43,11 @@ Let's start with the low-level building blocks. Java's `javax.crypto` package gi
 ```clojure
 (ns myapp.auth.core
   (:require
+    [clojure.data.json :as json]
     [clojure.string :as str]
     [datomic.api :as d]
-    [jsonista.core :as json]
-    [myapp.db.core :as db])
+    [myapp.db.core :as db]
+    [myapp.time :as time])
   (:import
     [java.time Instant]
     [java.util Base64 UUID]
@@ -106,7 +107,7 @@ With the primitives in place, signing is straightforward:
   (let [payload-map {:email email
                      :exp (.toEpochMilli expires-at)
                      :nonce (str nonce)}
-        payload-json (json/write-value-as-string payload-map)
+        payload-json (json/write-str payload-map)
         payload-b64 (base64-encode (.getBytes payload-json "UTF-8"))
         signature (hmac-sha256 signing-key payload-b64)
         signature-b64 (base64-encode signature)]
@@ -146,10 +147,9 @@ Verification is the mirror image of signing, with two additional checks: signatu
           (when (= signature-b64 expected-signature-b64)
             ;; Signature valid, check expiration
             (let [payload-json (String. ^bytes (base64-decode payload-b64) "UTF-8")
-                  payload (json/read-value payload-json
-                                           (json/object-mapper {:decode-key-fn true}))
+                  payload (json/read-str payload-json :key-fn keyword)
                   exp-time (long (:exp payload))
-                  now (.toEpochMilli (Instant/now))]
+                  now (.toEpochMilli (time/now))]
               (when (> exp-time now)
                 ;; Not expired -- hand the caller the email and the nonce.
                 ;; verify-token proves the token is authentic and fresh; the
@@ -184,7 +184,7 @@ Tokens get a 15-minute window. This is a convenience function that wraps `sign-t
    Returns {:token <signed-string> :nonce <UUID>}. The caller records the
    nonce server-side before sending the link; verification consumes it once."
   [signing-key email]
-  (let [expires-at (-> (Instant/now)
+  (let [expires-at (-> (time/now)
                        (.plusSeconds (* 15 60)))
         nonce (UUID/randomUUID)]
     {:token (sign-token signing-key email expires-at nonce)
@@ -231,7 +231,7 @@ The query takes `db` (an immutable database value) rather than a connection. Thi
   "Create a new user account."
   [conn email]
   (let [user-id (UUID/randomUUID)
-        now (Instant/now)]
+        now (time/now)]
     @(db/transact* conn
        [{:db/id "temp-user"
          :user/id user-id
@@ -278,7 +278,8 @@ Tests run against a fresh in-memory Datomic database per test, with a determinis
     [clojure.test :refer [deftest is testing use-fixtures]]
     [datomic.api :as d]
     [myapp.auth.core :as auth]
-    [myapp.test-helpers :as h])
+    [myapp.test-helpers :as h]
+    [myapp.time :as time])
   (:import
     [java.time Instant]
     [java.util UUID]))
@@ -324,7 +325,7 @@ The second test is particularly important. The byte sequence `[255 239 191 253 2
 ```clojure
 (deftest sign-token-format
   (let [token (auth/sign-token h/test-signing-key "test@example.com"
-                (.plusSeconds (Instant/now) 3600) (UUID/randomUUID))]
+                (.plusSeconds (time/now) 3600) (UUID/randomUUID))]
     (is (string? token))
     (let [parts (str/split token #"\.")]
       (is (= 2 (count parts)) "Token should have exactly one dot separator")
@@ -333,7 +334,7 @@ The second test is particularly important. The byte sequence `[255 239 191 253 2
 (deftest verify-token-roundtrip
   (let [nonce (UUID/randomUUID)
         token (auth/sign-token h/test-signing-key "user@example.com"
-                (.plusSeconds (Instant/now) 3600) nonce)
+                (.plusSeconds (time/now) 3600) nonce)
         result (auth/verify-token h/test-signing-key token)]
     (is (= {:email "user@example.com" :nonce (str nonce)} result))))
 ```
@@ -349,7 +350,7 @@ These are the tests that matter most. A signing system is defined as much by wha
 ```clojure
 (deftest verify-token-expired
   (let [token (auth/sign-token h/test-signing-key "user@example.com"
-                (.minusSeconds (Instant/now) 1) (UUID/randomUUID))]
+                (.minusSeconds (time/now) 1) (UUID/randomUUID))]
     (is (nil? (auth/verify-token h/test-signing-key token)))))
 ```
 
@@ -360,7 +361,7 @@ Create a token that expired one second ago. Verification returns `nil`. Simple.
 ```clojure
 (deftest verify-token-tampered-payload
   (let [token (auth/sign-token h/test-signing-key "user@example.com"
-                (.plusSeconds (Instant/now) 3600) (UUID/randomUUID))
+                (.plusSeconds (time/now) 3600) (UUID/randomUUID))
         [_payload sig] (str/split token #"\.")
         tampered (str
                    (auth/base64-encode
@@ -377,7 +378,7 @@ This simulates an attacker who intercepts a valid token and replaces the payload
 ```clojure
 (deftest verify-token-tampered-signature
   (let [token (auth/sign-token h/test-signing-key "user@example.com"
-                (.plusSeconds (Instant/now) 3600) (UUID/randomUUID))
+                (.plusSeconds (time/now) 3600) (UUID/randomUUID))
         [payload _sig] (str/split token #"\.")]
     (is (nil? (auth/verify-token h/test-signing-key (str payload ".AAAA"))))))
 ```
@@ -390,7 +391,7 @@ Valid payload, garbage signature. Rejected.
 (deftest verify-token-wrong-key
   (let [other-key (.getBytes "other-signing-key-32-bytes-long!" "UTF-8")
         token (auth/sign-token h/test-signing-key "user@example.com"
-                (.plusSeconds (Instant/now) 3600) (UUID/randomUUID))]
+                (.plusSeconds (time/now) 3600) (UUID/randomUUID))]
     (is (nil? (auth/verify-token other-key token)))))
 ```
 
@@ -466,7 +467,7 @@ At the end of this post, we have a complete token-based authentication primitive
 - **`get-or-create-user!`** -- idempotent user lookup/creation for the login flow
 - **A comprehensive test suite** covering round-trips, expiry, tampering, wrong keys, garbage input, and user management
 
-The entire implementation is about 60 lines of Clojure with zero external dependencies beyond `jsonista` (for JSON) and Datomic. The crypto comes from the JDK. The token format is simple enough to explain in one sentence and audit in five minutes.
+The entire implementation is about 60 lines of Clojure with zero external dependencies beyond `clojure.data.json` (for JSON) and Datomic. The crypto comes from the JDK. The token format is simple enough to explain in one sentence and audit in five minutes.
 
 What we do not have yet: HTTP routes, email sending, sessions, the server-side recording and one-shot consumption of the nonce, and the actual magic link flow that ties it all together. That is [Part 2](16-auth-email-flow.md).
 

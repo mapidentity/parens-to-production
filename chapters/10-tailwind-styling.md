@@ -16,7 +16,7 @@ Tailwind wins here because it inverts the problem. Instead of a separate stylesh
 
 Crucially for this stack, Tailwind does not care where the class names come from. It generates CSS by scanning your source files for class names. It does not need to understand JSX, ERB, or Hiccup -- it scans a directory, finds the utility classes you used, and emits exactly the CSS those classes need and nothing more. That makes it a perfect fit for server-rendered HTML: there is no JavaScript build pipeline for your *styles*, just a binary that reads source and writes one CSS file.
 
-And Tailwind v4 ships as a **standalone CLI** -- a single binary, no Node project, no PostCSS plugin chain, no `tailwind.config.js`. You run it, it produces a CSS file, and the app serves that file. It is a build tool, not a runtime dependency: nothing about Tailwind ends up in the served page except plain CSS.
+And Tailwind v4 ships as a **standalone CLI** -- a single binary, no Node project, no PostCSS plugin chain, no `tailwind.config.js`. You run it, it produces a CSS file, and the app serves that file. It is a build tool, not a runtime dependency: nothing about Tailwind ends up in the served page except plain CSS. The devcontainer from [the devcontainer chapter](03-devcontainer.md) already installs the `tailwindcss` binary on the PATH; outside the container, grab the standalone CLI for your platform from the Tailwind releases page and drop it somewhere on your PATH.
 
 ## The input file: Tailwind v4 with design tokens
 
@@ -76,13 +76,21 @@ Below `@theme` the file carries plain CSS that does not map cleanly to utilities
 
 ## The dev stylesheet
 
-Tailwind reads `input.css`, scans `./src`, and writes a single stylesheet: `static/styles.css`. In development that file is served at a stable, unhashed URL -- `/styles.css` -- straight out of the `static/` directory. The layout links it with one tag in the document head:
+First, generate the stylesheet once so there is something to serve. The standalone CLI takes an input file and an output path:
 
-```clojure
-[:link {:rel "stylesheet" :href (assets/asset "styles.css")}]
+```bash
+tailwindcss -i input.css -o static/styles.css
 ```
 
-In development `(assets/asset "styles.css")` resolves to the identity URL `/styles.css`, so the browser fetches the file Tailwind just wrote. That is the entire dev styling loop: edit a view, Tailwind regenerates `static/styles.css`, the browser picks up the new CSS.
+That scans `./src`, finds the utility classes you have used, and writes a single `static/styles.css`. In development that file is served at a stable, unhashed URL -- `/styles.css` -- straight out of the `static/` directory, so the layout links it with one tag in the document head:
+
+```clojure
+[:link {:rel "stylesheet" :href "/styles.css"}]
+```
+
+That plain `/styles.css` is all dev needs. (When the asset pipeline arrives near the end of the book, this href is swapped for `(assets/asset "styles.css")`, which returns `/styles.css` unchanged in dev but a content-hashed URL in production -- the rendered dev output is identical, so do not reach for it yet.) That is the entire dev styling loop: edit a view, regenerate `static/styles.css`, the browser picks up the new CSS.
+
+To confirm it works, start the server, open any page, and check that the font and colors apply -- or just `grep` the output for a token you used (`grep bg-primary static/styles.css`) to see Tailwind emitted it.
 
 `static/styles.css` is a *generated* file, so it is git-ignored -- the sources are `input.css` and the `static/` tree, and the stylesheet is rebuilt from them. You do not commit it.
 
