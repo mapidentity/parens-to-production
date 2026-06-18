@@ -21,9 +21,11 @@
 
 (set! *warn-on-reflection* true)
 
-(def ^:private test-email
+(defn- test-email
   "Email for the auto-authenticated Lighthouse test user.
-  Must match :admin-email config so admin pages are accessible."
+  Read at runtime (not namespace-load time) so it always reflects the active
+  config profile. Must match :admin-email so admin pages are accessible."
+  []
   (config/get-config :admin-email))
 
 (defn- seed-test-user!
@@ -32,7 +34,7 @@
   (let [now (time/now)]
     @(db/transact* conn
        [{:user/id (UUID/randomUUID)
-         :user/email test-email
+         :user/email (test-email)
          :user/created-at now
          :user/active? true
          :user/terms-accepted-at now}])))
@@ -41,7 +43,7 @@
   "Inject a session with the test user on every request.
   Lighthouse sees authenticated pages without needing cookies."
   [handler]
-  (fn [request] (handler (assoc-in request [:session :user-email] test-email))))
+  (fn [request] (handler (assoc-in request [:session :user-email] (test-email)))))
 
 (defn- build-app
   "Build the Ring handler with auto-auth in the middleware stack.

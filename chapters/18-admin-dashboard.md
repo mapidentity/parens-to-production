@@ -32,13 +32,18 @@ Admin routes need to be locked down. Not just "requires authentication" but "req
           (handler/json-response {:error "unauthorized"} :status 401)
           (response/redirect "/"))
 
-        (not= user-email (config/get-config :admin-email))
+        (not= (some-> user-email str/lower-case)
+              (some-> (config/get-config :admin-email) str/lower-case))
         (if json?
           (handler/json-response {:error "forbidden"} :status 403)
           (response/redirect "/dashboard"))
 
         :else (handler request)))))
 ```
+
+The admin comparison is **case-insensitive** -- email addresses are not case-sensitive in their local part for any provider you will meet in practice, so `Admin@example.com` and `admin@example.com` must resolve to the same person, or you lock the admin out of their own dashboard. (This needs `[clojure.string :as str]` in the namespace.)
+
+> **How the repo factors this.** The version above reads the email straight from the session and runs on its own, which keeps this chapter self-contained. In the companion repo, `wrap-admin` instead sits *underneath* the auth middleware introduced with the login flow: `wrap-auth` resolves the signed-in user once and puts `:user-email`/`:user-eid` directly on the request, `wrap-terms-accepted` enforces the terms gate, and `wrap-admin` then reads `(:user-email request)` rather than digging into the session itself. Same check, one layer down -- the gate composes with the others instead of re-deriving the user. If you have built the auth chapters' middleware, prefer that structure; the standalone form here is the minimal thing that works on its own.
 
 Three branches, each with two sub-branches for HTML vs JSON responses:
 
@@ -84,6 +89,11 @@ One design decision worth explaining: analytics data lives in a separate Datomic
   [{:db/ident :magic-link/email
     :db/valueType :db.type/string
     :db/cardinality :db.cardinality/one}
+   {:db/ident :magic-link/nonce
+    :db/valueType :db.type/uuid
+    :db/unique :db.unique/identity
+    :db/cardinality :db.cardinality/one
+    :db/doc "Per-token nonce. Used as the one-shot anti-replay key."}
    {:db/ident :magic-link/requested-at
     :db/valueType :db.type/instant
     :db/cardinality :db.cardinality/one}
@@ -92,7 +102,7 @@ One design decision worth explaining: analytics data lives in a separate Datomic
     :db/cardinality :db.cardinality/one}])
 ```
 
-The schema is minimal: three attributes for magic link tracking. Every magic link records the email it was sent to, when it was requested, and when (if) it was verified. This is enough to build a signup funnel.
+The schema is small: four attributes for magic link tracking. Every magic link records the email it was sent to, a unique **nonce**, when it was requested, and when (if) it was verified. The email, request time, and verify time are enough to build a signup funnel; the nonce is what the [auth flow](16-auth-email-flow.md) keys its one-shot replay protection on -- it is a `:db.unique/identity` attribute so a verify can look the link up by nonce and CAS-stamp `:verified-at` exactly once. This schema is *defined* here, in the analytics namespace, but it is first *written to* by the magic-link flow two chapters back -- which is why that chapter forward-references "the schema is defined with the admin dashboard." If you are building strictly in order, create `myapp.analytics.db` and its database when the auth flow first calls `analytics/record!`; the admin dashboard is simply its first reader.
 
 The database setup functions follow:
 
@@ -434,20 +444,20 @@ The dashboard view assembles eight cards into a 4-column, 2-row grid:
         (users-table users)
         (magic-links-table magic-links)]
 
-       (live-stats-style)
-       (live-stats-script)])))
+       (live-stats-style)])))
 ```
 
 The `gap-px` and `bg-border` classes create a shared-border effect: the grid container has the border color as its background, and each card has a solid surface background. The 1px gap between cards reveals the container's border-colored background, creating the appearance of shared borders without any actual border elements. This is a nice Tailwind pattern.
 
 The verification rate ("83%") appears as a trending indicator on the "Verified" card, giving at-a-glance conversion info. JVM stats show percentages too -- used as a percentage of total, and total as a percentage of max.
 
-The `live-stats-style` and `live-stats-script` functions inject inline CSS and JavaScript at the bottom of the page. These are loaded from classpath resources using a `defn-asset` macro that reads the file once in production and re-reads on every call in development (for hot-reload):
+The `live-stats-style` function inlines the dashboard's animated-counter CSS at the bottom of the page, loaded from a classpath resource with the `defn-asset` macro that reads the file once in production and re-reads on every call in development (for hot-reload):
 
 ```clojure
 (defn-asset live-stats-style "myapp/admin/views.css")
-(defn-asset live-stats-script "myapp/admin/views.js")
 ```
+
+The polling **JavaScript**, by contrast, is *not* inlined. It is an ordinary ES module, `static/js/admin-stats.js`, loaded once from the base layout's `<head>` alongside the other module scripts (`(script-tag "js/admin-stats.js" {:type "module"})`, from [the Hiccup views chapter](11-hiccup-views.md)). That is a deliberate split: an inline `<script>` in the page body would be forbidden by the strict Content-Security-Policy we add in [the asset pipeline chapter](19-asset-pipeline.md) -- `<main>` carries no inline scripts -- whereas a hashed-and-served module passes cleanly. The script runs on every page but no-ops unless it finds the dashboard's stat elements, so loading it globally costs nothing elsewhere. Inline CSS is fine under the policy; inline behavior is not.
 
 ## CSS Animated Counters
 
@@ -530,7 +540,7 @@ An upward arrow in green for increases, a downward arrow in red for decreases. T
 
 ## Live Polling with Vanilla JavaScript
 
-The polling script is intentionally simple. No framework, no build step, no dependencies:
+The polling script -- `static/js/admin-stats.js`, the module the base layout loads -- is intentionally simple. No framework, no build step, no dependencies:
 
 ```javascript
 (function() {

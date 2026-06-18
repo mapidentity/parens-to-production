@@ -23,6 +23,7 @@ The Lighthouse test server lives on the test classpath -- it is never compiled i
     [myapp.analytics.db :as analytics]
     [myapp.config :as config]
     [myapp.db.core :as db]
+    [myapp.time :as time]
     [myapp.web.assets :as assets]
     [myapp.web.routes :as routes]
     [org.httpkit.server :as http-kit]
@@ -32,7 +33,6 @@ The Lighthouse test server lives on the test classpath -- it is never compiled i
     [ring.middleware.session :as session]
     [ring.middleware.session.cookie :as cookie])
   (:import
-    [java.time Instant]
     [java.util UUID]))
 
 (set! *warn-on-reflection* true)
@@ -69,7 +69,7 @@ An empty database produces empty pages. Empty pages get perfect performance scor
 (defn- seed-test-user!
   "Create a test user with terms accepted so dashboard renders fully."
   [conn]
-  (let [now (Instant/now)]
+  (let [now (time/now)]
     @(db/transact* conn
        [{:user/id (UUID/randomUUID)
          :user/email (test-email)
@@ -92,11 +92,13 @@ The test server reconstructs the Ring handler from the same route table the prod
   []
   (let [session-store (cookie/cookie-store {:key (config/get-config :session-key)})]
     (ring/ring-handler
-      (ring/router routes/routes)
+      ;; `:conflicts nil` mirrors prod — tolerates static-vs-dynamic
+      ;; route overlaps (static path wins, dynamic ids fall through).
+      (ring/router routes/routes {:conflicts nil})
       (ring/routes
         (ring/create-file-handler
           {:path "/"
-           :root "static"})
+           :root assets/static-root})
         (ring/create-default-handler))
       {:middleware [[params/wrap-params] [keyword-params/wrap-keyword-params]
                     [session/wrap-session
@@ -106,11 +108,11 @@ The test server reconstructs the Ring handler from the same route table the prod
                     [wrap-auto-auth] [routes/wrap-locale]]})))
 ```
 
-The middleware ordering matters. `wrap-params` and `wrap-keyword-params` run first to parse the request. `wrap-session` sets up cookie-based sessions. Then `wrap-auto-auth` injects the test user identity. Finally `wrap-locale` determines the locale for i18n. The handlers see a request that looks identical to a real authenticated request. As with the e2e server in [the e2e-testing chapter](16-e2e-testing.md), we keep `:same-site :lax` to match production but omit `:secure`, because this server runs over plain HTTP on `localhost`.
+The middleware ordering matters. `wrap-params` and `wrap-keyword-params` run first to parse the request. `wrap-session` sets up cookie-based sessions. Then `wrap-auto-auth` injects the test user identity. Finally `wrap-locale` determines the locale for i18n. The handlers see a request that looks identical to a real authenticated request. Like the e2e server in [the e2e-testing chapter](17-e2e-testing.md), this one omits `:secure` (it runs over plain HTTP on `localhost`); the session cookie is `:same-site :lax`, which is all the auto-auth flow needs.
 
 ### The Entry Point
 
-The `start!` function ties everything together. It creates fresh databases, discovers the CSS asset path, seeds the test user, and starts an HTTP server. It defaults to port 9876 -- the same port the e2e server in [the e2e-testing chapter](16-e2e-testing.md) uses; that is safe because the two run as separate, sequential CI steps and never bind the port at the same time:
+The `start!` function ties everything together. It creates fresh databases, loads the asset manifest (so `(assets/asset ...)` resolves the hashed URLs the views ask for), seeds the test user, and starts an HTTP server. It defaults to port 9876 -- the same port the e2e server in [the e2e-testing chapter](17-e2e-testing.md) uses; that is safe because the two run as separate, sequential CI steps and never bind the port at the same time:
 
 ```clojure
 (defn start!
@@ -122,7 +124,7 @@ The `start!` function ties everything together. It creates fresh databases, disc
   (let [port (if (string? port) (parse-long port) port)]
     (db/create-database!)
     (analytics/create-database!)
-    (assets/discover-stylesheet!)
+    (assets/load-manifest!)
     (seed-test-user! (db/get-connection))
     (http-kit/run-server
       (build-app)
@@ -147,8 +149,7 @@ module.exports = {
       startServerReadyTimeout: 60000,
       url: [
         'http://localhost:9876/',
-        'http://localhost:9876/legal/algemene-voorwaarden',
-        'http://localhost:9876/legal/privacyverklaring',
+        'http://localhost:9876/recipes',
         'http://localhost:9876/terms/welcome',
         'http://localhost:9876/dashboard',
         'http://localhost:9876/admin',
@@ -160,7 +161,7 @@ module.exports = {
     },
     assert: {
       assertions: {
-        'categories:performance': ['error', {minScore: 1}],
+        'categories:performance': ['error', {minScore: 0.95}],
         'categories:accessibility': ['error', {minScore: 1}],
         'categories:best-practices': ['error', {minScore: 1}],
         'categories:seo': ['warn', {minScore: 1}],
@@ -180,7 +181,7 @@ Let us walk through each section.
 
 **`startServerReadyTimeout`** gives the JVM 60 seconds to start. Clojure's startup is not instant, especially with AOT compilation disabled on the test classpath. Sixty seconds is generous but avoids flaky failures in CI where CPU is constrained.
 
-**`url`** lists every page to audit. This covers the full range: the public landing page (`/`), legal pages, the terms acceptance flow, the authenticated dashboard, and the admin panel. Because `wrap-auto-auth` is active, Lighthouse accesses all of them without authentication ceremony.
+**`url`** lists every page to audit. This covers the full range: the public landing page (`/`), the recipe browse page (`/recipes`), the terms-acceptance flow (`/terms/welcome`), the authenticated dashboard, and the admin panel. Because `wrap-auto-auth` is active, Lighthouse accesses all of them without authentication ceremony. (Audit the routes your app actually serves -- pointing Lighthouse at a path with no route loads a 404 page, which will tank the very scores you are trying to enforce.)
 
 **`numberOfRuns`** is set to 1. Lighthouse defaults to multiple runs and takes the median, which is useful for catching performance variance. For CI, a single run keeps the feedback loop fast. If you have flaky scores, increase this.
 
@@ -190,32 +191,23 @@ Let us walk through each section.
 
 The assertion block is where you set your standards. Each category maps to an assertion level and a minimum score:
 
-- **Performance, Accessibility, Best Practices** are set to `error` with `minScore: 1` (which is 100%). Any score below 100 fails the build. This is aggressive but achievable for a server-rendered app.
+- **Accessibility and Best Practices** are set to `error` with `minScore: 1` (100%). Any score below 100 fails the build. For a server-rendered app these are genuinely achievable, so we hold the line at perfect.
+- **Performance** is set to `error` with `minScore: 0.95`. Performance scores carry a little run-to-run variance even on identical pages (CPU contention in CI, lab-throttling jitter), so a 0.95 floor fails real regressions without flaking on a single unlucky run that lands at 0.99. The page should still score 100 in practice; the threshold just leaves headroom for the measurement noise.
 - **SEO** is set to `warn` with `minScore: 1`. It warns rather than errors because some SEO checks (like canonical URLs or structured data) may not apply to authenticated pages. The warning keeps it visible without blocking deploys.
 
-## The Runner Script
+## Running It
 
-The `lhtest` script is minimal:
+There is no wrapper script to write -- the whole audit is one command, run from the project root (where `lighthouserc.js` lives):
 
 ```bash
-#!/usr/bin/env bash
-cd "$(dirname "$0")"
 lhci autorun
 ```
 
-The `cd "$(dirname "$0")"` ensures `lhci` runs from the project root regardless of where you invoke the script. This matters because `lhci autorun` looks for `lighthouserc.js` in the current directory. Running from the wrong directory means it silently uses defaults instead of your configuration.
-
-Run it with:
-
-```bash
-./lhtest
-```
-
-`lhci autorun` handles everything: it starts your server (using `startServerCommand`), waits for the ready pattern, runs Lighthouse against each URL, collects the reports, and checks the assertions. If any assertion fails, it exits non-zero, which fails your CI step.
+`lhci autorun` handles everything: it starts your server (using `startServerCommand`), waits for the ready pattern, runs Lighthouse against each URL, collects the reports, and checks the assertions. If any assertion fails, it exits non-zero, which fails your CI step. This is exactly the command [the CI/CD chapter](21-ci-cd.md) wires into the pipeline -- no bespoke script in between. (If you prefer a short alias, a one-line `lhci autorun` wrapper is fine, but the companion repo deliberately keeps the canonical command in the workflow rather than hiding it behind a script.)
 
 ## Hitting 100%
 
-Setting `minScore: 1` is easy. Actually achieving it requires attention to several areas that Lighthouse checks. Here are the fixes that matter for a server-rendered Clojure app.
+Setting the thresholds is easy. Actually achieving them requires attention to several areas that Lighthouse checks. Here are the fixes that matter for a server-rendered Clojure app.
 
 ### Meta Tags
 
@@ -224,20 +216,22 @@ Every page needs viewport and description meta tags. Without them, Lighthouse do
 ```clojure
 (defn- base-layout
   [locale & body]
-  (page/html5
-    {:lang (name locale)}
-    [:head [:meta {:charset "UTF-8"}]
-     [:meta
-      {:name "viewport"
-       :content "width=device-width, initial-scale=1.0"}]
-     [:meta
-      {:name "description"
-       :content (t locale :meta/description)}]
-     ;; ...
-     ]))
+  (h/html
+    {:mode :html}
+    (h/raw "<!DOCTYPE html>")
+    [:html {:lang (name locale)}
+     [:head [:meta {:charset "UTF-8"}]
+      [:meta
+       {:name "viewport"
+        :content "width=device-width, initial-scale=1.0"}]
+      [:meta
+       {:name "description"
+        :content (t locale :meta/description)}]
+      ;; ...
+      ]]))
 ```
 
-The `{:lang (name locale)}` attribute on the `<html>` element is easy to miss but Lighthouse checks for it. It tells screen readers and search engines what language the page is in. The viewport meta tag ensures mobile rendering works correctly. The description meta tag satisfies SEO audits.
+This is the same escaping `h/html` layout from [the Hiccup views chapter](11-hiccup-views.md) -- not `hiccup.page/html5`, which [the asset-pipeline chapter](19-asset-pipeline.md) deliberately dropped because it does not escape string content. The `{:lang (name locale)}` attribute on the `<html>` element is easy to miss but Lighthouse checks for it. It tells screen readers and search engines what language the page is in. The viewport meta tag ensures mobile rendering works correctly. The description meta tag satisfies SEO audits.
 
 Because these live in the shared base layout, every page gets them automatically. You set them once and never worry about a new page missing them.
 
@@ -318,15 +312,15 @@ The lesson: pick your grays carefully, and let Lighthouse verify the math. Eyeba
 
 The Lighthouse audit runs alongside the other verification scripts:
 
-| Script | What it checks |
+| Command | What it checks |
 |---|---|
 | `./reformat` | Code formatting (zprint) |
-| `./lint` | Static analysis (clj-kondo) |
-| `./unittest` | Unit tests with coverage |
-| `./e2etest` | Playwright end-to-end tests |
-| `./lhtest` | Lighthouse performance/accessibility/SEO audit |
+| `./lint` | Static analysis (clj-kondo) + the "read time only through `myapp.time`" guard |
+| `clojure -X:test` | Unit + integration tests (in-memory Datomic) |
+| `npx playwright test` | Playwright end-to-end tests (auto-starts the e2e server) |
+| `lhci autorun` | Lighthouse performance/accessibility/SEO audit |
 
-All five must pass before merging to main. The CI pipeline runs them in sequence. If Lighthouse fails, you know the exact commit that introduced the regression, and the Lighthouse report tells you exactly which audit failed and why.
+`reformat` and `lint` are the two committed convenience scripts; the rest are plain one-liners the workflow calls directly. All five must pass before merging to main. The CI pipeline runs them in sequence. If Lighthouse fails, you know the exact commit that introduced the regression, and the Lighthouse report tells you exactly which audit failed and why.
 
 ## What You Have Now
 
@@ -334,8 +328,8 @@ After this setup, you have:
 
 - **A Lighthouse test server** (`lighthouse.clj`) that starts your real application with auto-authentication, so Lighthouse can audit both public and authenticated pages without a login flow.
 - **Test data seeding** that creates a user with accepted terms, ensuring pages render their full UI rather than empty shells.
-- **A `lighthouserc.js` configuration** that audits six URLs across your application and demands 100% scores in performance, accessibility, and best practices.
-- **A three-line runner script** that integrates with your existing CI pipeline.
+- **A `lighthouserc.js` configuration** that audits five real URLs across your application and demands perfect accessibility and best-practices scores (and a 0.95 performance floor that leaves headroom for measurement noise).
+- **A single `lhci autorun` command** that integrates with your existing CI pipeline -- no bespoke runner script in between.
 - **Fixes for common Lighthouse failures**: viewport and description meta tags in the base layout, `font-display: swap` for custom fonts, semantic HTML elements (`<main>`, `<nav>`, `<label>`), and a color palette with sufficient contrast ratios.
 
 The total cost is one Clojure file on the test classpath, one JavaScript configuration file, and one shell script. The ongoing cost is zero -- Lighthouse runs automatically on every commit. The value is that performance, accessibility, and SEO regressions are caught at the moment they are introduced, not weeks later when someone happens to run an audit manually.
