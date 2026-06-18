@@ -215,6 +215,8 @@ jobs:
       - name: Verify jar exists
         run: test -f myapp/target/myapp.jar
 
+> **A note on the `myapp/` path prefix.** This workflow assumes a *monorepo* layout where the application lives in a `myapp/` subdirectory (hence `-w /workspace/myapp`, `myapp/target/myapp.jar`, and the `myapp/**` path filters above). The book's companion repository is flat -- the app *is* the repo root -- so there the build writes `target/myapp.jar` and the path filters drop the `myapp/` segment. Adjust the prefix to match your own layout; the steps are otherwise identical.
+
       - name: Deploy static files
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         env:

@@ -27,7 +27,7 @@ Datomic's connection URI determines the storage backend. This is one of its most
 Here is how we configure it:
 
 ```clojure
-;; config.edn
+;; resources/config.edn  (must be on the classpath — :paths includes "resources")
 {:database-uri #profile {:dev  "datomic:mem://myapp-dev"
                          :prod #env "DATABASE_URI"}}
 ```
@@ -102,9 +102,11 @@ Here is the user schema:
     :db/doc         "When the user accepted terms of service (gates access)"}])
 
 (def schema
-  "Complete database schema."
+  "The database schema. Grows as the domain does."
   user-schema)
 ```
+
+Right now `schema` is just `user-schema`. As the recipe domain takes shape later in the book, this same file gains a `recipe-schema` and `schema` becomes `(vec (concat user-schema recipe-schema))`; `user-schema` itself also picks up a `:user/display-name` attribute. The shape -- one `schema` var transacted at startup -- does not change; the contents grow.
 
 A few things to note about this design:
 
@@ -183,17 +185,55 @@ With the conversion functions in place, we wrap Datomic's core API to apply them
 
 The naming convention -- `transact*`, `pull*`, `q*` -- signals that these are enhanced versions of the originals. The rest of the application uses these wrappers exclusively and never touches `java.util.Date`.
 
+## Reading the Clock: `myapp.time`
+
+The bridge handles the *type* of a timestamp. There is a second time problem, orthogonal to it: *where the current time comes from*. Scatter `(time/now)` through the codebase and you get code that is impossible to test deterministically -- every run sees a different "now" -- and a clock you cannot pin for a point-in-time feature. So we route every clock read through one namespace, `myapp.time`, whose underlying `java.time.Clock` is swappable:
+
+```clojure
+(ns myapp.time
+  "Single source of truth for the current time. Everywhere else reads time
+  through this namespace, never through Instant/now etc. directly."
+  (:import [java.time Clock Instant LocalDate ZoneId]
+           [java.util Date]))
+
+(def ^ZoneId amsterdam (ZoneId/of "Europe/Amsterdam"))
+
+(defonce ^:private clock-state (atom (Clock/system amsterdam)))
+(defn current-clock ^Clock [] @clock-state)
+(defn set-clock! [^Clock c] (reset! clock-state c))
+
+(defmacro with-clock
+  "Run body with c as the active clock, restoring the previous one after."
+  [c & body]
+  `(let [old# (current-clock)]
+     (try (set-clock! ~c) ~@body (finally (set-clock! old#)))))
+
+;; The ONLY allowed direct /now calls in the codebase live here.
+(defn now      ^Instant [] (Instant/now (current-clock)))
+(defn today    ^LocalDate [] (LocalDate/now (.withZone (current-clock) amsterdam)))
+(defn now-date ^Date [] (Date/from (now)))            ; for raw Date interop
+
+(defn fixed-clock
+  "A clock frozen at `instant` — pin it in tests via (with-clock (fixed-clock i) …)."
+  (^Clock [^Instant instant] (fixed-clock instant amsterdam))
+  (^Clock [^Instant instant ^ZoneId zone] (Clock/fixed instant zone)))
+```
+
+`now` returns an `Instant` (which `transact*` then bridges to `Date`), `today` a `LocalDate` in the app's display timezone, `now-date` a `java.util.Date` for the rare raw-interop path. The point is the indirection: production runs on `Clock/system`, but a test wraps its body in `(with-clock (time/fixed-clock instant) …)` and every downstream `now`/`today` returns the pinned value -- so a token-expiry test or a "what did this look like last Tuesday" assertion is exact, not racy.
+
+This is the wrapper the [build-hardening chapter](04-build-hardening.md)'s `lint` script enforces: its grep fails the build on a stray `Instant/now` (or `LocalDate/now`, `System/currentTimeMillis`, …) anywhere but this file, because clj-kondo's `:discouraged-var` rule only sees Clojure vars, not Java static calls. From here on, application code calls `(time/now)`, never `(time/now)`.
+
 Notice that `transact*` returns a future (just like `d/transact`). You deref it with `@` when you need to wait for the transaction to complete:
 
 ```clojure
 @(db/transact* conn
    [{:user/id (java.util.UUID/randomUUID)
      :user/email "alice@example.com"
-     :user/created-at (Instant/now)
+     :user/created-at (time/now)
      :user/active? true}])
 ```
 
-The `Instant/now` value gets transparently converted to a `Date` before Datomic sees it. When you later pull this entity, the `Date` comes back as an `Instant`.
+The `time/now` value (a `java.time.Instant`) gets transparently converted to a `Date` before Datomic sees it. When you later pull this entity, the `Date` comes back as an `Instant`.
 
 ## Query Patterns
 
@@ -303,7 +343,7 @@ Using it in a test namespace is one line:
 (use-fixtures :each h/with-test-db)
 
 (deftest transact-with-instant-values
-  (let [now (Instant/now)
+  (let [now (time/now)
         user-id (java.util.UUID/randomUUID)]
     @(db/transact* h/*conn*
        [{:user/id user-id
@@ -374,7 +414,7 @@ It is also worth testing that your schema installs correctly and that uniqueness
           (str "Schema ident " ident " should exist")))))
 
 (deftest email-uniqueness-is-identity
-  (let [now (Instant/now)]
+  (let [now (time/now)]
     @(db/transact* h/*conn*
        [{:user/id (java.util.UUID/randomUUID)
          :user/email "unique@example.com"

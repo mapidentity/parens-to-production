@@ -29,6 +29,8 @@ All of the dev tooling lives in a `dev/` directory that is on the classpath *onl
                     cider/cider-nrepl {:mvn/version "0.58.0"}}}}
 ```
 
+Two of those deps look out of place this early. `tools.reader` is not used by the watcher at all -- it is here for the source inspector's loader a few chapters on ([the inspector](12-inspector.md)), which reads view files form-by-form; we list it now so the `:dev` alias does not churn later. `tools.namespace` is the full-refresh library from option (b) above: we do not build the reload loop on it, but it stays available for the occasional manual `refresh` at the REPL. Neither ships in production.
+
 Because `dev/` is an extra path, the namespaces in it -- `hot-reload`, `dev-reload`, `user` -- exist on the classpath when you develop with the `:dev` alias and do not exist at all in a production build. This is not a convention or a runtime flag; it is a structural fact about what code is present. We will lean on it twice: the WebSocket route and the browser-side script both check, at runtime, whether the dev namespace can be resolved, and both become inert when it cannot. `requiring-resolve` returning nil in production is the same guarantee viewed from the calling side.
 
 ## The File Watcher

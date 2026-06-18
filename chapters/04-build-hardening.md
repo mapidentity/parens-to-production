@@ -22,7 +22,7 @@ That is it. The `:ns-default build` tells `clojure -T:build` to look for functio
 
 ## The Build Namespace
 
-Here is the full `build.clj`:
+Here is the build-hardening portion of `build.clj` -- the strict-compile gate and the uberjar task. The same file later grows a second half (content-hashing, SRI, the `assets`/`verify-assets` tasks, with two extra requires: `clojure.java.io` and `clojure.java.shell`) when [the asset pipeline chapter](19-asset-pipeline.md) arrives; we leave that out here and come back to it:
 
 ```clojure
 (ns build
@@ -220,11 +220,13 @@ The `reformat` script applies zprint across the entire codebase:
 ```bash
 #!/usr/bin/env bash
 cd "$(dirname "$0")"
-find src dev test -name '*.clj' -o -name '*.cljc' -o -name '*.edn' \
+find src dev test \( -name '*.clj' -o -name '*.cljc' -o -name '*.edn' \) ! -name 'rgs-data.edn' \
   | xargs -P4 -I{} zprint '{:search-config? true}' -w {}
 ```
 
-The `-P4` runs four parallel zprint processes. The `{:search-config? true}` tells each invocation to walk up the directory tree to find the `.zprintrc` file. The `-w` flag writes the formatted output back to the file in place.
+The parentheses around the `-name` clauses matter: without them, `find`'s `-o` (OR) binds more loosely than the implicit AND, and the predicate matches a different set of files than you intend. The `! -name 'rgs-data.edn'` excludes one large generated data file that zprint would otherwise churn on. The `-P4` runs four parallel zprint processes. The `{:search-config? true}` tells each invocation to walk up the directory tree to find the `.zprintrc` file. The `-w` flag writes the formatted output back to the file in place.
+
+(`zprint` is the one tool here that is not a Clojure dependency. The devcontainer from [the devcontainer chapter](03-devcontainer.md) installs its binary on the PATH; outside the container, grab the `zprint` release binary and put it on your PATH before running this script.)
 
 Run it after every edit:
 
@@ -280,12 +282,39 @@ The linters fall into four categories.
 
 The `:warn-on-reflection` linter with `:warn-only-on-interop true` is a nice complement to the compile-time check. It flags missing type hints during editing, before you even run the build. The `:warn-only-on-interop true` setting avoids false positives by only warning on actual Java interop calls, not every untyped binding.
 
-The `lint` script is minimal:
+The `lint` script does two things: it runs clj-kondo, and it adds a grep-based guard for a rule clj-kondo cannot express. clj-kondo exits `0` for clean, `1` for warnings, `2` for errors -- and we want warnings to be informational (not fail the build) while errors do fail, so the script captures the return code rather than letting a bare invocation decide:
 
 ```bash
 #!/usr/bin/env bash
+# clj-kondo lint + companion grep checks for things clj-kondo can't see.
 cd "$(dirname "$0")"
+
+# clj-kondo returns: 0 = clean, 1 = warnings, 2 = errors, 3 = bad invocation.
+# Warnings are informational (don't fail); errors fail.
 clj-kondo --lint src test
+kondo_rc=$?
+
+# Time-as-global check. clj-kondo's :discouraged-var only fires on Clojure
+# vars, not Java static methods, so we grep for forbidden /now invocations.
+# Everything must read time through myapp.time (see the Datomic chapter).
+forbidden_pattern='(LocalDate/now|LocalDateTime/now|ZonedDateTime/now|OffsetDateTime/now|Instant/now|Year/now|YearMonth/now|System/currentTimeMillis)'
+violations=$(grep -rn -E "$forbidden_pattern" src test \
+  --include='*.clj' --include='*.cljs' --include='*.cljc' \
+  | grep -v '^src/myapp/time\.clj:' \
+  | grep -v '^test/myapp/time_test\.clj:' \
+  || true)
+
+time_rc=0
+if [ -n "$violations" ]; then
+  echo "Time-as-global violations (use myapp.time wrappers):"
+  echo "$violations"
+  time_rc=1
+fi
+
+# Fail on any clj-kondo error (rc>=2) or any time violation.
+if [ "$kondo_rc" -ge 2 ] || [ "$time_rc" -ne 0 ]; then
+  exit 1
+fi
 ```
 
 Run it:
@@ -293,6 +322,8 @@ Run it:
 ```bash
 ./lint
 ```
+
+The time-as-global grep is the script's second job, and it is worth flagging now even though the rule it enforces only makes sense once [the Datomic chapter](07-datomic.md) introduces the `myapp.time` wrapper: direct clock reads like `(Instant/now)` are Java static-method calls, which clj-kondo's `:discouraged-var` linter cannot see, so a plain grep is the enforcement. If you are following along before that chapter exists, the `clj-kondo --lint` line alone is enough; add the grep block when you add `myapp.time`.
 
 ### A Custom Hook for `defn-`
 

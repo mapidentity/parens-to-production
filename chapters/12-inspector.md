@@ -310,11 +310,13 @@ We never call this directly — that would defeat Hiccup's compile-time precompi
 (defmacro tag-root [tree] (if dev? `(tag-tree ~tree) tree))
 
 (defn base-layout [& body]
-  (page/html5
-    [:head ,,, ]
-    [:body
-     (tag-root body)                       ;; <- dev: tagged; prod: the bare tree
-     ,,, ]))
+  (h/html {:mode :html}                     ;; the escaping renderer from the views chapter
+    (h/raw "<!DOCTYPE html>")
+    [:html
+     [:head ,,, ]
+     [:body
+      (tag-root body)                       ;; <- dev: tagged; prod: the bare tree
+      ,,, ]]))
 ```
 
 The two layers compose cleanly. `tag-tree` only tags elements that still carry reader metadata; a component's *root* was rebuilt by `tag-hiccup`/`tag-callsite` (so its reader metadata is gone) and keeps its component/call-site tags, while every inner literal keeps its own `:line`. Roots resolve to their function; inner literals to their exact line.
