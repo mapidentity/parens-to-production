@@ -15,6 +15,7 @@
   if (!traceId) return;
 
   var trace = null, panel = null, bodyEl = null, detailPaneEl = null, open = false, hlBox = null, flowEl = null;
+  var traces = {};   // id -> trace JSON. The page can be composed of several morphed regions, each built by its own request; `trace`/`traceId` is the active one shown.
   var hlKey = null, wantOpen = false;            // {name, instance} currently boxed; deferred-open intent
   var rowById = {}, childWrapById = {}, triById = {}, parentById = {};
   var ws = null, wsTimer = null;
@@ -800,8 +801,7 @@
     var ci = compInfo(e.target);
     if (!ci) return;                                        // off a component — keep the last reveal (don't clear/flicker)
     highlight(ci.name, ci.idx);
-    var id = findSpan(ci.name, ci.idx);
-    if (id) pageReveal(id);
+    if (regionTraceId(e.target) === traceId) { var id = findSpan(ci.name, ci.idx); if (id) pageReveal(id); }  // reveal only within the active region's trace
   }
   function onAltClick(e) {
     if (!trace || !inspectEnabled()) return;
@@ -809,7 +809,11 @@
     if (!ci) return;
     if (!e.altKey) {                                        // plain click → select the specific element (inspector still jumps to code)
       var leaf = e.target.closest("[data-myapp-src]") || ci.comp;
-      setSelected(findSpan(ci.name, ci.idx), true, { node: leaf, path: domPath(ci.comp, leaf) });
+      var elInfo = { node: leaf, path: domPath(ci.comp, leaf) };
+      var sel = function () { setSelected(findSpan(ci.name, ci.idx), true, elInfo); };
+      var rid = regionTraceId(e.target);                    // element may live in a morphed region with its own trace
+      if (rid && rid !== traceId) ensureTrace(rid, function (ok) { if (ok) setActiveTrace(rid); sel(); });
+      else sel();
       return;
     }
     e.preventDefault(); e.stopImmediatePropagation();
@@ -846,18 +850,44 @@
   window.addEventListener("resize", onViewportChange);
   window.addEventListener("beforeunload", function () { if (popWin && !popWin.closed) { try { popWin.close(); } catch (e) {} } });
 
-  // load an arbitrary stored trace into the overlay (e.g. a prior errored request)
-  function loadTrace(id) {
+  // fetch a trace into the cache (once), then cb(ok)
+  function ensureTrace(id, cb) {
+    if (!id) { if (cb) cb(false); return; }
+    if (traces[id]) { if (cb) cb(true); return; }
     fetch("/dev/__trace/" + encodeURIComponent(id), { headers: { Accept: "application/json" } })
       .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (j) {
-        if (!j || !j.spans) return;
-        traceId = id; trace = j; selectedId = null; selectedElPath = null; temporal = false;
-        if (panel) { panel.remove(); panel = null; }
-        buildPanel(); open = true; panel.style.display = "flex";
-        for (var k in trace.spans) if (trace.spans[k].threw) { setSelected(k, false); break; }   // focus the throw
-      }).catch(function () {});
+      .then(function (j) { if (j && j.spans) { traces[id] = j; if (cb) cb(true); } else { if (cb) cb(false); } })
+      .catch(function () { if (cb) cb(false); });
   }
+  // make a cached trace the active one shown in the panel (rebuilds it)
+  function activate(id) {
+    traceId = id; trace = traces[id]; selectedId = null; selectedElPath = null; temporal = false;
+    if (panel) { panel.remove(); panel = null; }
+    buildPanel(); open = true; panel.style.display = "flex";
+  }
+  function setActiveTrace(id) { if (traces[id] && id !== traceId) { activate(id); return true; } return false; }
+  // nearest morphed-region trace-id for a DOM element (default: the active trace)
+  function regionTraceId(elm) { var n = elm && elm.closest ? elm.closest("[data-myapp-trace-id]") : null; return n ? n.getAttribute("data-myapp-trace-id") : traceId; }
+  // load an arbitrary stored trace and show it (e.g. a prior errored request)
+  function loadTrace(id) {
+    ensureTrace(id, function (ok) {
+      if (!ok) return;
+      activate(id);
+      for (var k in trace.spans) if (trace.spans[k].threw) { setSelected(k, false); break; }   // focus the throw
+    });
+  }
+  // a partial update / navigation / dev hot-reload morphed in a region — its
+  // construction is a different request's trace. Switch the panel to it (and so a
+  // dev-reload morph no longer leaves the overlay showing the pre-edit trace).
+  document.addEventListener("dispatcher:morphed", function (e) {
+    var id = (e.detail && e.detail.traceId) || regionTraceId(document.querySelector((e.detail && e.detail.target) || "main"));
+    if (!id) return;
+    ensureTrace(id, function (ok) {
+      if (!ok) return;
+      if (open) setActiveTrace(id);            // inspecting → show the just-rendered construction
+      else { traceId = id; trace = traces[id]; }  // closed → cache so the next open is fresh
+    });
+  });
   // a prior request 500'd — surface it (the error page had no overlay of its own)
   function showErrorBanner(le) {
     if (!le || !le.id || le.id === traceId) return;
@@ -872,7 +902,7 @@
     fetch("/dev/__trace/" + encodeURIComponent(traceId), { headers: { Accept: "application/json" } })
       .then(function (resp) { if (!resp.ok) { console.error("[construction-view] trace fetch failed:", resp.status); return null; } return resp.json(); })
       .then(function (j) {
-        if (j && j.spans) { trace = j; if (wantOpen || inspectEnabled()) setOpen(true); }    // open if the inspector is already on
+        if (j && j.spans) { trace = j; traces[traceId] = j; if (wantOpen || inspectEnabled()) setOpen(true); }    // open if the inspector is already on
         else if (j && j.error) console.error("[construction-view] trace error:", j.error);
       })
       .catch(function (e) { console.error("[construction-view]", e); });

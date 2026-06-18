@@ -182,6 +182,11 @@ export async function fetchAndMorph(url, opts = {}) {
   }
 
   const finalUrl = res.url || url;
+  // Dev-only: the construction-view tracer stamps every HTML response with an
+  // X-Myapp-Trace header. Tag the morphed region with it so the overlay can show
+  // the construction of THIS partial update, not just the initial page load.
+  // Absent in prod (header not set) → no-op.
+  const traceId = res.headers.get('X-Myapp-Trace');
   const html = await res.text();
 
   // 4xx/5xx with HTML body — morph in place so server-rendered errors
@@ -214,6 +219,9 @@ export async function fetchAndMorph(url, opts = {}) {
     ignoreActiveValue,
   });
 
+  // morphed region carries its own trace-id (see note above); dev-only.
+  if (traceId) targetEl.setAttribute('data-myapp-trace-id', traceId);
+
   updateTitle(parsedDoc);
 
   // History bookkeeping. When fetch followed a 302, finalUrl reflects
@@ -237,7 +245,7 @@ export async function fetchAndMorph(url, opts = {}) {
 
   // Hook for modules / future features.
   document.dispatchEvent(new CustomEvent('dispatcher:morphed', {
-    detail: { url: finalUrl, target, method },
+    detail: { url: finalUrl, target, method, traceId },
   }));
 }
 
