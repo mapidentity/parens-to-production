@@ -206,6 +206,8 @@ These tests are straightforward, but they catch real problems:
 
 ## Example Test: Routes
 
+This section builds one self-contained example to teach a *technique* -- data-driven route testing -- rather than a file you will find verbatim in the companion repo. There, the web layer is covered by `test/myapp/web/handler_smoke_test.clj` (each route returns a sane status) and `test/myapp/web/security_test.clj` (the CSP, auth gates, and escaping). The `routes-test` namespace below is the simplest place to show the pattern; adapt its route list to whatever your app actually serves.
+
 The routes tests verify that the routing table is correct and that the app handles edge cases properly:
 
 ```clojure
@@ -247,8 +249,9 @@ Rather than testing each route individually, a data-driven approach lists all ex
    ["/auth/logout" :post]
    ["/terms/welcome" :get]
    ["/terms/accept" :post]
-   ["/legal/algemene-voorwaarden" :get]
-   ["/legal/privacyverklaring" :get]
+   ["/recipes" :get]
+   ["/recipes/new" :get]
+   ["/recipes/:id" :get]
    ["/dashboard" :get]
    ["/admin" :get]])
 
@@ -323,7 +326,9 @@ The coverage configuration lives in the `:coverage` alias in `deps.edn`:
 
 ```clojure
 :coverage {:extra-paths ["test"]
-           :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}}
+           :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}
+                        ;; in-memory SMTP for the email-flow tests (ch. 16)
+                        com.icegreen/greenmail {:mvn/version "2.1.8"}}
            :main-opts ["-m" "cloverage.coverage"
                        "--src-ns-path" "src"
                        "--test-ns-path" "test"
@@ -339,27 +344,18 @@ The key flags:
 
 Why 50% and not 80% or 100%? At this stage of the project, the app has config, routes, handlers, database code, and email sending. Some of that (email, database transactions) is harder to unit test and will be covered by integration and end-to-end tests. Setting the bar at 50% ensures meaningful coverage without creating pressure to write bad tests just to hit a number. The threshold should go up as the test suite matures.
 
-## The `unittest` Script
+## Running the Tests
 
-Every verification step gets a script. Here is the unit test script:
-
-```bash
-#!/usr/bin/env bash
-cd "$(dirname "$0")"
-clojure -M:coverage
-```
-
-Two lines. It changes to the project directory (so it works regardless of where you invoke it from) and runs Clojure with the coverage alias. That is it.
-
-You run it from anywhere:
+Two commands cover the two modes, both run from the project root:
 
 ```bash
-./myapp/unittest
+clojure -X:test      # fast: run the suite, no coverage
+clojure -M:coverage  # run under Cloverage, enforce the coverage threshold
 ```
 
-If tests pass and coverage is above the threshold, exit code 0. If anything fails, non-zero. CI uses this same script, so local and CI behavior are identical.
+`clojure -X:test` is the quick feedback loop during development; `clojure -M:coverage` is what the commit gate and CI run, because it both runs the tests and fails if coverage drops below the threshold. The companion repo ships convenience scripts only for the two checks you run constantly by hand -- `./reformat` and `./lint` -- and calls the test commands directly in CI; if you like, wrapping `clojure -M:coverage` in a one-line `./unittest` script (the same `cd "$(dirname "$0")"` pattern as the others) is harmless, but it is not required and the repo does not ship one.
 
-Having these scripts matters more than it might seem. Without them, you end up with "run this command, but make sure you're in the right directory, and use these flags" instructions that rot. A script is executable documentation that cannot go stale.
+If tests pass and coverage is above the threshold, exit code 0; otherwise non-zero. Because CI runs the very same command, local and CI behavior are identical.
 
 ## The `deps.edn` Test Alias
 
@@ -368,7 +364,9 @@ For running tests without coverage (faster feedback during development), there i
 ```clojure
 :test {:extra-paths ["test"]
        :extra-deps {io.github.cognitect-labs/test-runner
-                    {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+                    {:git/tag "v0.5.1" :git/sha "dfb30dd"}
+                    ;; in-memory SMTP for the email-flow tests (ch. 16)
+                    com.icegreen/greenmail {:mvn/version "2.1.8"}}
        :main-opts ["-m" "cognitect.test-runner"]
        :exec-fn cognitect.test-runner.api/test}
 ```
@@ -379,7 +377,7 @@ This uses Cognitect's test runner, which discovers and runs all `_test.clj` file
 clojure -M:test
 ```
 
-The difference: `:test` runs fast without instrumentation. `:coverage` instruments every form for coverage tracking, which is slower. Use `:test` during development, `:coverage` (via the `unittest` script) before committing.
+The difference: `:test` runs fast without instrumentation. `:coverage` instruments every form for coverage tracking, which is slower. Use `clojure -X:test` during development, `clojure -M:coverage` before committing.
 
 ## In-File Tests: Co-Locating Quick Tests with Source
 
@@ -467,7 +465,7 @@ But `:patterns '[".*"]'` now loads *every* namespace under `src` as a test names
 clojure -X:test :nses '[myapp.config myapp.web.routes]'
 ```
 
-The same caveat applies to the commit gate. The `unittest` script runs `clojure -M:coverage`, and cloverage finds tests via its own `--test-ns-path "test"` -- so in-file tests are skipped there too until you broaden that path (or its `--test-ns-regex`) as well. Either way, discovery stops being automatic and becomes something you maintain.
+The same caveat applies to the commit gate. The coverage gate runs `clojure -M:coverage`, and cloverage finds tests via its own `--test-ns-path "test"` -- so in-file tests are skipped there too until you broaden that path (or its `--test-ns-regex`) as well. Either way, discovery stops being automatic and becomes something you maintain.
 
 Co-location is convenient -- the test sits where you edit, and reads as documentation for the next person. That convenience is not free: it puts a test concern into a source file, and while the `tests` macro keeps the *dependency* out of the artifact, it cannot make discovery automatic. The trade is worth it for short, doc-style, and private-function checks. For anything heavier -- standalone or integration -- the separate `test/` file stays simpler, and discovery stays free. Keep it there.
 

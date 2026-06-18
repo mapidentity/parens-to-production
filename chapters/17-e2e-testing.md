@@ -27,12 +27,13 @@ The heart of the setup is a dedicated server entry point. It looks like your pro
   Stubs email sending to capture magic links in an atom, exposed via
   test-only HTTP endpoints for Playwright to fetch."
   (:require
-    [jsonista.core :as json]
+    [clojure.data.json :as json]
     [myapp.analytics.db :as analytics]
     [myapp.auth.email :as email]
     [myapp.config :as config]
     [myapp.db.core :as db]
     [myapp.test-helpers :as h]
+    [myapp.web.assets :as assets]
     [myapp.web.routes :as routes]
     [org.httpkit.server :as http-kit]
     [reitit.ring :as ring]
@@ -67,15 +68,20 @@ Now Playwright needs a way to retrieve those captured emails. We add two endpoin
                  to (filter #(= (:to %) to)))]
     {:status 200
      :headers {"content-type" "application/json"}
-     :body (json/write-value-as-string emails)}))
+     :body (json/write-str emails)}))
 
 (defn- clear-emails-handler
-  "Clear all captured emails."
-  [_request]
-  (reset! sent-emails [])
-  {:status 200
-   :headers {"content-type" "application/json"}
-   :body "{\"cleared\":true}"})
+  "Clear captured emails -- optionally scoped via ?to=<addr> so parallel
+  Playwright workers don't trample each other's state. Without ?to=, clears
+  all (only safe in serial runs)."
+  [request]
+  (let [to (get-in request [:params :to])]
+    (if to
+      (swap! sent-emails (fn [es] (vec (remove #(= (:to %) to) es))))
+      (reset! sent-emails []))
+    {:status 200
+     :headers {"content-type" "application/json"}
+     :body "{\"cleared\":true}"}))
 ```
 
 These get mounted alongside the app's real routes:
@@ -135,11 +141,13 @@ The app handler is assembled the same way as production, but using the extended 
   (let [session-store (cookie/cookie-store
                         {:key (config/get-config :session-key)})]
     (ring/ring-handler
-      (ring/router e2e-routes)
+      ;; `:conflicts nil` mirrors prod — tolerates static-vs-dynamic
+      ;; route overlaps (static path wins, dynamic ids fall through).
+      (ring/router e2e-routes {:conflicts nil})
       (ring/routes
         (ring/create-file-handler
           {:path "/"
-           :root "static"})
+           :root assets/static-root})
         (ring/create-default-handler))
       {:middleware [[params/wrap-params]
                     [keyword-params/wrap-keyword-params]
@@ -182,6 +190,8 @@ Everything comes together in `start!`:
     ;; Initialize fresh in-memory databases
     (db/create-database!)
     (analytics/create-database!)
+    ;; Load the asset manifest so (assets/asset ...) resolves in views.
+    (assets/load-manifest!)
     ;; Start server
     (http-kit/run-server
       (build-app)
@@ -228,8 +238,12 @@ module.exports = {
   webServer: {
     command: 'clojure -X:test myapp.e2e-server/start!',
     url: 'http://localhost:9876/health',
-    timeout: 120_000,
+    timeout: 300_000,
     reuseExistingServer: !process.env.CI,
+    // Pipe the server's stdout/stderr to the Playwright reporter so a
+    // startup failure shows up in CI logs next to the timeout message.
+    stdout: 'pipe',
+    stderr: 'pipe',
   },
 };
 ```
@@ -238,7 +252,7 @@ The `webServer` block is the key piece. Playwright will:
 
 1. Run the `command` to start the Clojure server.
 2. Poll the `url` until it returns a 200 response. This is your `/health` endpoint -- a simple route that returns `{"status": "ok"}`.
-3. Wait up to `timeout` milliseconds (120 seconds here, because JVM startup plus Datomic schema transacting takes time).
+3. Wait up to `timeout` milliseconds (300 seconds here -- JVM startup plus Datomic schema transacting can be slow on a cold, CPU-constrained CI runner, and a generous ceiling avoids flaky timeouts; the `stdout`/`stderr: 'pipe'` settings surface any server-side startup error in the logs instead of leaving you with a bare timeout).
 4. Run the tests once the server is healthy.
 5. Kill the server process when tests finish.
 
@@ -396,25 +410,17 @@ test('logout prevents dashboard access', async ({ page, request }) => {
 
 A security test: after logout, navigating directly to `/dashboard` should redirect to the home page (the login form). This verifies that session destruction actually works, not just that the UI hides the button.
 
-## The Test Runner Script
+## Running the Suite
 
-The final piece is a shell script that ties it together:
-
-```bash
-#!/usr/bin/env bash
-cd "$(dirname "$0")"
-playwright test --config playwright.config.js
-```
-
-That is all. The `cd` ensures the script works regardless of where you invoke it from -- important when running from a CI pipeline or a project root. Playwright reads the config, starts the Clojure server, waits for it to be healthy, runs the specs, and tears everything down.
-
-Run it:
+There is no wrapper script to write -- running the suite is one command from the project root, where `playwright.config.js` lives:
 
 ```bash
-./e2etest
+npx playwright test
 ```
 
-Playwright handles the lifecycle. You do not need to start the server manually (though you can, during development, thanks to `reuseExistingServer`).
+Playwright reads the config, starts the Clojure server (via the `webServer` block), waits for `/health` to return 200, runs every spec in `e2e/`, and tears everything down. You do not need to start the server manually (though you can, during development, thanks to `reuseExistingServer`). This is exactly the command [the CI/CD chapter](21-ci-cd.md) runs in the pipeline.
+
+The companion repo ships two spec files -- `e2e/auth.spec.js` (the magic-link login, logout, and route-protection flows built above) and `e2e/recipes.spec.js` (the recipe browse/fork/version flows) -- and `npx playwright test` runs both.
 
 ## Design Decisions Worth Noting
 

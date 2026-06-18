@@ -86,8 +86,10 @@
       {:middleware [[params/wrap-params] [keyword-params/wrap-keyword-params]
                     [session/wrap-session
                      {:store session-store
+                      ;; mirror production (:same-site :lax); :strict would drop
+                      ;; the session cookie on the cross-context magic-link GET.
                       :cookie-attrs {:http-only true
-                                     :same-site :strict}}]
+                                     :same-site :lax}}]
                     [routes/wrap-locale]
                     [routes/wrap-no-cache-authenticated]]})))
 
