@@ -599,7 +599,8 @@
     popBtn.setAttribute("data-nodrag", "1");
     popBtn.addEventListener("click", function (e) { e.stopPropagation(); if (popped) redock(); else popOut(); });
     head.appendChild(popBtn);
-    if (trace["recording?"] === false) head.appendChild(el("div", "color:#fbbf24;font-size:11px;margin-bottom:4px;", "⚠ FlowStorm recording is OFF — (trace/enable-recording!)"));
+    // Note: recording is auto-managed per page (off between page loads by design —
+    // see dev/trace.clj), so a false "recording?" here is normal, not an error.
     var r = trace.request || {};
     var ms = r.ms != null ? (r.ms / (r["ms-scale"] || 1)).toFixed(1) + "ms" : "";
     head.appendChild(el("div", "color:#34d399;font-weight:600;", "⛶ construction view  ·  drag to detach"));
@@ -660,7 +661,7 @@
     bodyEl.textContent = "";
     var roots = rootsOf();
     roots.forEach(function (id) { var n = renderNode(id, 0); if (n) bodyEl.appendChild(n); });
-    if (!roots.length) bodyEl.appendChild(el("div", "color:#6b7280;padding:10px;", trace["recording?"] === false ? "Recording is OFF — no frames captured." : "No frames recorded."));
+    if (!roots.length) bodyEl.appendChild(el("div", "color:#6b7280;padding:10px;", "No frames recorded."));
     if (selectedId != null && rowById[selectedId]) rowById[selectedId].style.boxShadow = "inset 3px 0 0 #38bdf8";   // re-apply selection marker
   }
   // flip lexical ⇄ temporal: rebuild the icicle + tree; focus/thread reset (fresh render)

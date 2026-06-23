@@ -6,9 +6,20 @@
   This namespace does NOT instrument anything; it READS FlowStorm's recordings
   and projects them into the JSON the browser overlay consumes.
 
-  Two key design choices:
-  - LAZY projection. `wrap-trace` stores only a tiny descriptor {tid start end ..}
-    per request; the (potentially expensive) tree/flow projection runs on demand
+  Three key design choices:
+  - PER-VISIT retention. The recorder holds only the current page-visit: the page
+    load plus the in-page morphs since (a morph swaps a region — chrome and earlier
+    regions stay on screen, so their trace ids must stay readable). A FULL
+    navigation (see full-navigation?) evicts the lot and starts the next visit;
+    a morph records but does NOT clear. Each page/morph request records only for
+    its own render and then turns recording OFF, so with no `myapp.*` background
+    threads (the only writers under instrumentOnlyPrefixes) assets, /dev/ reads,
+    and idle accrete nothing. This is what keeps a days-long :storm session from
+    growing without bound — recording is no longer left on from boot, and each
+    real navigation resets. Reading a stored window back (the overlay's /dev/
+    fetches) needs no active recording, since set-recording gates writes only.
+  - LAZY projection. `record-page` stores only a tiny descriptor {tid start end ..}
+    per page; the (potentially expensive) tree/flow projection runs on demand
     when the overlay fetches /dev/__trace or /dev/__flow. So the request hot path
     pays almost nothing, the heavy values stay in FlowStorm's recorder (not copied
     into our store), and form-level analysis becomes affordable.
@@ -45,6 +56,7 @@
 (defonce ^:private last-error (atom nil))
 
 (defn enable-recording! [] (try (dbg/set-recording true) (catch Throwable _ nil)))
+(defn disable-recording! [] (try (dbg/set-recording false) (catch Throwable _ nil)))
 (defn clear-recordings! []
   (try
     (swap! epoch inc)
@@ -52,7 +64,12 @@
     (reset! store {:order clojure.lang.PersistentQueue/EMPTY :by-id {}})
     (reset! last-error nil)
     (catch Throwable _ nil)))
-(defn setup! [] (enable-recording!))
+(defn setup! []
+  ;; Start NOT recording. A page request turns recording on for the duration of
+  ;; its own render and off again (see record-page), so boot-time view loading,
+  ;; DB seeding, REPL evals, and idle time accrete nothing. The recorder only
+  ;; ever holds the page currently on screen.
+  (disable-recording!))
 
 (defn- recording? [] (try (when-let [f (requiring-resolve 'flow-storm.tracer/recording?)] (boolean (f))) (catch Throwable _ nil)))
 
@@ -729,7 +746,45 @@
     (str/replace-first body "<html" (str "<html data-myapp-trace-id=\"" id "\""))
     body))
 
-(defn- trace-request [handler req]
+(defn- page-request?
+  "Is this request something that becomes (part of) the screen — and so worth
+  recording? Covers a top-level navigation, a form submit, AND the dispatcher's
+  fetch-and-morph (a partial <main>/region swap) — all send `Accept: text/html`.
+  Excludes sub-resource fetches (css/js/img send image/*, text/css, …), JSON XHR
+  (*/*), prefetches, and the overlay's own /dev/ fetches. Each such request records
+  (and turns recording off after), so assets, /dev/ reads, and idle accrete nothing."
+  [req]
+  (let [h (:headers req)]
+    (and (#{:get :post} (:request-method req))
+         (some-> (get h "accept") (str/includes? "text/html"))
+         (not (some-> (get h "sec-purpose") (str/includes? "prefetch")))
+         (not (some-> (get h "purpose") (str/includes? "prefetch"))))))
+
+(defn- full-navigation?
+  "A genuine top-level page load from scratch — address bar, hard refresh,
+  back/forward, a non-enhanced link, a full form submit. Browsers tag these
+  `Sec-Fetch-Mode: navigate`; an in-page fetch-and-morph is a `fetch()`, so its
+  mode is cors/same-origin/empty, NOT navigate. This is the ONLY point we evict
+  the prior recording: a new page replaces everything on screen, so the previous
+  page AND its in-page morphs become stale together. A morph, by contrast, swaps
+  only a region — the rest of the page (and its trace ids) is still on screen and
+  must stay readable, so a morph records but does NOT clear. (Non-browser clients
+  omit Sec-Fetch-Mode; treat them as full loads so a bare curl still resets.)"
+  [req]
+  (let [mode (get-in req [:headers "sec-fetch-mode"])]
+    (or (nil? mode) (= mode "navigate"))))
+
+(defn- record-page
+  "Record a page/morph render, then stop recording so assets, /dev/ reads, and
+  idle accrete nothing. On a FULL navigation (not an in-page morph) first discard
+  the prior page's recordings — that's what bounds a long :storm session: the
+  recorder holds only the current page-visit (its load + the morphs since), and
+  resets on each real navigation. Reading a stored window back (the overlay's
+  /dev/ fetches) needs no active recording — set-recording gates writes only."
+  [handler req]
+  (when (full-navigation? req)
+    (clear-recordings!))         ; new page from scratch — evict the prior visit (bumps epoch)
+  (enable-recording!)
   (let [tid (thread-id) start (timeline-len tid) t0 (System/nanoTime)]
     (try
       (let [resp (handler req) ms (/ (- (System/nanoTime) t0) 1e6)]
@@ -746,7 +801,10 @@
           (put! id {:id id :tid tid :start start :end (timeline-len tid) :epoch @epoch
                     :uri (:uri req) :method (:request-method req) :status 500 :ms ms :errored true})
           (reset! last-error {:id id :uri (:uri req) :ex (.getName (class e))})
-          (throw e))))))
+          (throw e)))
+      ;; Stop recording once the page is rendered: between page loads (and while
+      ;; the overlay reads this window back) the recorder takes no new entries.
+      (finally (disable-recording!)))))
 
 (defn get-last-error-json
   "The most recent uncaught-error trace (id + uri + exception), or null. For
@@ -757,6 +815,7 @@
 
 (defn wrap-trace [handler]
   (fn [req]
-    (if (str/starts-with? (str (:uri req)) "/dev/")
-      (handler req)
-      (trace-request handler req))))
+    (if (and (not (str/starts-with? (str (:uri req)) "/dev/"))
+             (page-request? req))
+      (record-page handler req)        ; the only path that records — and it prunes first
+      (handler req))))                 ; assets, XHR, /dev/ fetches: recording stays off

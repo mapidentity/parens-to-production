@@ -59,8 +59,14 @@
           :jvm-opts ["-Dclojure.storm.instrumentEnable=true"
                      "-Dclojure.storm.instrumentOnlyPrefixes=myapp."
                      "-Dclojure.storm.instrumentAutoPrefixes=false"
-                     ;; record from boot; the GUI is never started (headless)
-                     "-Dflowstorm.startRecording=true"
+                     ;; Recording is OFF at boot and driven per-page by the tracer
+                     ;; (dev/trace.clj): each page render records, then stops, and
+                     ;; the recorder only ever holds the page on screen. Do NOT set
+                     ;; flowstorm.startRecording=true — recording left on from boot
+                     ;; is what let the timeline grow to ~30GB over a long session.
+                     ;; The heap cap turns any regression of that leak into a fast,
+                     ;; loud OOM instead of silently eating host RAM for days.
+                     "-Xmx2g"
                      "-Dmyapp.dev=true"]}
 
   :repl {:main-opts ["-m" "nrepl.cmdline" "--port" "7888" "--interactive"
