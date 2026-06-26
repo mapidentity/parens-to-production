@@ -640,7 +640,7 @@
   "Render a line diff (seq of {:op :text}) as a monospace +/- block."
   [diff]
   [:div.font-mono.text-sm.rounded-md.border.border-border.overflow-hidden
-   (for [[i {:keys [op text]}] (map-indexed vector diff)]
+   (for [{:keys [op text]} diff]
      [:div
       {:class (case op
                 :add "diff-add px-3 py-0.5"

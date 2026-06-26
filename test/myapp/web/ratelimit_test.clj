@@ -8,9 +8,9 @@
 (use-fixtures
   :each
   (fn [f]
-    (rl/reset!)
+    (rl/clear!)
     (f)
-    (rl/reset!)))
+    (rl/clear!)))
 
 (deftest allows-up-to-the-limit-then-blocks
   (testing "the first `limit` hits pass, the next is rejected"

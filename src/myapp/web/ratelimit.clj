@@ -15,9 +15,11 @@
 (defonce ^:private buckets (atom {}))
 
 (defn allow?
-  "Return true if `k` is under `limit` hits within the trailing `window-ms`,
-  recording the hit when it is. Prunes timestamps outside the window on each
-  call, so a key idle for a full window costs nothing to keep around."
+  "Return true (and record the hit) when `k` is under its window budget.
+
+  `k` is allowed if it has had fewer than `limit` hits in the trailing
+  `window-ms`. Timestamps outside the window are pruned on each call, so a key
+  idle for a full window costs nothing to keep around."
   [k ^long limit ^long window-ms]
   (let [now (.toEpochMilli (time/now))
         cutoff (- now window-ms)
@@ -30,7 +32,7 @@
                               :ok? ok?}))))]
     (get-in next-state [k :ok?])))
 
-(defn reset!
+(defn clear!
   "Clear all counters (test support)."
   []
-  (clojure.core/reset! buckets {}))
+  (reset! buckets {}))
