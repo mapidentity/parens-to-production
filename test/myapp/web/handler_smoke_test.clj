@@ -85,7 +85,8 @@
           "diff page is immutable by (id, from-t, to-t)")
         ;; the CURRENT read is mutable — it must NOT carry the immutable header
         (is
-          (nil? (get-in (handler/recipe-show (req (str "/recipes/" id))) [:headers "Cache-Control"]))
+          (nil?
+            (get-in (handler/recipe-show (req (str "/recipes/" id))) [:headers "Cache-Control"]))
           "current recipe read is not immutably cached")))
     (testing "unknown recipe id 404s"
       (is
@@ -135,11 +136,13 @@
                      :body "x"}
           wrapped (routes/wrap-no-cache-authenticated (constantly immutable))]
       (is
-        (= "private, max-age=31536000, immutable"
+        (=
+          "private, max-age=31536000, immutable"
           (get-in (wrapped (h/request :get "/recipes/x/at/1")) [:headers "Cache-Control"]))
         "anonymous: the handler's immutable header is preserved")
       (is
-        (= "no-store"
+        (=
+          "no-store"
           (get-in
             (wrapped (assoc-in (h/request :get "/recipes/x/at/1") [:session :user-email] "a@b.lan"))
             [:headers "Cache-Control"]))

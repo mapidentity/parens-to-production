@@ -343,10 +343,11 @@
   (let [db (d/db conn)
         ids (mapv :recipe/id (recipes-by-user db user-eid))
         i (long (.indexOf ^java.util.List ids id))
-        j (long (case dir
-                  :up (dec i)
-                  :down (inc i)
-                  i))]
+        j (long
+            (case dir
+              :up (dec i)
+              :down (inc i)
+              i))]
     (when (and (nat-int? i) (nat-int? j) (< j (count ids)) (not= i j))
       (reorder!
         conn

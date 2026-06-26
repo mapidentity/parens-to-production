@@ -9,6 +9,7 @@
     [myapp.db.core :as db]
     [myapp.time :as time])
   (:import
+    [java.security MessageDigest]
     [java.time Instant]
     [java.util Base64 UUID]
     [javax.crypto Mac]
@@ -64,10 +65,14 @@
   (try
     (let [[payload-b64 signature-b64] (str/split token #"\." 2)]
       (when (and payload-b64 signature-b64)
-        ;; Verify signature
+        ;; Verify signature with a constant-time compare on the raw bytes.
+        ;; `=` on the base64 strings is content-dependent and short-circuits,
+        ;; leaking timing; `MessageDigest/isEqual` runs in time independent of
+        ;; where the first mismatching byte is. (A malformed base64 signature
+        ;; throws in `base64-decode` and is caught below as an invalid token.)
         (let [expected-signature (hmac-sha256 signing-key payload-b64)
-              expected-signature-b64 (base64-encode expected-signature)]
-          (when (= signature-b64 expected-signature-b64)
+              actual-signature (base64-decode signature-b64)]
+          (when (MessageDigest/isEqual expected-signature actual-signature)
             ;; Signature valid, check expiration
             (let [payload-json (String. ^bytes (base64-decode payload-b64) "UTF-8")
                   payload (json/read-str payload-json :key-fn keyword)

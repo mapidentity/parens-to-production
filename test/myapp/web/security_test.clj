@@ -1,12 +1,14 @@
 (ns myapp.web.security-test
-  "Regression tests that lock in the security posture: output escaping (the
-  stored-XSS fix), the strict Content-Security-Policy, and asset/import-map
-  resolution. These guard against silently reintroducing the non-escaping
-  renderer or loosening the CSP."
+  "Regression tests that lock in the security posture: output escaping for
+  plain content, markdown sanitization for the one h/raw field (recipe
+  descriptions), the strict Content-Security-Policy, and asset/import-map
+  resolution. These guard against silently reintroducing a non-escaping
+  renderer, an unsanitized markdown path, or a loosened CSP."
   (:require
     [clojure.string :as str]
     [clojure.test :refer [deftest is testing]]
     [myapp.web.assets :as assets]
+    [myapp.web.markdown :as markdown]
     [myapp.web.views :as views]))
 
 (defn- sha256-b64
@@ -18,9 +20,10 @@
       (.digest (java.security.MessageDigest/getInstance "SHA-256") (.getBytes s "UTF-8")))))
 
 (deftest output-escaping-prevents-stored-xss
-  (testing "user-controlled content is HTML-escaped by the shared layout"
+  (testing "plain text content is HTML-escaped by the shared layout"
     ;; error-page routes a caller-supplied string through base-layout, the same
-    ;; escaping renderer every page uses. A recipe title took this exact path.
+    ;; escaping renderer every page uses. Recipe titles, ingredients, and steps
+    ;; take this exact path: they are emitted as Hiccup strings, never h/raw.
     (let [payload "<img src=x onerror=alert(document.cookie)>"
           html (str (views/error-page :en payload))]
       (is
@@ -29,6 +32,29 @@
       (is
         (not (str/includes? html "<img src=x onerror"))
         "the raw executable payload must NOT appear in the output"))))
+
+(deftest markdown-render-sanitizes-stored-xss
+  (testing "the markdown renderer neutralizes HTML and dangerous URLs"
+    ;; Recipe descriptions are the ONE field rendered as markdown and emitted
+    ;; with h/raw (views.clj render-recipe / render-version). The escaping
+    ;; layout does NOT protect this path, so the renderer itself must sanitize.
+    ;; This guards against the non-escaping renderer silently coming back.
+    (testing "inline HTML is escaped, not passed through"
+      (let [html (markdown/render "Tasty <script>alert(document.cookie)</script> pasta")]
+        (is (not (str/includes? html "<script")) "script tags must not survive")
+        (is (str/includes? html "&lt;script") "the tag must render escaped")))
+    (testing "event-handler injection via inline HTML is escaped"
+      (let [html (markdown/render "<img src=x onerror=alert(1)>")]
+        (is (not (str/includes? html "<img src=x onerror")) "img/onerror must not survive")))
+    (testing "javascript: link targets are stripped"
+      (let [html (markdown/render "[click me](javascript:alert(1))")]
+        (is
+          (not (str/includes? html "javascript:alert"))
+          "the javascript: scheme must be removed")))
+    (testing "ordinary markdown still renders"
+      (let [html (markdown/render "A **bold** [link](https://example.com).")]
+        (is (str/includes? html "<strong>bold</strong>"))
+        (is (str/includes? html "href=\"https://example.com\""))))))
 
 (deftest csp-is-strict
   (testing "the Content-Security-Policy locks sources down"

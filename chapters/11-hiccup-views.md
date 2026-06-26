@@ -515,7 +515,9 @@ Some content we *do* want emitted verbatim, and only those places use `h/raw`:
     [:div.legal-content.mt-4 (h/raw (markdown/render (:recipe/description recipe)))])
   ```
 
-Each `h/raw` is a deliberate, auditable decision. The rule of thumb: grep for `h/raw`, and every hit should be either a literal you wrote or output from a renderer you trust. Everything else flows through `h/html` and is escaped.
+  This is the one `h/raw` site that carries *untrusted* input -- a recipe description is whatever a user typed -- so the bypass of the escaping renderer is only safe because the markdown renderer itself sanitizes (it escapes embedded HTML and strips dangerous URL schemes). That sanitization is set up in the CommonMark section below; without it, this line would be a stored-XSS hole.
+
+Each `h/raw` is a deliberate, auditable decision. The rule of thumb: grep for `h/raw`, and every hit should be either a literal you wrote or output from a renderer that sanitizes its input. The doctype and inline assets are bytes we control; the markdown renderer is trusted *because* it neutralizes the HTML a user might smuggle in. Everything else flows through `h/html` and is escaped.
 
 A correctly-escaped output layer is the primary defense here. (The app also ships a strict, hash-based Content-Security-Policy with no `'unsafe-inline'` for scripts, which would *additionally* block an injected inline script -- but that is defense-in-depth sitting behind escaping, and it is the subject of its own post. The escaping is what makes the XSS not happen in the first place.)
 
@@ -538,7 +540,11 @@ Recipe descriptions and legal documents (terms of service, privacy policy) are w
   (-> (Parser/builder) (.extensions extensions) (.build)))
 
 (def ^:private ^HtmlRenderer renderer
-  (-> (HtmlRenderer/builder) (.extensions extensions) (.build)))
+  (-> (HtmlRenderer/builder)
+      (.extensions extensions)
+      (.escapeHtml true)      ;; escape raw inline HTML in the source
+      (.sanitizeUrls true)    ;; strip javascript: and other unsafe schemes
+      (.build)))
 
 (defn render
   "Render markdown string to HTML string."
@@ -548,6 +554,8 @@ Recipe descriptions and legal documents (terms of service, privacy policy) are w
 ```
 
 The parser and renderer are created once and reused (they are thread-safe). We enable the GFM tables extension because legal documents sometimes need tables (e.g., data processing categories, retention periods).
+
+The two security settings are not optional here. By default CommonMark passes raw inline HTML straight through, so a recipe description containing `<script>steal()</script>` or `<img src=x onerror=…>` would render as live markup -- and we insert that output with `h/raw`, which means the escaping renderer never gets a chance to neutralize it. `escapeHtml` makes CommonMark emit such fragments as text; `sanitizeUrls` drops `javascript:` (and similar) link targets so `[click](javascript:…)` can't smuggle a handler through a perfectly legitimate Markdown link. With both on, the renderer's output is safe to emit raw, which is exactly the property the previous section relied on. A regression test (`markdown-render-sanitizes-stored-xss`) locks this in so the settings can't be quietly dropped. The strict CSP still sits behind all of this as defense-in-depth, but it is not the thing standing between a recipe description and a stored XSS -- the sanitizing renderer is.
 
 The rendered HTML is inserted into a styled container with `h/raw` (the deliberate raw-output decision from the previous section):
 

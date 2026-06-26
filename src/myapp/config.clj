@@ -40,6 +40,23 @@
         {:profile profile
          :var var-name}))))
 
+(defn- require-signing-key-strength!
+  "Refuse a HMAC-SHA256 signing key shorter than the 256-bit hash output.
+
+  A key shorter than the block/output size weakens the MAC; HMAC keys should
+  carry at least as much entropy as the digest. 32 bytes is the floor. Caught
+  at boot rather than discovered as a silently-weak signature."
+  ^bytes [^bytes k]
+  (when (< (alength k) 32)
+    (throw
+      (ex-info
+        (str
+          "Signing key must be at least 32 bytes (got "
+          (alength k)
+          "). HMAC-SHA256 needs a key with at least 256 bits of entropy.")
+        {:length (alength k)})))
+  k)
+
 (defn- resolve-keys
   "Convert string keys to bytes, with profile-aware fallback policy.
 
@@ -57,10 +74,11 @@
                         (generate-session-key)))))
       (update :signing-key
               (fn [^String k]
-                (or (when k (.getBytes k "ISO-8859-1"))
-                    (do (require-prod-key! profile "SIGNING_KEY")
-                        (println "⚠️  Generating random signing key (dev mode)")
-                        (generate-signing-key)))))))
+                (require-signing-key-strength!
+                  (or (when k (.getBytes k "ISO-8859-1"))
+                      (do (require-prod-key! profile "SIGNING_KEY")
+                          (println "⚠️  Generating random signing key (dev mode)")
+                          (generate-signing-key))))))))
 
 (defn- require-prod-admin-email!
   "Refuse to start when :prod is missing ADMIN_EMAIL.

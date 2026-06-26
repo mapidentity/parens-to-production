@@ -47,8 +47,7 @@
   `wrap-current-user` and read back as `:admin?` by handlers and `wrap-admin`."
   [email]
   (let [admin-email (config/get-config :admin-email)]
-    (boolean
-      (and email admin-email (= (str/lower-case email) (str/lower-case admin-email))))))
+    (boolean (and email admin-email (= (str/lower-case email) (str/lower-case admin-email))))))
 
 (defn wrap-current-user
   "Soft auth that never redirects.
@@ -210,11 +209,12 @@
    ;; these 404 in prod (the dev trace ns isn't loaded); each route below supplies
    ;; only how to pull its args from the request.
    ["/dev/__trace/:id"
-    {:get (dev-json-handler 'trace/get-trace-json
-            (fn [f req] (f (get-in req [:path-params :id]))))}]
+    {:get
+     (dev-json-handler 'trace/get-trace-json (fn [f req] (f (get-in req [:path-params :id]))))}]
    ;; Flow drill-down: ?name=<data-myapp-name>&idx=<instance>&src=<file:line:col>
    ["/dev/__flow/:id"
-    {:get (dev-json-handler 'trace/get-flow-json
+    {:get (dev-json-handler
+            'trace/get-flow-json
             (fn [f req]
               (let [{:keys [name idx src]} (:params req)
                     line (some-> src
@@ -222,41 +222,67 @@
                                  (nth 1 nil)
                                  (->> (re-find #"\d+"))
                                  parse-long)]
-                (f (get-in req [:path-params :id])
-                   name
-                   (or (some-> idx parse-long) 0)
-                   line))))}]
+                (f
+                  (get-in req [:path-params :id])
+                  name
+                  (or
+                    (some-> idx
+                            parse-long)
+                    0)
+                  line))))}]
    ;; Expand a recorded value one level: ?frame=<id>&slot=arg0|ret&path=0,2,1
    ["/dev/__value/:id"
-    {:get (dev-json-handler 'trace/get-value-json
+    {:get (dev-json-handler
+            'trace/get-value-json
             (fn [f req]
               (let [{:keys [frame slot path]} (:params req)
                     p (if (seq path) (vec (keep parse-long (str/split path #","))) [])]
-                (f (get-in req [:path-params :id]) (some-> frame parse-long) slot p))))}]
+                (f
+                  (get-in req [:path-params :id])
+                  (some-> frame
+                          parse-long)
+                  slot
+                  p))))}]
    ;; Conditionals in a frame that didn't render (why a section is empty): ?frame=<id>
    ["/dev/__branches/:id"
-    {:get (dev-json-handler 'trace/get-branches-json
+    {:get (dev-json-handler
+            'trace/get-branches-json
             (fn [f req]
-              (f (get-in req [:path-params :id])
-                 (some-> (get-in req [:params :frame]) parse-long))))}]
+              (f
+                (get-in req [:path-params :id])
+                (some-> (get-in req [:params :frame])
+                        parse-long))))}]
    ;; Where a frame's entity came from (producing DB reads): ?frame=<id>
    ["/dev/__source/:id"
-    {:get (dev-json-handler 'trace/get-source-json
+    {:get (dev-json-handler
+            'trace/get-source-json
             (fn [f req]
-              (f (get-in req [:path-params :id])
-                 (some-> (get-in req [:params :frame]) parse-long))))}]
+              (f
+                (get-in req [:path-params :id])
+                (some-> (get-in req [:params :frame])
+                        parse-long))))}]
    ;; The produced-markup (Hiccup) tree of a frame: ?frame=<id>&slot=ret
    ["/dev/__hiccup/:id"
-    {:get (dev-json-handler 'trace/get-hiccup-json
+    {:get (dev-json-handler
+            'trace/get-hiccup-json
             (fn [f req]
               (let [{:keys [frame slot]} (:params req)]
-                (f (get-in req [:path-params :id]) (some-> frame parse-long) slot))))}]
+                (f
+                  (get-in req [:path-params :id])
+                  (some-> frame
+                          parse-long)
+                  slot))))}]
    ;; Every frame a value flows through: ?frame=<id>&slot=arg0|ret
    ["/dev/__value-threads/:id"
-    {:get (dev-json-handler 'trace/get-threads-json
+    {:get (dev-json-handler
+            'trace/get-threads-json
             (fn [f req]
               (let [{:keys [frame slot]} (:params req)]
-                (f (get-in req [:path-params :id]) (some-> frame parse-long) slot))))}]
+                (f
+                  (get-in req [:path-params :id])
+                  (some-> frame
+                          parse-long)
+                  slot))))}]
    ;; The most recent uncaught-error trace (so a good page can surface a prior 500)
    ["/dev/__last-error"
     {:get (dev-json-handler 'trace/get-last-error-json (fn [f _req] (f)))}]

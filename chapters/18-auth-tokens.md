@@ -20,7 +20,7 @@ Our needs are simpler:
 - Two claims (email and expiration)
 - No need for third-party verification
 
-For this, a hand-rolled HMAC token is fewer than 40 lines of Clojure, uses only `javax.crypto` from the JDK (no dependencies), and has zero ambiguity about what algorithm is in use. The format is dead simple: `base64(payload).base64(signature)`. You can read it, reason about it, and audit it in minutes.
+For this, the signing-and-verification pair is fewer than 40 lines of Clojure, uses only `javax.crypto` from the JDK (no dependencies), and has zero ambiguity about what algorithm is in use. The format is dead simple: `base64(payload).base64(signature)`. You can read it, reason about it, and audit it in minutes.
 
 That said -- if you ever need tokens that cross service boundaries, or that third parties need to verify, reach for a proper JWT library. The right tool depends on the problem.
 
@@ -29,7 +29,7 @@ That said -- if you ever need tokens that cross service boundaries, or that thir
 Our tokens follow a two-part structure separated by a dot:
 
 ```
-base64url({"email":"user@example.com","exp":1709654400000}).base64url(hmac-sha256-signature)
+base64url({"email":"user@example.com","exp":1709654400000,"nonce":"3f2a…"}).base64url(hmac-sha256-signature)
 ```
 
 The left side is the payload -- a JSON object with the user's email and an expiration timestamp in milliseconds. The right side is the HMAC-SHA256 signature computed over the base64-encoded payload. Both sides use URL-safe base64 encoding (no `+`, `/`, or `=` characters), which matters because these tokens live in URLs.
@@ -49,6 +49,7 @@ Let's start with the low-level building blocks. Java's `javax.crypto` package gi
     [myapp.db.core :as db]
     [myapp.time :as time])
   (:import
+    [java.security MessageDigest]
     [java.time Instant]
     [java.util Base64 UUID]
     [javax.crypto Mac]
@@ -141,10 +142,10 @@ Verification is the mirror image of signing, with two additional checks: signatu
   (try
     (let [[payload-b64 signature-b64] (str/split token #"\." 2)]
       (when (and payload-b64 signature-b64)
-        ;; Verify signature
+        ;; Verify signature with a constant-time compare on the raw bytes.
         (let [expected-signature (hmac-sha256 signing-key payload-b64)
-              expected-signature-b64 (base64-encode expected-signature)]
-          (when (= signature-b64 expected-signature-b64)
+              actual-signature (base64-decode signature-b64)]
+          (when (MessageDigest/isEqual expected-signature actual-signature)
             ;; Signature valid, check expiration
             (let [payload-json (String. ^bytes (base64-decode payload-b64) "UTF-8")
                   payload (json/read-str payload-json :key-fn keyword)
@@ -163,16 +164,20 @@ Let's walk through the verification logic:
 
 1. **Split the token** on the first dot. We pass `2` as the limit to `str/split` so that any dots in the signature do not cause extra parts.
 2. **Check both parts exist.** If the token is malformed (no dot, empty parts), bail early with `nil`.
-3. **Recompute the signature** from the payload using our signing key and compare it to the provided signature. If they do not match, someone tampered with either the payload or the signature -- return `nil`.
+3. **Recompute the signature** from the payload using our signing key and compare it to the provided signature with `MessageDigest/isEqual`, a constant-time byte comparison. If they do not match, someone tampered with either the payload or the signature -- return `nil`.
 4. **Decode the payload** and parse the JSON. Only now do we touch the payload contents, after we have confirmed they are authentic.
 5. **Check expiration.** If the current time is past the expiry, the token is dead -- return `nil`.
 6. **Return the email and the nonce** if everything checks out. The signature and expiry are settled here; the nonce travels back to the caller, who is responsible for the one-shot replay check (see the next chapter).
 
 The entire function is wrapped in a `try/catch` that returns `nil` on any exception. Malformed base64, invalid JSON, missing keys -- all produce `nil`. This is a deliberate design choice: from the caller's perspective, a token is either valid (returns a map) or it is not (returns `nil`). There is no need to distinguish between "expired" and "tampered" and "garbage" -- they all mean "do not authenticate this request."
 
-### A note on timing attacks
+### Constant-time comparison
 
-The sharp-eyed reader might notice we are comparing signatures with `=`, which is not constant-time. In theory, this leaks information about how many bytes of the signature match. In practice, for magic link tokens with a 15-minute expiry that are used exactly once, this is not a realistic attack vector. The attacker would need to send millions of carefully timed requests to extract one signature, and the token expires before they can finish. If you are building something where timing attacks matter (long-lived API keys, for instance), use `MessageDigest/isEqual` instead.
+We compare signatures with `MessageDigest/isEqual` rather than `=`. Clojure's `=` on strings (or `java.util.Arrays/equals` on bytes) short-circuits at the first differing byte, so the time it takes to reject a forgery leaks how many leading bytes were guessed correctly -- the classic byte-at-a-time timing oracle. `MessageDigest/isEqual` compares every byte regardless, in time independent of where the first mismatch is. It costs nothing here and removes the question entirely, so there is no reason to reach for `=` and then argue about whether the leak is exploitable. Comparing the raw HMAC bytes (we decode the incoming signature first) is the standard form; a malformed base64 signature throws in `base64-decode` and is caught as an invalid token.
+
+### A note on the signing key
+
+The security of the whole scheme rests on the signing key being secret and strong. HMAC-SHA256 should be keyed with at least as much entropy as its 256-bit output, so the key must be **at least 32 bytes from a CSPRNG** -- not a passphrase, not a short string. `myapp.config` enforces this at boot (it throws if the resolved key is under 32 bytes) and, in production, refuses to start without an explicitly configured `SIGNING_KEY` rather than inventing a random one that would differ across instances. A short or guessable key would let an attacker forge tokens outright, which no amount of constant-time comparison can defend against.
 
 ## Token expiry
 

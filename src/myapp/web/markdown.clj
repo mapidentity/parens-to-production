@@ -19,9 +19,19 @@
     (.build b)))
 
 (def ^:private ^HtmlRenderer renderer
-  "Reusable CommonMark HTML renderer instance."
+  "Reusable CommonMark HTML renderer instance.
+
+  `escapeHtml` and `sanitizeUrls` are the load-bearing security settings:
+  the input is user-authored recipe descriptions, and CommonMark's default
+  renderer passes raw inline HTML (`<script>`, `<img onerror>`) and
+  dangerous URL schemes (`javascript:`) through verbatim. We escape inline
+  HTML and strip unsafe URL schemes here so the renderer's output is safe to
+  emit with `h/raw`. The strict CSP is defense-in-depth behind this, not the
+  primary control — see `myapp.web.markdown` callers in `views.clj`."
   (let [^org.commonmark.renderer.html.HtmlRenderer$Builder b (-> (HtmlRenderer/builder)
-                                                                 (.extensions extensions))]
+                                                                 (.extensions extensions)
+                                                                 (.escapeHtml true)
+                                                                 (.sanitizeUrls true))]
     (.build b)))
 
 (defn render

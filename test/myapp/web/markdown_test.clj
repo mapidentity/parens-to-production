@@ -23,8 +23,11 @@
     (is (str/includes? html "<td>1</td>"))))
 
 (deftest renders-links
+  ;; The renderer runs with sanitizeUrls -> user-authored links get
+  ;; rel="nofollow" and disallowed schemes are stripped (see security-test).
   (let [html (markdown/render "[MyApp](https://myapp.nl)")]
-    (is (str/includes? html "<a href=\"https://myapp.nl\">MyApp</a>"))))
+    (is (str/includes? html "href=\"https://myapp.nl\""))
+    (is (str/includes? html ">MyApp</a>"))))
 
 (deftest empty-string-no-exception
   (let [html (markdown/render "")]
