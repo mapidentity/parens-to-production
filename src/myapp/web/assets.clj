@@ -176,6 +176,9 @@
   "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 
 (defn- build-csp-header
+  "Build the Content-Security-Policy header string from the current manifest.
+  Enumerates the inline-script hashes (so the policy needs no 'unsafe-inline')
+  and adds ws:/wss: to connect-src in dev for live reload."
   []
   (str
     "default-src 'none'; "

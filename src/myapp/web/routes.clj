@@ -18,6 +18,8 @@
     [ring.middleware.session.cookie :as cookie]
     [ring.util.response :as response]))
 
+(set! *warn-on-reflection* true)
+
 (defn wrap-locale
   "Determine locale from session, Accept-Language header, or default.
   Assoc it as `:locale` on the request."
@@ -216,7 +218,9 @@
     {:get (dev-json-handler
             'trace/get-flow-json
             (fn [f req]
-              (let [{:keys [name idx src]} (:params req)
+              (let [{nm :name
+                     :keys [idx src]}
+                    (:params req)
                     line (some-> src
                                  (str/split #":")
                                  (nth 1 nil)
@@ -224,7 +228,7 @@
                                  parse-long)]
                 (f
                   (get-in req [:path-params :id])
-                  name
+                  nm
                   (or
                     (some-> idx
                             parse-long)

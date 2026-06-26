@@ -1,6 +1,7 @@
 (ns myapp.recipe.core-test
-  "Tests for the recipe-versioning domain: line diff, edit history (Datomic
-  time travel), forks/lineage, and owner-only mutations."
+  "Tests for the recipe-versioning domain.
+  Cover line diff, edit history (Datomic time travel), forks/lineage, and
+  owner-only mutations."
   (:require
     [clojure.test :refer [deftest is testing use-fixtures]]
     [datomic.api :as d]

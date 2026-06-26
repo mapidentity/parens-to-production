@@ -1,6 +1,6 @@
 (ns myapp.web.handler-smoke-test
-  "Smoke tests for the handlers: every page renders without throwing —
-  catches missing translations, nil pointers, query errors, and render crashes."
+  "Smoke tests that every handler page renders without throwing.
+  Catch missing translations, nil pointers, query errors, and render crashes."
   (:require
     [clojure.string :as str]
     [clojure.test :refer [deftest is testing use-fixtures]]

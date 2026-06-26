@@ -182,12 +182,11 @@
           [{:magic-link/email email
             :magic-link/nonce nonce
             :magic-link/requested-at (time/now)}])))
-    (response/redirect
-      (str
-        "/auth/sent?email="
-        (java.net.URLEncoder/encode
-          ^String (or email "")
-          java.nio.charset.StandardCharsets/UTF_8)))))
+    (let [^String enc-email (or email "")]
+      (response/redirect
+        (str
+          "/auth/sent?email="
+          (java.net.URLEncoder/encode enc-email java.nio.charset.StandardCharsets/UTF_8))))))
 
 (defn magic-link-sent
   "Show the confirmation page (GET after redirect)."
@@ -413,8 +412,8 @@
   [request]
   (let [db (d/db (db/get-connection))
         id (path-uuid request)
-        t (parse-long (str (get-in request [:path-params :t])))
-        r (when t (recipe/version-as-of db id t))]
+        basis-t (parse-long (str (get-in request [:path-params :t])))
+        r (when basis-t (recipe/version-as-of db id basis-t))]
     (if r
       (html-immutable
         (views/recipe-version
@@ -432,18 +431,18 @@
         id (path-uuid request)
         from-t (parse-long (str (get-in request [:params :from])))
         to-t (parse-long (str (get-in request [:params :to])))
-        old (when from-t (recipe/version-as-of db id from-t))
-        new (when to-t (recipe/version-as-of db id to-t))]
-    (if (and old new)
+        old-r (when from-t (recipe/version-as-of db id from-t))
+        new-r (when to-t (recipe/version-as-of db id to-t))]
+    (if (and old-r new-r)
       (html-immutable
         (views/recipe-diff
           (:locale request)
           (:user-email request)
           (:admin? request)
-          new
-          (:recipe/updated-at old)
-          (:recipe/updated-at new)
-          (recipe/diff old new)))
+          new-r
+          (:recipe/updated-at old-r)
+          (:recipe/updated-at new-r)
+          (recipe/diff old-r new-r)))
       (not-found request))))
 
 ;; ---------------------------------------------------------------------------

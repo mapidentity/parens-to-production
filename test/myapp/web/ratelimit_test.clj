@@ -5,6 +5,8 @@
     [myapp.time :as time]
     [myapp.web.ratelimit :as rl]))
 
+(set! *warn-on-reflection* true)
+
 (use-fixtures
   :each
   (fn [f]

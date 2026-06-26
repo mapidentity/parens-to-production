@@ -655,13 +655,14 @@
 
 (defn- scalar-diff
   "Render a changed scalar field (old → new)."
-  [label {:keys [changed? old new]}]
-  (let [nw new]
-    (when changed?
-      [:div.mb-4
-       [:p.text-sm.font-medium.text-text-primary label]
-       [:p.text-sm
-        [:span.diff-del.px-1 (str old)] " → " [:span.diff-add.px-1 (str nw)]]])))
+  [label
+   {:keys [changed? old]
+    nw :new}]
+  (when changed?
+    [:div.mb-4
+     [:p.text-sm.font-medium.text-text-primary label]
+     [:p.text-sm
+      [:span.diff-del.px-1 (str old)] " → " [:span.diff-add.px-1 (str nw)]]]))
 
 (defn recipe-diff
   "Diff between two versions of a recipe."

@@ -1,9 +1,9 @@
 (ns myapp.web.security-test
-  "Regression tests that lock in the security posture: output escaping for
-  plain content, markdown sanitization for the one h/raw field (recipe
-  descriptions), the strict Content-Security-Policy, and asset/import-map
-  resolution. These guard against silently reintroducing a non-escaping
-  renderer, an unsanitized markdown path, or a loosened CSP."
+  "Regression tests that lock in the security posture.
+  Cover output escaping for plain content, markdown sanitization for the one
+  h/raw field (recipe descriptions), the strict Content-Security-Policy, and
+  asset/import-map resolution. These guard against silently reintroducing a
+  non-escaping renderer, an unsanitized markdown path, or a loosened CSP."
   (:require
     [clojure.string :as str]
     [clojure.test :refer [deftest is testing]]
@@ -11,7 +11,10 @@
     [myapp.web.markdown :as markdown]
     [myapp.web.views :as views]))
 
+(set! *warn-on-reflection* true)
+
 (defn- sha256-b64
+  "Compute the `sha256-<base64>` CSP hash of `s`, matching `assets`' inline-hash format."
   [^String s]
   (str
     "sha256-"
