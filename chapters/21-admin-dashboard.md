@@ -5,7 +5,7 @@
 
 You do not need an admin dashboard on day one. But the moment you have even a handful of users, you need visibility into what is happening in your application. How many people signed up? Are magic links getting verified? Is the JVM healthy? Without a dashboard, you are flying blind -- SSHing into a server and running ad-hoc REPL queries every time you want a number.
 
-This post builds a complete admin dashboard: a middleware layer that restricts access to a single admin email, Datomic queries across two databases, a stat grid component with live polling, and CSS-driven animated counters. No JavaScript frameworks, no charting libraries, no build step for the frontend. Just server-rendered HTML, a handful of Datomic queries, and about 30 lines of vanilla JS.
+This chapter builds a complete admin dashboard: a middleware layer that restricts access to a single admin email, Datomic queries across two databases, a stat grid component with live polling, and CSS-driven animated counters. No JavaScript frameworks, no charting libraries, no build step for the frontend. Just server-rendered HTML, a handful of Datomic queries, and about 30 lines of vanilla JS.
 
 ## The Access Control Layer
 
@@ -679,7 +679,7 @@ The data flow is:
 
 No WebSockets, no server-sent events, no client-side state management. The page is server-rendered, the polling is a simple `setInterval` with `fetch`, and the animations are pure CSS. The total JavaScript is about 30 lines.
 
-## What You Have Now
+## What You Now Have
 
 After implementing this, you have:
 

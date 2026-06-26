@@ -11,7 +11,7 @@ For a Clojure/Datomic SaaS, the problem compounds. You need a JDK, the Clojure C
 
 Devcontainers solve this. You define your entire development environment -- tooling, services, networking -- as code in your repository. Open the project in VS Code, and the environment builds itself. Every time, the same way.
 
-This post walks through a complete devcontainer setup for a Clojure SaaS application. By the end, you will have:
+This chapter walks through a complete devcontainer setup for a Clojure SaaS application. By the end, you will have:
 
 - A Dockerfile with Java, Clojure, and Node.js
 - A `devcontainer.json` that wires it into VS Code with Calva
@@ -517,6 +517,6 @@ And because all of this is defined in files checked into your repository, the ne
 
 ## What Comes Next
 
-This post covered the development environment -- the foundation everything else builds on. In future posts in this series, we will build on this foundation: setting up Datomic, structuring the Clojure application, implementing authentication, and deploying to production.
+This chapter covered the development environment -- the foundation everything else builds on. The chapters that follow build on this foundation: setting up Datomic, structuring the Clojure application, implementing authentication, and deploying to production.
 
 But for now, you have something valuable: a reproducible, fully-featured development environment that mirrors production from day one. Every hour invested in getting this right pays dividends for the lifetime of the project.

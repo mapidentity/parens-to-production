@@ -1,7 +1,7 @@
 # Passwordless Auth Part 2: Magic Link Emails and the Full Login Flow
 
 
-In the [previous chapter](18-auth-tokens.md), we built the cryptographic foundation for passwordless authentication: HMAC-SHA256 signed tokens with expiration. But a token sitting in memory is useless until it reaches the user's inbox and completes the round trip back to our server. This post wires up the complete flow: sending magic link emails, handling the callback, creating sessions, and gating access behind terms acceptance.
+In the [previous chapter](18-auth-tokens.md), we built the cryptographic foundation for passwordless authentication: HMAC-SHA256 signed tokens with expiration. But a token sitting in memory is useless until it reaches the user's inbox and completes the round trip back to our server. This chapter wires up the complete flow: sending magic link emails, handling the callback, creating sessions, and gating access behind terms acceptance.
 
 By the end, you will have a fully working passwordless login system with no passwords stored anywhere.
 
@@ -110,7 +110,7 @@ A few design choices:
 
 ## The Handler Layer
 
-With token creation (from the previous post) and email sending in place, the handlers orchestrate the full flow.
+With token creation (from the previous chapter) and email sending in place, the handlers orchestrate the full flow.
 
 ### Requesting a Magic Link (POST /auth/request)
 
@@ -551,9 +551,9 @@ One detail worth calling out: the SMTP configuration is read at runtime, not com
 
 This is the same pattern used for the signing key, the database URI, and the session key. Aero's profile system handles the branching, and the code just calls `get-config`.
 
-## What We Have Now
+## What You Now Have
 
-Starting from the token infrastructure in the previous post, we have added:
+Starting from the token infrastructure in the previous chapter, we have added:
 
 1. **Email delivery** -- Jakarta Mail via Eclipse Angus, no wrapper libraries
 2. **Magic link flow** -- request, send, verify, session creation
@@ -567,4 +567,4 @@ The complete flow works like this: a user enters their email on the home page. T
 
 The system is also testable at every layer. Unit tests verify token signing and verification. Integration tests verify email delivery end-to-end with GreenMail. And the config system makes it trivial to swap between test, development, and production SMTP.
 
-Next time, we will look at the view layer -- how the HTML for all these pages gets generated with Hiccup, and how progressive enhancement gives us a smoother experience without sacrificing the non-JavaScript baseline.
+The result is a complete passwordless authentication flow -- signed tokens, email delivery, encrypted sessions, and a terms gate -- built from the JDK, Datomic, and a handful of small functions, with no passwords stored anywhere and tests at every layer.

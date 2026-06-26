@@ -5,7 +5,7 @@ Most SaaS applications reach for PostgreSQL or MySQL without a second thought. T
 
 Datomic treats data as immutable facts over time. Every transaction is recorded. Every past state of the database is queryable. Nothing is ever truly deleted -- it is retracted, and the retraction itself is a fact. For a SaaS that handles financial data, this is not a nice-to-have. It is the correct data model.
 
-In this post, we will set up Datomic in a Clojure SaaS application: the Peer library, schema design, a wrapper layer that bridges java.time and Datomic's java.util.Date, and a test fixture that gives you a fresh database per test.
+In this chapter, we will set up Datomic in a Clojure SaaS application: the Peer library, schema design, a wrapper layer that bridges java.time and Datomic's java.util.Date, and a test fixture that gives you a fresh database per test.
 
 ## The Datomic Peer Library
 
@@ -338,7 +338,8 @@ Using it in a test namespace is one line:
     [clojure.test :refer [deftest is use-fixtures]]
     [datomic.api :as d]
     [myapp.db.core :as db]
-    [myapp.test-helpers :as h])
+    [myapp.test-helpers :as h]
+    [myapp.time :as time])
   (:import
     [java.time Instant]))
 

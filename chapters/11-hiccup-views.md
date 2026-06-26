@@ -120,11 +120,11 @@ The base layout is the HTML5 shell that every page shares. It is private -- page
 
 A few things to note:
 
-- **`locale` is threaded everywhere.** Every layout takes it as the first argument, and all user-facing text goes through `(t locale :key)` for i18n. We will cover i18n in a future post, but the view layer is ready for it from day one.
+- **`locale` is threaded everywhere.** Every layout takes it as the first argument, and all user-facing text goes through `(t locale :key)` for i18n. i18n has [its own chapter](09-i18n.md); the view layer is ready for it from day one.
 - **The whole document is built by `h/html`, the *escaping* renderer.** This matters enough that it gets its own section below. The doctype is the one structural literal we want emitted as-is, so it goes through `(h/raw "<!DOCTYPE html>")`.
 - **Assets resolve through `(assets/asset "...")`.** The stylesheet, the module scripts, and the import map all come from the asset system: in production each URL is content-hashed and carries an integrity (SRI) attribute; in development the same calls return stable, unhashed URLs. The asset pipeline is its own topic -- here, the view layer just asks for a logical name and gets back a URL.
 - **`(script-tag "js/dispatcher.js" {:type "module"})`** loads the dispatcher, the script that powers progressive enhancement (covered in detail below). It is a normal ES module, served from the classpath through the asset pipeline -- not inlined.
-- **`(toast-script)`** inlines a small toast helper. The `defn-asset` macro and inline scripts are covered later in this post.
+- **`(toast-script)`** inlines a small toast helper. The `defn-asset` macro and inline scripts are covered later in this chapter.
 - **`(tag-root body)`** wraps the page body for the development source inspector. In production it is the identity function; the body is unchanged.
 - **The final body block is dev-only.** `(when (requiring-resolve 'dev-reload/websocket-handler) (list (dev-reload-script) (inspector-script) (trace-overlay-script)))` emits three small scripts — the live-reload client ([live reload](06-live-reload.md)), the source inspector ([the inspector](12-inspector.md)), and the construction-view overlay ([the construction view](13-construction-view.md)) — and nothing else. This is the single place those overlays mount, so as you build each of those chapters you add its script to this list. The `requiring-resolve` check returns `nil` when the dev namespace is not on the classpath, so the whole block is *structurally absent* in production; the `defn-asset` declarations behind `dev-reload-script`/`inspector-script`/`trace-overlay-script` arrive with [the asset pipeline](22-asset-pipeline.md). (If you are following along before those chapters exist, drop the names you have not built yet — the block renders nothing until the dev namespace is present anyway.)
 - **The `page-enter` keyframes** give each freshly rendered `<main>` a subtle entrance; it pairs with the DOM-morphing reload in [the morph-reload chapter](16-morph-reload.md).
@@ -147,7 +147,7 @@ For unauthenticated pages (login, error pages, terms acceptance), we want a cent
 
 This wraps `base-layout`, adding a centered container. The Tailwind classes handle the visual design: full viewport height, centered flexbox, constrained width. Public pages have no navigation -- just the content.
 
-Note the `<main data-layout="public">`. Every page's content lives inside a single `<main>` element, and that element carries a `data-layout` marker. The dispatcher uses both facts -- `<main>` as the morph target, `data-layout` to detect when navigating would change the whole chrome. We will come back to this.
+Note the `<main data-layout="public">`. Every page's content lives inside a single `<main>` element, and that element carries a `data-layout` marker. The dispatcher uses both facts -- `<main>` as the morph target, `data-layout` to detect when navigating would change the whole chrome.
 
 ### App Layout
 
@@ -276,7 +276,7 @@ With layouts and navigation in place, building a page is straightforward. Here i
     [:div.space-y-8
      [:div.text-center
       [:img.h-12.mx-auto {:src "/logo.svg" :alt "MyApp" :width 220 :height 48}]
-      [:p.mt-3.text-lg.font-medium.text-text-primary (t locale (rand-nth tagline-keys))]
+      [:p.mt-3.text-lg.font-medium.text-text-primary (t locale :home/tagline-1)]
       [:p.mt-2.text-sm.text-text-secondary (t locale :home/lead)]]
      [:div.bg-surface.py-8.px-6.border.border-border.rounded-lg
       [:h2.text-2xl.font-semibold.text-text-primary.mb-4 (t locale :home/get-started)]
@@ -349,8 +349,9 @@ Handlers then read what they need off the request and render:
 (defn dashboard
   "Signed-in home: the user's own recipes."
   [request]
-  (let [recipes (recipe/recipes-for-user ...)]
-    (html (views/dashboard (:locale request) (:user-email request) (admin? request) recipes))))
+  (let [db (d/db (db/get-connection))
+        recipes (recipe/recipes-by-user db (:user-eid request))]
+    (html (views/dashboard (:locale request) (:user-email request) (:admin? request) recipes))))
 ```
 
 The pattern is consistent: gather data, render the view, wrap with `html`. No framework magic. The `str` inside `html` realizes the Hiccup output as an HTML string for the response body.
@@ -467,7 +468,7 @@ function executeScripts(root) {
 }
 ```
 
-In practice our pages avoid inline `<script>` inside `<main>` entirely (it would also fight our strict Content-Security-Policy -- a later post). Page-specific behavior is delivered as ES modules loaded once in `<head>` that *enhance* whatever DOM is present and re-run their setup on the `dispatcher:morphed` event the function fires at the end:
+In practice our pages avoid inline `<script>` inside `<main>` entirely (it would also fight our strict Content-Security-Policy -- see the [asset pipeline chapter](22-asset-pipeline.md)). Page-specific behavior is delivered as ES modules loaded once in `<head>` that *enhance* whatever DOM is present and re-run their setup on the `dispatcher:morphed` event the function fires at the end:
 
 ```javascript
 document.dispatchEvent(new CustomEvent('dispatcher:morphed', {
@@ -527,7 +528,7 @@ There is nothing to remember and nothing to opt into. Safe is the default; you h
 Some content we *do* want emitted verbatim, and only those places use `h/raw`:
 
 - **The doctype.** `(h/raw "<!DOCTYPE html>")` -- a fixed literal we control.
-- **The import map and inline scripts/styles.** These are our own bytes, and (as the security post explains) they must be emitted exactly so the Content-Security-Policy hash matches what the browser sees: `[:script {:type "importmap"} (h/raw (assets/importmap-json))]`.
+- **The import map and inline scripts/styles.** These are our own bytes, and (as the [asset pipeline chapter](22-asset-pipeline.md) explains) they must be emitted exactly so the Content-Security-Policy hash matches what the browser sees: `[:script {:type "importmap"} (h/raw (assets/importmap-json))]`.
 - **Markdown-rendered HTML.** Recipe descriptions and legal documents are authored in Markdown and rendered to HTML by CommonMark; that HTML is inserted with `h/raw`:
 
   ```clojure
@@ -618,7 +619,7 @@ A few small scripts -- like the toast helper -- are best inlined directly into t
 Two things connect this back to earlier sections:
 
 - **The content is wrapped in `h2/raw`.** This macro lives in the `myapp.web.assets` namespace, which aliases `hiccup2.core` as `h2` (the views namespace happens to alias it as `h` -- same library, different local nickname). Because the body is syntax-quoted, `` `(h2/raw ~expr) `` expands to the fully-qualified `hiccup2.core/raw`, so the generated function works no matter how the *calling* namespace aliases Hiccup. An inline script must be emitted byte-for-byte; escaping it would corrupt the JavaScript. Because we control the file, raw output is the correct call here -- and because the bytes are emitted exactly, the strict CSP can authorize the script by hashing those same bytes.
-- **Script assets register their path** (`register-inline-script!`) so the CSP can compute and allow their hash. The CSP machinery itself is covered in the security post; the takeaway here is that inlining a script is a one-liner and it stays compatible with a no-`'unsafe-inline'` policy.
+- **Script assets register their path** (`register-inline-script!`) so the CSP can compute and allow their hash. The CSP machinery itself is covered in the [asset pipeline chapter](22-asset-pipeline.md); the takeaway here is that inlining a script is a one-liner and it stays compatible with a no-`'unsafe-inline'` policy.
 
 In development the file is re-read on every render so you can edit the script and refresh; in production it is read once at load and baked into the function. Usage is a single form at the top of the views namespace:
 
@@ -661,9 +662,9 @@ The pieces that touch the view layer:
 
 Static assets are served from `assets/static-root` -- the source `static/` tree in development, the built and content-hashed tree in production. In development a small `wrap-dev-no-store` keeps the browser from caching stable, unhashed dev URLs.
 
-## What We Have Now
+## What You Now Have
 
-After this post, the view layer is complete:
+After this chapter, the view layer is complete:
 
 - **Hiccup 2 with the escaping renderer** for HTML generation -- composable, just Clojure data, and auto-escaped so user content is safe by default. Raw output is an explicit, auditable opt-in.
 - **A layout system**: `base-layout` for the HTML5 shell, `public-layout` for unauthenticated pages, `app-layout` for the chrome-bearing experience -- every page's content inside a single `<main data-layout>`.

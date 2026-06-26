@@ -458,7 +458,7 @@ To see how the pieces fit, here is the end-to-end story for each kind of edit:
 
 The whole cycle -- from saving a file to seeing the updated page -- typically completes in a fraction of a second, and for the common view-edit case it does so *without losing any page state at all*.
 
-## Design Decisions
+## Design Decisions Worth Noting
 
 **Why decouple CSS from code reloads?** Rebuilding Tailwind on every `.clj` save couples two unrelated concerns and puts a CSS rebuild on the critical path of every code edit -- even edits that touch no markup. A long-lived `tailwindcss --watch=always` rebuilds incrementally and only when classes actually change, and it owns the stylesheet end to end. The file watcher merely *reacts* to its output with a debounced, no-reload `<link>` swap. The result is faster code reloads and a CSS path that never flickers the page.
 

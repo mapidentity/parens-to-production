@@ -1,6 +1,6 @@
-# The Construction-View Overlay
+# The Construction-View Overlay: Projections and the In-Page Tool
 
-The [recording chapter](13-construction-view.md) made `GET /dev/__trace/:id` return a page's whole construction as JSON; the [flow-and-dossier chapter](14-construction-view-flow.md) added the targeted projections. All of it is data you can `curl`. This chapter builds the in-page tool that renders it — `src/myapp/web/trace-overlay.js` — and we build it the way you'd actually grow it: **get the call tree on screen first**, then make a selected frame open a rich details pane, then add an icicle overview, and finally layer on flow mode, cross-region traces, and the polish. Each step is usable before the next exists.
+The [recording chapter](13-construction-view.md) made `GET /dev/__trace/:id` return a page's whole construction as JSON — every frame, every Datomic read. That answers *how was this page built?* in the large. This chapter does two things. First it defines the **targeted projections** over that same recording: **flow mode**, which takes one rendered element and traces its value back to the query behind it, and the **dossier**, a set of drill-downs for a single frame (navigate a recorded value, ask "why is this section empty?", find the read that produced an entity, see the markup a component became, thread a value through every frame it touched). Then it builds the in-page tool that renders all of it — `src/myapp/web/trace-overlay.js`. All of it is data you can `curl`, and we build the overlay the way you'd actually grow it: **get the call tree on screen first**, then make a selected frame open a rich details pane, then add an icicle overview, and finally layer on the projections (flow mode, the dossier), cross-region traces, and the polish. Each step is usable before the next exists.
 
 Here is the finished tool in one session, so the code below has a picture to attach to. You load the recipe index under the `:storm` alias and press `Alt+Shift+I`. A panel docks to the right, showing the call tree for the request that built the page: middleware narrowing to the page handler, the handler to `all-recipes`, `all-recipes` to the eight `recipe-card` frames. You hover `recipe-card`; the third instance on the page lights up under your cursor, and the others dim. You click that frame and the details pane fills — its `recipe` argument and Hiccup return (both navigable level by level), the `pull` and `d/q` that fed it shown with full datalog, a *transforms* badge reading `db→map→hiccup`, and the conditionals in its body that rendered nothing. You Alt+click the entity id in the args; a flow card pins the read that produced it and offers a `d/history` link for the write you actually need. Toggle the icicle and the same tree becomes a flame-graph overview of the whole request; toggle temporal-vs-lexical and it reparents from "who called whom" to "who wrote whom." That is the artifact. The rest of the chapter assembles it in the order you'd build it.
 
@@ -305,9 +305,117 @@ function applyDOI(set, dimRows) {
 }
 ```
 
+## The server-side projections the overlay consumes
+
+The overlay so far renders the whole-page tree the recording chapter served. The richer interactions — the details pane's source/branches/markup sections, and flow mode next — read a family of small *projections* over the same recording. Each is a pure function over the window `read-window` already holds, behind its own dev-gated `/dev/__*` route, and every one shares a single envelope: resolve the descriptor, read the window, build something, serialize (catching throwables into an `{:error …}` map). We keep building the `trace` namespace from chapter 13 to add them.
+
+**Flow** is the one that carries a distinct idea, so it gets shown in full below. The **dossier** projections are variations on the same template, distinguished only by what they build:
+
+- **value** (`/dev/__value`) — navigate a recorded value one bounded level at a time, by a path of child indices, so the overlay can drill `arg0 → 2 → 1` without ever shipping the blob or forcing more than 50 children of a level.
+- **branches** (`/dev/__branches`) — the `when`-family conditionals in a frame whose recorded result was nil, i.e. the bodies that *didn't* render. (`if`/`cond` are excluded: a nil there is ambiguous about which branch ran.) On an anonymous request this immediately names the auth-gated `when`s in the top nav — the SSR equivalent of "the button isn't there because you're logged out."
+- **source** (`/dev/__source`) — the details-pane twin of flow's eid-match: read the eid off a frame's first argument and return the recorded DB reads whose result contained it.
+- **hiccup** (`/dev/__hiccup`) — a component's recorded Hiccup return, re-derived into the element tree it *becomes* (inlining `(for …)` seqs, dropping nil children, keeping the `data-myapp-*` breadcrumbs).
+- **value-threads** (`/dev/__value-threads`) — every frame a value flows through, by object identity or by `:db/id`, so you can pick a value and light up its whole path.
+- **last-error** (`/dev/__last-error`) — the descriptor of the most recent request that 500'd, if its recording still exists, so a *successful* page can surface a prior error.
+
+One representative dossier projection, value navigation, shows the shape they all share — `slot-value` fetches a frame's argN or ret, `expand-value` enumerates one bounded level (rendering a homogeneous coll-of-maps as a table, the REBL/Portal idiom), and the path navigates child indices deterministically:
+
+```clojure
+(defn- slot-value [{:keys [calls at]} frame slot]
+  (when-let [m (calls frame)]
+    (cond
+      (= slot "ret") (some-> (:ret-idx m) at :result)
+      (str/starts-with? (str slot) "arg")
+      (when-let [n (parse-long (subs (str slot) 3))] (nth (vec (:fn-args m)) n nil)))))
+
+(defn- nav-path [v path] (reduce child-at v (or path [])))   ; child-at picks the i-th child in expand order
+
+(defn get-value-json [id frame slot path]
+  (when-let [d (get-desc id)]
+    (try (let [w (read-window (:tid d) (:start d) (:end d))]
+           (json/write-value-as-string (expand-value (nav-path (slot-value w frame slot) path))))
+         (catch Throwable e (json/write-value-as-string {:error (str (.getMessage e))})))))
+```
+
+Every projection above is reached through a route that shares one shape: resolve the handler via `requiring-resolve` (nil → 404 in prod), parse the query params, call the matching `trace/get-*-json`. The consolidated route list:
+
+```clojure
+["/dev/__flow/:id"          ,,, ]  ; ?name=&idx=&src=file:line:col  → get-flow-json
+["/dev/__value/:id"         ,,, ]  ; ?frame=&slot=arg0|ret&path=0,2,1 → get-value-json
+["/dev/__branches/:id"      ,,, ]  ; ?frame=                        → get-branches-json
+["/dev/__source/:id"        ,,, ]  ; ?frame=                        → get-source-json
+["/dev/__hiccup/:id"        ,,, ]  ; ?frame=&slot=ret               → get-hiccup-json
+["/dev/__value-threads/:id" ,,, ]  ; ?frame=&slot=                  → get-threads-json
+["/dev/__last-error"        ,,, ]  ; (no params)                    → get-last-error-json
+["/dev/__trace-clear"       ,,, ]  ; (no params)                    → clear-recordings!
+```
+
+> **Deliberately not built — timing/profiling.** Instrumentation can't measure wall-clock honestly (the recorder's own overhead dominates), so the `ms` we show is the request total from `trace-request`, not per-frame timing. For real profiling, reach for a sampling profiler. The construction view answers *structure and data*, not *time*.
+
+> **Trade-off — the endpoints are unauthenticated, and return real recorded values.** Anything that can reach `/dev/__flow` or `/dev/__value` gets the actual recording — argument and result previews that can include user emails and recipe content. That is acceptable for a dev-only, loopback service — the same posture as `/dev/ws` from the inspector chapter, and prod-absent through the same `requiring-resolve` gate. Don't expose the dev server.
+
+## Flow: from one element to the query behind it
+
+Flow mode is the projection worth dwelling on, because it does what the inspector never could. Here is the whole idea as a single moment at the keyboard. The recipe index is on screen — eight cards, and the third shows a title you think is wrong. You **Alt+click that card**. The overlay sends its `data-myapp-name` (`recipe-card`) and its DOM rank (`2`, zero-based) to `/dev/__flow`, and flow does four things at once: it resolves the click to *that* card's frame — the third element-producing `recipe-card` call in the recording, not all eight — walks its ancestor path up to the handler, reads the entity id off the card's argument, and scans every recorded Datomic read for the one whose result *contained that id*. The card that comes back names the suspects: this card descends from `recipe-index` under the page handler, and its data came from `all-recipes`' `d/q` and one `pull` — green, self-consistent, and, in the stale-title case, **unhelpful**, because nothing in *this* request set the title. So flow does the honest thing and hands you the entity id with a pivot to `d/history`.
+
+Two capabilities make this more than the inspector could do, and both live in `flow`.
+
+**Per-instance resolution.** Eight recipe cards share one `data-myapp-name`; the inspector, keyed on source location, can only highlight all of them. But the *timeline* has order: the k-th card in the DOM is the k-th element-producing `recipe-card` frame in the recording — exactly the `instance-of` rank `build-spans` computed in chapter 13. So clicking the third card resolves to *that instance's* frame.
+
+**Eid-matched source.** A recipe card renders data some *sibling* call fetched earlier — `all-recipes`' `d/q` and the per-recipe `pull`, not anything in the card's own subtree. Which read produced *this* card? We have the card's entity id (from its argument map) and every db-op's recorded result, so we ask Datomic identity directly:
+
+```clojure
+(defn- result-has-eid? [result eid]
+  (try
+    (let [hit? (fn [x] (or (= x eid) (and (map? x) (= eid (safe-eid x))) (and (sequential? x) (some #(= % eid) x))))]
+      (cond (nil? eid) false
+            (map? result) (= eid (safe-eid result))
+            (set? result) (or (contains? result eid) (some hit? result))   ; relation [:find ?e …]
+            (sequential? result) (boolean (some hit? result))               ; collection [:find [?e …]]
+            :else false))
+    (catch Throwable _ false)))
+```
+
+`flow` ties them together — resolve the instance, walk its ancestor path, flag the reads that produced its entity, and read the clicked line's recorded value if a source line was passed. It reuses `read-window`, `folded?`, `collect-db-exprs`, and `->db-op` from chapter 13:
+
+```clojure
+(defn flow [{:keys [tid start end]} comp-name idx src-line]
+  (let [{:keys [calls exprs-by-call at] :as w} (read-window tid start end)
+        named (->> (keys calls) sort
+                   (filter #(= comp-name (frame-name (calls %))))
+                   ;; element-producing AND not a folded self-delegation — so the
+                   ;; instance count matches the DOM node count (see build-spans).
+                   (filterv (fn [i] (and (not (folded? calls i))
+                                         (inspector/element? (some-> (:ret-idx (calls i)) at :result))))))
+        target (when (< (or idx 0) (count named)) (nth named idx))]
+    (cond
+      target
+      (let [m (calls target)
+            eid (arg-eid (:fn-args m))
+            reads (mapv (fn [d] (assoc (->db-op calls d) :source (result-has-eid? (:result (:e d)) eid)))
+                    (collect-db-exprs w))
+            path (loop [k target acc []]
+                   (if-let [mk (calls k)]
+                     (recur (:parent-idx mk)
+                       (if (noise? mk) acc (conj acc {:short (short-name (frame-name mk)) :name (frame-name mk)})))
+                     (vec (reverse acc))))]
+        {:component comp-name
+         :instance (.indexOf ^java.util.List named target)
+         :instances (count named)
+         :path path :reads reads
+         :pivot (when eid {:eid eid})})
+
+      (seq named) {:component comp-name :instances (count named) :ambiguous true}
+      :else nil)))
+```
+
+When an index can't be resolved — genuine render reordering (a `sort` between data order and DOM order), or a conditional that rendered nothing — `flow` returns `:ambiguous true` rather than guessing.
+
+The `:pivot` is the honest part of the whole feature. The trace explains how *this request* rendered the value; it does not explain why the *entity* holds it. The classic case is a fork showing a stale title: `fork!` copied the title onto a new entity days ago, and to Datomic the fork's current title is perfectly correct — the read-trace is green and self-consistent, and unhelpful, because the cause was a write in a different request. So flow mode does not pretend to be a root-cause oracle. It **narrows the suspects, shows the data path, and pivots to the write history** — handing you the entity id and pointing at `d/history`, which is where that question actually lives.
+
 ## Flow mode: Alt+click an element
 
-With the tree, details, and overview in place, flow mode is a small addition: an Alt+click fetches `/dev/__flow` for the clicked instance and shows a card next to the cursor. `onAltClick` branches — a plain click selects the element (step two), an Alt+click fires flow:
+With the tree, details, overview, and the projections in place, flow mode is a small addition on the client: an Alt+click fetches `/dev/__flow` for the clicked instance and shows a card next to the cursor. `onAltClick` branches — a plain click selects the element (step two), an Alt+click fires flow:
 
 ```javascript
 function onAltClick(e) {
@@ -412,7 +520,7 @@ The feature is structurally absent, not merely disabled — the same bar as the 
 - **No timing.** Instrumentation can't measure wall-clock honestly; for profiling, use a sampling profiler.
 - **A real dev startup/first-hit cost.** The compiler swap slows startup and the first hit to each page — paid only under `:storm`, never in plain `:dev` or prod.
 
-## Design decisions worth noting
+## Design Decisions Worth Noting
 
 - **Adopt the engine, build the correlation.** ClojureStorm records far more, and far more reliably, than the var-wrapping we'd write by hand. The original contribution is not the recording; it is welding a *runtime* span id onto the SSR'd DOM the way the inspector welds a *static* source location — and the unfair advantage is that the coordinate already exists.
 - **Share the format, not the mechanism.** The inspector and the tracer meet at a string, `"ns/fn"`. The inspector stays a zero-runtime static artifact; the tracer is a runtime recording. Unifying them under one engine would make the inspector depend on a running recorder for no benefit. The right amount of coupling is data — `myapp:peek`/`myapp:select` events and a shared attribute, nothing more.
@@ -420,7 +528,7 @@ The feature is structurally absent, not merely disabled — the same bar as the 
 - **Read expressions, not just calls.** Function-call frames give the skeleton; the expression traces give the datalog, the basis-t, the raw-bypass reads, the eid-matched source, and the "why is this empty?" branches. The depth that makes flow mode work is exactly the depth a var-wrapper could never reach — which is why we adopted the compiler in the first place.
 - **Lexical tree, temporal truth one click away.** A `(for …)` body runs during HTML serialization, not where it's written. We re-parent it back to its owner for a readable tree, flag it `:lazy`, and emit both parentings so the lexical⇄temporal toggle costs only a re-render.
 
-## What you now have
+## What You Now Have
 
 Building on the inspector's welded coordinate, with one dev alias, one dev namespace (`trace`), a set of dev-gated endpoints, and one dev-only script, you get a **construction view**:
 

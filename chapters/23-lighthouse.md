@@ -7,7 +7,7 @@ Lighthouse is Google's open-source tool for auditing web page quality across fou
 
 There is a better approach. Wire Lighthouse into your CI pipeline with hard score thresholds. Every commit gets audited. If any category drops below 100, the build fails. You fix the regression immediately, while the change is fresh, instead of hunting through weeks of commits later.
 
-The challenge for a SaaS app is that most pages live behind authentication. Lighthouse cannot log in. You need a test server that automatically authenticates every request, seeds realistic data, and serves the same pages your real users see. This post shows how to build that in Clojure, configure Lighthouse CI, and hit perfect scores across the board.
+The challenge for a SaaS app is that most pages live behind authentication. Lighthouse cannot log in. You need a test server that automatically authenticates every request, seeds realistic data, and serves the same pages your real users see. This chapter shows how to build that in Clojure, configure Lighthouse CI, and hit perfect scores across the board.
 
 There is one idea under everything that follows: a 100 is not an achievement, it is a *contract*. The point of the threshold is not the round number -- it is that the number turns every quality property Lighthouse can measure (a `lang` attribute, a meta description, sufficient contrast, a fast first paint) into a regression-guarded invariant instead of a thing someone has to remember. The individual fixes below each look small; what makes them matter is that, once passing, the gate keeps them passing. So read the list not as tips but as the set of audits we are choosing to pin, and the test server as the apparatus that lets us pin the authenticated ones too.
 
@@ -326,7 +326,7 @@ The Lighthouse audit runs alongside the other verification scripts:
 
 `reformat` and `lint` are the two committed convenience scripts; the rest are plain one-liners the workflow calls directly. All five must pass before merging to main. The CI pipeline runs them in sequence. If Lighthouse fails, you know the exact commit that introduced the regression, and the Lighthouse report tells you exactly which audit failed and why.
 
-## What You Have Now
+## What You Now Have
 
 After this setup, you have:
 

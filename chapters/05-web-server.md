@@ -3,7 +3,7 @@
 
 You have Clojure installed and a project skeleton. Now you need to serve HTTP requests. In most ecosystems this means picking a framework -- Rails, Django, Express -- and letting it dictate your project structure. Clojure takes a different approach. You compose small, focused libraries into your own stack. This gives you exactly what you need and nothing you don't.
 
-In this post we will build a running web server with routing, configuration, and a clean development workflow. By the end you will have a `curl`-able health endpoint and a REPL you can use to start, stop, and inspect your server without leaving your editor.
+In this chapter we will build a running web server with routing, configuration, and a clean development workflow. By the end you will have a `curl`-able health endpoint and a REPL you can use to start, stop, and inspect your server without leaving your editor.
 
 ## The Stack
 
@@ -458,7 +458,7 @@ Stop it:
 ;; Server stopped
 ```
 
-## What You Have Now
+## What You Now Have
 
 You have a running Clojure web server with:
 

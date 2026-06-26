@@ -5,7 +5,7 @@ Passwords are a liability. They get reused, leaked, phished, and forgotten. For 
 
 Magic links sidestep all of this. The user enters their email, gets a link, clicks it, and they are in. No password to remember, no credential to steal, no database of hashed secrets waiting to be breached. The email inbox becomes the authenticator -- and your users already have that secured with their own MFA, biometrics, or whatever their provider offers.
 
-This post covers the first half of the implementation: building the cryptographic token that powers those magic links. We will handle signing, verification, expiry, and user management -- all backed by tests. The next post will wire this into HTTP routes, email delivery, and sessions.
+This chapter covers the first half of the implementation: building the cryptographic token that powers those magic links. We will handle signing, verification, expiry, and user management -- all backed by tests. The next chapter wires this into HTTP routes, email delivery, and sessions.
 
 ## Why HMAC tokens instead of JWTs?
 
@@ -461,9 +461,9 @@ Because `:user/email` has `:db.unique/identity`, Datomic performs an upsert rath
 
 Call it with a new email, get a new user. Call it with an existing email, get the same one back. No errors either way.
 
-## What we have now
+## What You Now Have
 
-At the end of this post, we have a complete token-based authentication primitive:
+At the end of this chapter, we have a complete token-based authentication primitive:
 
 - **`sign-token`** -- creates a signed, time-limited token containing an email address and a one-time nonce
 - **`verify-token`** -- validates the signature, checks expiry, and returns the email and nonce, returning `nil` for any failure
@@ -476,4 +476,4 @@ The entire implementation is about 60 lines of Clojure with zero external depend
 
 What we do not have yet: HTTP routes, email sending, sessions, the server-side recording and one-shot consumption of the nonce, and the actual magic link flow that ties it all together. That is [Part 2](19-auth-email-flow.md).
 
-*All code in this series is from a real production SaaS. If you are building something similar, the patterns here should translate directly -- just swap in your own namespace and database.*
+*All code in this book is from a real production SaaS. If you are building something similar, the patterns here should translate directly -- just swap in your own namespace and database.*

@@ -96,7 +96,7 @@ A few things to note. We `load-file` the one path that changed -- not a tree ref
 
 The failure path is the important detail. A broken file -- a syntax error, an unbalanced paren -- does not crash the watcher. The exception is caught and logged, the watcher keeps running, and your next save gets a fresh chance to succeed. A crash-on-error watcher that you have to restart every time you fat-finger a paren would defeat the entire purpose.
 
-> This `load-changed-file` is deliberately the *basic* path: one branch, full reload. Once we have real server-rendered views and an asset pipeline, a later chapter widens this `cond` so that different edits get different responses -- but the skeleton is exactly this.
+> This `load-changed-file` is deliberately the *basic* path: one branch, full reload. The skeleton stays exactly this even once different edits start getting different responses.
 
 ### Registering directories and the watch loop
 
@@ -365,9 +365,9 @@ And `hot-reload/start` brings up the server and the watcher:
      :watch-path "/src"}))
 ```
 
-Open a REPL, type `(start!)`, and the whole loop is live: the server is up, the watcher is watching `src/`, and any connected browser tab will reload when you save. A later chapter adds two more steps to this same `start` -- a long-lived Tailwind watcher and a one-time view preload -- once those concerns exist.
+Open a REPL, type `(start!)`, and the whole loop is live: the server is up, the watcher is watching `src/`, and any connected browser tab will reload when you save.
 
-## Design Decisions
+## Design Decisions Worth Noting
 
 **`load-file` instead of `tools.namespace`.** We load exactly the one file that changed rather than running `clojure.tools.namespace.repl/refresh`. The tools.namespace approach scans the whole source tree and reloads in dependency order, which is powerful but slow and occasionally surprising -- it can wipe `defonce` state. For a server-rendered app where you edit one handler or view at a time, loading just that file is faster and more predictable, and it never resets the state we deliberately hold in `defonce`.
 

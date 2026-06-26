@@ -6,7 +6,7 @@ In [the live-reload chapter](06-live-reload.md) we closed the gap between saving
 - **Element → code.** You spot a misaligned badge in the admin dashboard; hold a key, hover it, and your editor opens the exact `.clj` line that produced it.
 - **Code → element.** You put your cursor on a view function (or a call to one) in the editor, and the matching element lights up in the browser — even telling apart the component's *definition* from this particular *call site*.
 
-Front-end frameworks have had the first half for years (React/Vue/Svelte inspectors). The second half — editor-cursor-drives-the-browser — is rarer even there. We render HTML on the server from Hiccup, plain Clojure data with no source information attached, so we have to manufacture all of it. This post is the full build: the why, the how, and the trade-offs.
+Front-end frameworks have had the first half for years (React/Vue/Svelte inspectors). The second half — editor-cursor-drives-the-browser — is rarer even there. We render HTML on the server from Hiccup, plain Clojure data with no source information attached, so we have to manufacture all of it. This chapter is the full build: the why, the how, and the trade-offs.
 
 It reuses two things from [the live-reload chapter](06-live-reload.md) — the file watcher and the `dev-reload` WebSocket — and hooks into the `base-layout` from [the Hiccup views chapter](11-hiccup-views.md). Everything here is dev-only and **structurally absent** from production builds, the same as the rest of our dev infrastructure. If you read strictly in order, the Hiccup views chapter's layout sections are the relevant background.
 
@@ -214,17 +214,7 @@ Wrap `tr-load!` in a `try` that falls back to `load-file` — a reader edge case
 
 ### Keeping the tags alive
 
-Here is a subtlety worth calling out, because it produces a baffling symptom. **The source tags exist only because the loader applied them** — they live on the runtime functions (the `instrument-var!` wrappers) and on the element metadata that `tr-load!`'s tools.reader pass attached. So *any* re-definition of a view namespace that goes around the loader — a plain `load-file`, or evaluating the namespace from your editor/REPL (a "Load File", an eval of a single `defn`, or an editor's eval-on-save) — re-defs those functions with the *default* reader and no `instrument-ns!`, silently stripping every tag in that file until the next loader pass. The visible effect: "I edited a view, saved, and after the reload a bunch of elements lost their inspection border." It's easy to misattribute to the edit; the real cause is a second, untagged load behind the watcher.
-
-The fix is a principle, not a mechanism: **`tr-load!` is the single source of truth for tagged view code.** Make it the *only* path that re-loads views and the problem can't occur. Concretely, let the file-watcher own reloads and turn off any editor "evaluate/load on save" for view namespaces — `tr-load!` already `eval`s into the running REPL, so an editor re-load of the same file is pure redundancy that happens to strip the tags.
-
-We did briefly build the obvious "fix" — a var watch on each view fn that re-instruments whenever it's re-defined out of band — and then deleted it. It's the wrong direction: reactive instead of preventive, and not even airtight, because the re-tag is asynchronous, so a page fetch can land in the window between the strip and the heal (you see a partial page, and a manual refresh "fixes" it). Healing the symptom is strictly worse than removing the cause. If you genuinely need out-of-band re-defs to stay tagged — a REPL-eval-heavy flow where you hover the page before saving — the airtight shape is a dev request middleware that re-tags any dirtied file *before* serving (correct at fetch time, whatever the timing), but that's only worth its machinery for that narrow case.
-
-What the loader *should* do is degrade gracefully on its own:
-
-**Degrade per form, not per file.** `tr-load!` evals each tagged form inside a `try`. If a transformed form won't compile — an edit hit a construct the call-site/element rewrite mishandles — it loads *that one form* plain and logs which one, rather than letting the whole file fall back to an untagged load. The function is still defined and still root-tagged by `instrument-ns!`; only its element-level tags are missing, and the gap is logged, not silent. (`reload-changed!` keeps the outer `try`/`load-file` from the previous section as a last resort for a read error that kills the entire file.)
-
-> **Lesson.** When a feature works by *decorating* runtime vars — instrumentation, tracing, `clojure.spec` instrumentation — a re-`def` behind your back silently undoes the decoration. The temptation is to re-apply it reactively with a var watch; resist it. Keep one authoritative path that applies the decoration, route all reloads through it, and there's no symptom to chase.
+The source tags exist only because the loader applied them, so any re-definition of a view namespace that goes around the loader — a plain `load-file`, or an editor's eval-on-save — re-defs those functions with the default reader and no `instrument-ns!`, silently stripping every tag until the next loader pass (the symptom: elements lose their inspection border after a save). The fix is a principle, not a mechanism: **`tr-load!` is the single source of truth for tagged view code** — make it the only path that reloads views (let the file-watcher own reloads, turn off editor eval-on-save for views) and the problem can't occur. Resist the temptation to heal it reactively with a var watch; that is asynchronous and racy. The loader does degrade per form rather than per file — each tagged form evals inside a `try`, so a form the rewrite mishandles loads plain and logs, leaving the function defined and root-tagged with only its element-level tags missing.
 
 ### Call-site tagging: telling instances apart
 
@@ -427,7 +417,7 @@ Because the index lives in an atom the dev loader refreshes on every reload, it 
 
 Capturing cursor movement requires running code in the editor's extension host — there is no config-only or LSP route (the language-server protocol has no cursor-moved notification, and Calva exposes no such hook). So we need an extension. But we don't have to *write and package* one: **Joyride** (Calva's sibling) runs ClojureScript in VS Code's extension host with full access to the `vscode` API, so the editor agent is a script that lives in the repo under `.joyride/scripts/`, installed by adding `betterthantomorrow.joyride` to the devcontainer's extension list. No TypeScript, no build, no `.vsix`.
 
-> **Why Joyride and not a custom extension?** A TypeScript extension is fully decoupled and works for non-Joyride users, but you must build and auto-install a `.vsix` from a lifecycle hook (the declarative `customizations.vscode.extensions` only takes marketplace IDs). For a Clojure team in a devcontainer, a Joyride script is genuinely project code — a `.cljs` in the repo — with none of that overhead. The cost is coupling navigation to Joyride being installed. We *did* once keep a `code -g` shell-out as a fallback, but landing it in the right window required sniffing the newest `VSCODE_IPC_HOOK_CLI` socket — fragile enough that we dropped it. With Joyride already supplying the reverse direction, requiring it for the forward direction too is a fair trade for deleting that workaround.
+> **Why Joyride and not a custom extension?** A TypeScript extension is fully decoupled and works for non-Joyride users, but you must build and auto-install a `.vsix` from a lifecycle hook (the declarative `customizations.vscode.extensions` only takes marketplace IDs). For a Clojure team in a devcontainer, a Joyride script is genuinely project code — a `.cljs` in the repo — with none of that overhead. The cost is coupling navigation to Joyride being installed; since Joyride already supplies the reverse direction, requiring it for the forward direction too is a fair trade (and lets us drop a fragile `code -g` shell-out fallback that had to sniff the newest `VSCODE_IPC_HOOK_CLI` socket to land in the right window).
 
 The script holds one WebSocket to the dev server. It **sends** the cursor (debounced) and **receives** open commands (opening the file via the vscode API — exact window, exact range, no shell-out):
 
@@ -452,11 +442,11 @@ The script holds one WebSocket to the dev server. It **sends** the cursor (debou
         (.then #(.revealRange % (vscode/Range. pos pos) (.. vscode -TextEditorRevealType -InCenter))))))
 ```
 
-A node-22 extension host has a global `WebSocket` (undici), so the script opens `ws://localhost:3000/dev/ws` directly. (On older hosts that lack it, an HTTP `fetch` POST works the same — we benchmarked both on loopback at well under a millisecond; transport latency is never the bottleneck for a debounced cursor.) Everything is **event-driven**: on the socket's `open` event the script sends `{:type "hello" :role "editor"}` to register up front — so a browser click can be routed to the editor *before* you've even moved the cursor — and on `close`/`error` it reconnects. The socket lives in a `defonce` atom so a re-eval disposes and reconnects cleanly. Getting that reconnect right across a REPL restart turned out to be its own saga — the next section.
+A node-22 extension host has a global `WebSocket` (undici), so the script opens `ws://localhost:3000/dev/ws` directly. (On older hosts that lack it, an HTTP `fetch` POST works the same — we benchmarked both on loopback at well under a millisecond; transport latency is never the bottleneck for a debounced cursor.) Everything is **event-driven**: on the socket's `open` event the script sends `{:type "hello" :role "editor"}` to register up front — so a browser click can be routed to the editor *before* you've even moved the cursor — and on `close`/`error` it reconnects. The socket lives in a `defonce` atom so a re-eval disposes and reconnects cleanly.
 
-### The relay, and a lesson about ordering
+### The relay, and reconnecting through the extension host
 
-On the server, the same `/dev/ws` handler now tags each client's role (browser by default; editor on its `hello`/`cursor`) and routes:
+On the server, the same `/dev/ws` handler now tags each client's role (browser by default; editor on its `hello`/`cursor`) and routes a resolved cursor to the browsers:
 
 ```clojure
 (defn- handle-cursor! [file line column]
@@ -467,40 +457,7 @@ On the server, the same `/dev/ws` handler now tags each client's role (browser b
           (notify-highlight! resolved))))))                  ;; broadcast to browsers
 ```
 
-We learned one thing here the hard way, worth passing on. An early version stamped each highlight with a sequence number and had the browser drop any with `seq <= lastSeq`, to guard against out-of-order delivery. But highlights travel over a single **ordered** WebSocket — they *can't* arrive out of order — so the guard bought nothing and introduced a footgun: when the server's counter reset on a hot-reload (a plain `def (atom 0)` re-evaluates to 0), the browser's `lastSeq` was still high and silently dropped every subsequent highlight. We removed the guard entirely.
-
-> **Trade-off / lesson.** Don't add ordering machinery for a channel that already guarantees order. We dropped the sequence number from both ends entirely — an ordered socket needs no de-duplication, and the only thing a counter added was a way to stall after a reload reset it.
-
-### Reconnecting through the extension host
-
-Making the editor **survive a REPL/server restart on its own** took longer than the rest of the inspector combined, and every wrong turn traced back to the same root: the VS Code extension host is a Node runtime with a few non-obvious WebSocket behaviours. Three lessons, because they'll bite anyone running a duplex socket from Joyride.
-
-**1. Async logs go to the DevTools console, not the Joyride output channel.** Joyride binds `*out*` to its output channel only during a script's *synchronous* top-level evaluation. Anything that runs later — a `setTimeout`, a vscode event, a WebSocket handler — runs outside that binding, so its `println` lands in the Extension Host DevTools console (Help → Toggle Developer Tools), which you won't see unless it's open. We spent a long time concluding "the events never fire" purely because we were watching the wrong console — they fired the whole time. **Debug the socket in DevTools**, or have handlers report back over the socket itself (which the server *can* log).
-
-**2. undici fires `close` for a dropped link but only `error` for a failed connect.** Node's WebSocket distinguishes a connection that *was* established and then dropped (the server died — `close`, code 1006) from one that *never* connected (the server is still booting after a restart — `error`, no `close`). Reconnect logic that listens to only one of them stalls on the other: listen to `close` alone and you never retry while the server is restarting. So both events schedule a reconnect, deduped so the rare both-fire case still yields a single retry:
-
-```clojure
-(defn- connect! []
-  ;; Tear down a prior socket; only close one that's OPEN/CONNECTING (see lesson 3).
-  (when-let [ws (:ws @!state)] (when (< (.-readyState ws) 2) (try (.close ws) (catch :default _ nil))))
-  (let [ws (js/WebSocket. ws-url)]
-    (swap! !state assoc :ws ws)
-    (.addEventListener ws "open"    (fn [_] (ws-send! {:type "hello" :role "editor"})
-                                            (swap! !state assoc :attempt 0)))
-    (.addEventListener ws "message" on-message)
-    (.addEventListener ws "close"   (fn [_] (schedule-reconnect! ws)))      ;; dropped link (1006)
-    (.addEventListener ws "error"   (fn [_] (schedule-reconnect! ws)))))    ;; failed connect
-
-(defn- schedule-reconnect! [ws]   ;; only the *current* socket retries, exactly once
-  (when (= ws (:ws @!state))
-    (let [n (inc (:attempt @!state 0))]
-      (swap! !state assoc :ws nil :attempt n
-        :reconnect (js/setTimeout (fn [] (connect!)) (backoff n))))))
-```
-
-**3. Never call `.close()` from an `error`/`close` handler.** In a browser this is harmless; in undici, `.close()` on a failing socket runs the close path *synchronously*, re-firing the same event into the same handler — unbounded recursion, `Maximum call stack size exceeded`, and worst of all it silently wedges the whole Joyride extension host. An early `error` handler did exactly this — `(.close ws)` "to force a close so the reconnect fires" — which was both unnecessary (undici fires `close` right after `error` anyway) and the actual cause of every "editor won't reconnect" report: the reconnect attempt was crashing on the recursion, and lesson 1 hid the crash. The fix is to never close from a handler — `schedule-reconnect!` only ever schedules — and to skip closing an already-closing socket in the teardown.
-
-> **The browser side needs none of this.** Chromium fires `close`/`error` reliably and `.close()` is async there, so the overlay reconnects on `close`/`error` with no heartbeat and tracks the connection in its badge. We *did* briefly add a ping/pong liveness heartbeat to the browser while debugging blind — but once the events proved reliable it was pure asymmetry (the editor has none) for a case a page reload already covers, so we removed it along with the server's `pong`. Both ends now use the same event-driven strategy, each matched to its runtime's reality.
+The editor agent piggybacks on Joyride over this WebSocket relay, and making it survive a REPL/server restart on its own took real care, because the VS Code extension host is a Node (undici) runtime with a few non-obvious socket behaviours: it fires `close` for a dropped link but only `error` for a failed connect (so both must schedule a reconnect), and calling `.close()` from inside an `error`/`close` handler re-fires the event synchronously and wedges the host. The reconnect logic that handles this — current-socket guarding, dedup, backoff — lives in `dev/inspector_load.clj` and `src/myapp/web/inspector.js`; read the exact code there rather than reconstructing it from prose. The browser side needs none of it: Chromium fires the events reliably and `.close()` is async, so the overlay reconnects on `close`/`error` with no heartbeat. (Two things we tried and removed, in case you reach for them: a per-highlight sequence number is pointless on an already-ordered socket and stalls when a hot-reload resets the counter; and a browser-side ping/pong heartbeat is redundant once the events prove reliable.)
 
 ### The browser highlighter
 
@@ -594,7 +551,7 @@ The feature is structurally absent, not merely disabled.
 - **The dev WebSocket is unauthenticated.** Anything that can reach `localhost:3000/dev/ws` can ask to open a (src-confined) file or push a cursor. That is acceptable for a dev-only, loopback service; don't expose the dev server.
 - **A small dev startup cost.** Reading views through tools.reader, wrapping calls, instrumenting vars, and indexing is more work than a plain `load` — paid once per view file at startup/reload, and never in production.
 
-## Design decisions worth noting
+## Design Decisions Worth Noting
 
 - **The metadata rides on the value — there is no index to keep in sync (forward).** The location travels welded to the Hiccup vector from read time, through `eval`, through every `for` and helper, onto the page. A `for`-row maps to its template line; an `if`-branch maps to the branch taken.
 - **The loader instruments; the views stay plain.** Auto-instrumenting every fn in a `views.clj` (safe because `tag-hiccup` no-ops on non-elements) gets the component layer with zero source ceremony: views need no per-function annotation.
@@ -602,7 +559,7 @@ The feature is structurally absent, not merely disabled.
 - **DOM-as-truth precedence (reverse).** The server proposes coordinates; the browser highlights whatever actually rendered, so conditionals, loops, and not-taken branches all behave correctly without the server predicting anything.
 - **A resource check for `dev?`.** Detecting dev with `requiring-resolve` of the hot-reload namespace can close a circular load during the app's own startup, throw, get swallowed, and silently freeze `dev?` to false. `(io/resource "hot_reload.clj")` answers the same question without loading anything.
 
-## What you now have
+## What You Now Have
 
 Building on the live-reload chapter's watcher and dev WebSocket, with one namespace (`myapp.web.inspector`), one dev loader (`inspector-load`), one inlined script (`inspector.js`), one Joyride script (`workspace_activate.cljs`), and a relay in `dev-reload`, you get a **bidirectional** inspector:
 

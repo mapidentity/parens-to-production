@@ -5,7 +5,7 @@
 
 You have a web app. It loads config, connects to Datomic, defines routes, renders pages. It works when you try it in the browser. But "works when I try it" is not a testing strategy. The moment you refactor a handler or change a route, you need something that tells you -- in seconds -- whether you broke anything.
 
-This post covers the testing infrastructure we put in place early: a test helpers module with fixtures for fresh in-memory databases and deterministic config, a set of initial tests for configuration and routing, a coverage tool with a minimum threshold, and a shell script that ties it all together. None of this is exotic. That is the point. Setting up boring, reliable test infrastructure early pays dividends for every feature that follows.
+This chapter covers the testing infrastructure we put in place early: a test helpers module with fixtures for fresh in-memory databases and deterministic config, a set of initial tests for configuration and routing, a coverage tool with a minimum threshold, and a shell script that ties it all together. None of this is exotic. That is the point. Setting up boring, reliable test infrastructure early pays dividends for every feature that follows.
 
 ## The Testing Philosophy: Fresh State Per Test
 
@@ -362,7 +362,7 @@ Everything above lives in `test/`. That is the right home for most tests -- the 
 The division of labor is worth stating plainly:
 
 - **In-file (co-located) tests** suit the light cases: example or doc-style tests, short assertions, and -- the one that earns its keep -- assertions on **private** functions. Inside the function's own namespace you call a `defn-` directly. No exposing it, no `(var myapp.ns/private-fn)` indirection. The test sits next to the code and reads as living documentation.
-- **Separate `test/` files** -- the approach built earlier in this post -- carry the heavy lifting: larger standalone tests, anything with substantial setup, and integration tests like the DB-fixture style above. Those do not belong in-file.
+- **Separate `test/` files** -- the approach built earlier in this chapter -- carry the heavy lifting: larger standalone tests, anything with substantial setup, and integration tests like the DB-fixture style above. Those do not belong in-file.
 
 The signal is the dependency. The only test-only dependency a light in-file test needs is `clojure.test` itself (`deftest`/`is`/`testing`), plus maybe a small helper or data generator. The moment a test reaches for something heavy -- a JDBC driver, testcontainers, anything not on the production classpath -- that is the cue to move it to a `test/` file. The macro below would technically strip it, but a test that needs that machinery is not an example anymore.
 
@@ -445,9 +445,9 @@ The same caveat applies to the commit gate. The coverage gate runs `clojure -M:c
 
 Co-location is convenient -- the test sits where you edit, and reads as documentation for the next person. That convenience is not free: it puts a test concern into a source file, and while the `tests` macro keeps the *dependency* out of the artifact, it cannot make discovery automatic. The trade is worth it for short, doc-style, and private-function checks. For anything heavier -- standalone or integration -- the separate `test/` file stays simpler, and discovery stays free. Keep it there.
 
-## What You Have Now
+## What You Now Have
 
-At this point in the series, the test suite covers three areas:
+At this point the test suite covers three areas:
 
 1. **Configuration** -- the config system loads correctly, produces keys of the right type and size, and supports nested access.
 2. **Routes** -- every defined route resolves, unknown routes return 404, wrong methods return 405.
@@ -460,13 +460,9 @@ The infrastructure supports more:
 - **A request builder**, for when you start testing handlers end-to-end.
 - **Coverage enforcement**, so coverage can only go up as you add features.
 
-The investment is small -- one helpers file, two test files, and a couple of aliases in `deps.edn` (the test commands run directly, no wrapper script). But it establishes patterns that scale. Every new feature you add gets tested against this infrastructure, and you find out in seconds whether it works.
+The investment is small -- one helpers file, two test files, and a couple of aliases in `deps.edn` (the test commands run directly, no wrapper script). But it establishes patterns that scale. Every new feature you add gets tested against this infrastructure, and you find out in seconds whether it works. Next time you sit down to add a feature, you write the test first (or at least alongside), and you have everything you need to run it.
 
-Next time you sit down to add a feature, you write the test first (or at least alongside), and you have everything you need to run it.
-
-## The Foundation So Far
-
-This chapter closes the book's first movement. Six chapters in, before a single feature exists, you have built the scaffold every later chapter stands on -- and it is worth pausing to see it whole, because from here the book turns from *infrastructure* to *the application itself*.
+This chapter also closes the book's first movement. Six chapters in, before a single feature exists, you have built the scaffold every later chapter stands on -- and it is worth pausing to see it whole, because from here the book turns from *infrastructure* to *the application itself*.
 
 Here is what is running when you start the app in development:
 

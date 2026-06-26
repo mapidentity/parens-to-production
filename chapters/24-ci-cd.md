@@ -499,7 +499,7 @@ The stages are deliberately ordered from fastest to slowest, and from cheapest t
 
 If formatting is wrong, you find out in seconds, not after waiting for the entire test suite and build to run. This fast feedback loop makes CI less painful -- developers fix issues quickly because the pipeline tells them quickly.
 
-## What You Have Now
+## What You Now Have
 
 Once this pipeline is wired up to your forge runner, every push to main triggers a fully automated sequence:
 
@@ -518,7 +518,7 @@ A closing honesty about scope: the workflow above is the *application* pipeline.
 
 ## Reflecting on the Series
 
-This is the final post in "Building a Clojure/Datomic SaaS from Scratch." Over the course of this series, we have assembled a complete application stack from first principles:
+This is the final chapter of "Building a Clojure/Datomic SaaS from Scratch." Over the course of this book, we have assembled a complete application stack from first principles:
 
 We started with a Clojure project structure and strict compilation. We added server-side rendering with escaping Hiccup. We modeled our domain in Datomic. We built passwordless authentication. We built a content-hashed asset pipeline -- Tailwind, esbuild, an import map and Subresource Integrity -- behind a strict Content-Security-Policy. We wrote tests at every level -- unit, integration, and end-to-end. We measured performance with Lighthouse. And now we have tied everything together with continuous integration and automated deployment.
 
@@ -526,6 +526,6 @@ Every piece was built to be understood by one person. No magic frameworks, no hi
 
 That simplicity is the point. A solo operator building a SaaS does not have the luxury of complexity. Every moving part is a part that can break at 2 AM with no one else to call. The system we have built is not sophisticated -- it is simple, transparent, and entirely within one person's ability to understand, debug, and maintain.
 
-Whether you followed along post by post or jumped straight to the topics that interested you, we hope this series demonstrated that building a production SaaS with Clojure and Datomic is not only feasible but genuinely enjoyable. The tools are mature. The ecosystem is stable. And the language rewards you with a codebase that stays manageable as it grows.
+Whether you read straight through or jumped to the topics that interested you, we hope this book demonstrated that building a production SaaS with Clojure and Datomic is not only feasible but genuinely enjoyable. The tools are mature. The ecosystem is stable. And the language rewards you with a codebase that stays manageable as it grows.
 
 Now go build something.

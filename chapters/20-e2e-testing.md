@@ -1,7 +1,7 @@
 # E2E Testing a Clojure Web App with Playwright
 
 
-Unit tests prove your functions work. E2E tests prove your application works. There is a gap between the two that no amount of unit coverage can bridge: the gap where middleware ordering matters, where sessions expire, where a redirect chain lands somewhere unexpected, where the browser does not behave the way your mental model predicted. This post covers how to set up proper end-to-end testing for a Clojure web app using Playwright, with a dedicated test server, stubbed services, and test-only endpoints for controlling state.
+Unit tests prove your functions work. E2E tests prove your application works. There is a gap between the two that no amount of unit coverage can bridge: the gap where middleware ordering matters, where sessions expire, where a redirect chain lands somewhere unexpected, where the browser does not behave the way your mental model predicted. This chapter covers how to set up proper end-to-end testing for a Clojure web app using Playwright, with a dedicated test server, stubbed services, and test-only endpoints for controlling state.
 
 By the end, you will have a self-contained E2E test suite that spins up a fresh Clojure server with in-memory databases, captures emails instead of sending them, and exercises your auth flow through a real browser.
 

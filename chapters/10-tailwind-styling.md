@@ -119,6 +119,6 @@ To confirm it works, start the server, open any page, and check that the font an
 
 What keeps the regeneration loop fast and automatic in development -- a long-lived `tailwindcss --watch` process and the file watcher that swaps the stylesheet in the browser -- is part of the hot-reload story, and it is covered in the hot-reload chapters, not here. What turns this same `static/styles.css` into a content-hashed, immutably cached production asset is the asset pipeline chapter, near the end of the book. For now the picture is simple: Tailwind writes one stylesheet, the layout links it, and your views can use utility classes immediately.
 
-## What you have now
+## What You Now Have
 
 The app has a styling system with no JavaScript runtime dependency: the standalone Tailwind v4 CLI as a build tool, semantic design tokens declared in CSS, a variable font with `font-display: swap`, and a single stylesheet served at a stable URL in development. Every view you write from here on can reach for utility classes -- `mt-4`, `flex`, `bg-primary`, `text-text-secondary` -- co-located with the Hiccup markup they style, with no separate CSS file to keep in sync. That is enough to start building views.
