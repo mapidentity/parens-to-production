@@ -5,10 +5,12 @@
 //
 // Uses the dispatcher's fetchAndMorph primitive so behaviour stays consistent
 // with normal form submission — same target conventions, same focus handling
-// (but with ignoreActiveValue so the input the user is typing into doesn't
-// get clobbered mid-keystroke).
+// (but with ignoreActiveValue so the input the user is typing into doesn't get
+// clobbered mid-keystroke). Lifecycle (wire on load + after morph, once) is
+// owned by the controller registry; this module only declares the behaviour.
 
 import { fetchAndMorph } from '/js/dispatcher.js';
+import { register } from '/js/controllers.js';
 import { debounce, DEFAULT_DELAY_MS } from '/js/util.js';
 
 function submitForm(form) {
@@ -30,24 +32,21 @@ function submitForm(form) {
   });
 }
 
-function wire(form) {
-  if (form._liveWired) return;
-  form._liveWired = true;
-
-  const delay = parseInt(form.getAttribute('data-live-delay'), 10) || DEFAULT_DELAY_MS;
-  const submit = debounce(delay, () => submitForm(form));
-
-  form.addEventListener('input', submit);
-  form.addEventListener('change', submit);
-
-  // Fire once on init so the preview reflects current values.
-  queueMicrotask(() => submitForm(form));
-}
-
-function init(root) {
-  const scope = root || document;
-  scope.querySelectorAll('form[data-live]').forEach(wire);
-}
-
-document.addEventListener('DOMContentLoaded', () => init(document));
-document.addEventListener('dispatcher:morphed', (e) => init(document));
+register('live-form', {
+  selector: 'form[data-live]',
+  connect(form) {
+    const delay = parseInt(form.getAttribute('data-live-delay'), 10) || DEFAULT_DELAY_MS;
+    const submit = debounce(delay, () => submitForm(form));
+    form._liveSubmit = submit;
+    form.addEventListener('input', submit);
+    form.addEventListener('change', submit);
+    // Fire once on connect so the preview reflects current values.
+    queueMicrotask(() => submitForm(form));
+  },
+  disconnect(form) {
+    if (!form._liveSubmit) return;
+    form.removeEventListener('input', form._liveSubmit);
+    form.removeEventListener('change', form._liveSubmit);
+    form._liveSubmit = null;
+  },
+});

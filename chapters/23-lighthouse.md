@@ -59,7 +59,7 @@ Lighthouse needs to see authenticated pages, but it has no way to perform a logi
   (fn [request] (handler (assoc-in request [:session :user-email] (test-email)))))
 ```
 
-Two things to note here. First, the test email comes from the admin email in config, resolved at request time -- a function, not a top-level `def`, so it tracks whatever profile the server starts under rather than freezing the value when the namespace loads (the same runtime-config discipline as [the web-server chapter](05-web-server.md)'s `delay` and [the email login-flow chapter](16-auth-email-flow.md)'s SMTP config). This means the auto-authenticated user has admin privileges, so Lighthouse can audit admin pages too. Second, `wrap-auto-auth` is trivial -- one line of middleware that sets `:user-email` in the session map. The rest of the application sees a normal authenticated request.
+Two things to note here. First, the test email comes from the admin email in config, resolved at request time -- a function, not a top-level `def`, so it tracks whatever profile the server starts under rather than freezing the value when the namespace loads (the same runtime-config discipline as [the web-server chapter](05-web-server.md)'s `delay` and [the email login-flow chapter](19-auth-email-flow.md)'s SMTP config). This means the auto-authenticated user has admin privileges, so Lighthouse can audit admin pages too. Second, `wrap-auto-auth` is trivial -- one line of middleware that sets `:user-email` in the session map. The rest of the application sees a normal authenticated request.
 
 ### Seeding Test Data
 
@@ -108,11 +108,11 @@ The test server reconstructs the Ring handler from the same route table the prod
                     [wrap-auto-auth] [routes/wrap-locale]]})))
 ```
 
-The middleware ordering matters. `wrap-params` and `wrap-keyword-params` run first to parse the request. `wrap-session` sets up cookie-based sessions. Then `wrap-auto-auth` injects the test user identity. Finally `wrap-locale` determines the locale for i18n. The handlers see a request that looks identical to a real authenticated request. Like the e2e server in [the e2e-testing chapter](17-e2e-testing.md), this one omits `:secure` (it runs over plain HTTP on `localhost`); the session cookie is `:same-site :lax`, which is all the auto-auth flow needs.
+The middleware ordering matters. `wrap-params` and `wrap-keyword-params` run first to parse the request. `wrap-session` sets up cookie-based sessions. Then `wrap-auto-auth` injects the test user identity. Finally `wrap-locale` determines the locale for i18n. The handlers see a request that looks identical to a real authenticated request. Like the e2e server in [the e2e-testing chapter](20-e2e-testing.md), this one omits `:secure` (it runs over plain HTTP on `localhost`); the session cookie is `:same-site :lax`, which is all the auto-auth flow needs.
 
 ### The Entry Point
 
-The `start!` function ties everything together. It creates fresh databases, loads the asset manifest (so `(assets/asset ...)` resolves the hashed URLs the views ask for), seeds the test user, and starts an HTTP server. It defaults to port 9876 -- the same port the e2e server in [the e2e-testing chapter](17-e2e-testing.md) uses; that is safe because the two run as separate, sequential CI steps and never bind the port at the same time:
+The `start!` function ties everything together. It creates fresh databases, loads the asset manifest (so `(assets/asset ...)` resolves the hashed URLs the views ask for), seeds the test user, and starts an HTTP server. It defaults to port 9876 -- the same port the e2e server in [the e2e-testing chapter](20-e2e-testing.md) uses; that is safe because the two run as separate, sequential CI steps and never bind the port at the same time:
 
 ```clojure
 (defn start!
@@ -203,7 +203,7 @@ There is no wrapper script to write -- the whole audit is one command, run from 
 lhci autorun
 ```
 
-`lhci autorun` handles everything: it starts your server (using `startServerCommand`), waits for the ready pattern, runs Lighthouse against each URL, collects the reports, and checks the assertions. If any assertion fails, it exits non-zero, which fails your CI step. This is exactly the command [the CI/CD chapter](21-ci-cd.md) wires into the pipeline -- no bespoke script in between. (If you prefer a short alias, a one-line `lhci autorun` wrapper is fine, but the companion repo deliberately keeps the canonical command in the workflow rather than hiding it behind a script.)
+`lhci autorun` handles everything: it starts your server (using `startServerCommand`), waits for the ready pattern, runs Lighthouse against each URL, collects the reports, and checks the assertions. If any assertion fails, it exits non-zero, which fails your CI step. This is exactly the command [the CI/CD chapter](24-ci-cd.md) wires into the pipeline -- no bespoke script in between. (If you prefer a short alias, a one-line `lhci autorun` wrapper is fine, but the companion repo deliberately keeps the canonical command in the workflow rather than hiding it behind a script.)
 
 ## Hitting 100%
 
@@ -231,7 +231,7 @@ Every page needs viewport and description meta tags. Without them, Lighthouse do
       ]]))
 ```
 
-This is the same escaping `h/html` layout from [the Hiccup views chapter](11-hiccup-views.md) -- not `hiccup.page/html5`, which [the asset-pipeline chapter](19-asset-pipeline.md) deliberately dropped because it does not escape string content. The `{:lang (name locale)}` attribute on the `<html>` element is easy to miss but Lighthouse checks for it. It tells screen readers and search engines what language the page is in. The viewport meta tag ensures mobile rendering works correctly. The description meta tag satisfies SEO audits.
+This is the same escaping `h/html` layout from [the Hiccup views chapter](11-hiccup-views.md) -- not `hiccup.page/html5`, which [the asset-pipeline chapter](22-asset-pipeline.md) deliberately dropped because it does not escape string content. The `{:lang (name locale)}` attribute on the `<html>` element is easy to miss but Lighthouse checks for it. It tells screen readers and search engines what language the page is in. The viewport meta tag ensures mobile rendering works correctly. The description meta tag satisfies SEO audits.
 
 Because these live in the shared base layout, every page gets them automatically. You set them once and never worry about a new page missing them.
 

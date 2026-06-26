@@ -65,7 +65,7 @@ Here is what happens step by step:
 4. **Bind and stub.** `*conn*` holds the connection for tests that need direct access. `with-redefs` makes `db/get-connection` return this test connection, so application code that calls `(db/get-connection)` transparently gets the test database.
 5. **Clean up.** After the test function `f` runs, the database is deleted. No residue.
 
-The same pattern applies to the analytics database, if your app has one. It uses the `analytics` alias from the `:require` above (`myapp.analytics.db`, which we build in [the admin dashboard chapter](18-admin-dashboard.md) -- omit both the require and this fixture until then):
+The same pattern applies to the analytics database, if your app has one. It uses the `analytics` alias from the `:require` above (`myapp.analytics.db`, which we build in [the admin dashboard chapter](21-admin-dashboard.md) -- omit both the require and this fixture until then):
 
 ```clojure
 (def ^:dynamic *analytics-conn*

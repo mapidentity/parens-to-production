@@ -207,13 +207,27 @@ export async function fetchAndMorph(url, opts = {}) {
     }
   }
 
-  morph(targetEl, fragmentEl, {
-    morphStyle: 'innerHTML',
-    ignoreActiveValue,
-  });
-
-  // morphed region carries its own trace-id (see note above); dev-only.
-  if (traceId) targetEl.setAttribute('data-myapp-trace-id', traceId);
+  // Apply the server's new markup. Wrapping the mutation in a View Transition
+  // lets the browser animate the change — a cross-fade of the root by default,
+  // and shared-element FLIP for anything carrying a `view-transition-name`
+  // (e.g. dashboard cards that move on reorder). This is Layer 2 of the
+  // progressive-enhancement stack and is pure enhancement: where the API is
+  // absent the same mutation just applies instantly. We skip it for live/typing
+  // updates (ignoreActiveValue), where per-keystroke animation would be noise,
+  // and when the user has asked for reduced motion.
+  const applyMorph = () => {
+    morph(targetEl, fragmentEl, { morphStyle: 'innerHTML', ignoreActiveValue });
+    // morphed region carries its own trace-id (see note above); dev-only.
+    if (traceId) targetEl.setAttribute('data-myapp-trace-id', traceId);
+  };
+  const animate = !!document.startViewTransition
+    && !ignoreActiveValue
+    && !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  if (animate) {
+    await document.startViewTransition(applyMorph).updateCallbackDone;
+  } else {
+    applyMorph();
+  }
 
   updateTitle(parsedDoc);
 

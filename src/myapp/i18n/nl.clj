@@ -54,6 +54,8 @@
    :recipe/edit "Bewerken"
    :recipe/delete "Verwijderen"
    :recipe/delete-confirm "Dit recept verwijderen? Dit kan niet ongedaan worden gemaakt."
+   :recipe/actions "Acties"
+   :common/cancel "Annuleren"
    :recipe/fork "Fork"
    :recipe/fork-this "Fork dit recept"
    :recipe/login-to-fork "Log in om te forken"
@@ -94,6 +96,10 @@
    :dashboard/your-recipes "Jouw recepten"
    :dashboard/no-recipes "Je hebt nog geen recepten aangemaakt."
    :dashboard/create-cta "Maak je eerste recept"
+   :dashboard/reorder-hint "Sleep aan de greep, of gebruik ▲▼, om te herordenen."
+   :dashboard/drag-handle "Sleep om te herordenen"
+   :dashboard/move-up "Omhoog"
+   :dashboard/move-down "Omlaag"
 
    ;; Errors
    :error/title "Fout"

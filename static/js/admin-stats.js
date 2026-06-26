@@ -1,9 +1,13 @@
-// Admin dashboard live stats. ESM enhancer: polls /admin/stats and animates the
-// changed values. Loaded globally but INERT off the dashboard — it only starts a
-// poller when the [data-stat] cards are present. Idempotent and morph-safe:
-// re-inits on dispatcher:morphed and always clears any prior interval first, so
-// navigating in/out of /admin never leaks a second poller.
+// Admin dashboard live stats. Polls /admin/stats and animates changed values.
+// INERT off the dashboard — a controller only connects where the [data-stat]
+// cards exist. A single shared poller serves all cards (started on the first
+// connect, stopped when the last card disconnects), so navigating in and out of
+// /admin never leaks a second interval. Lifecycle owned by the registry.
+
+import { register } from '/js/controllers.js';
+
 let timer = null;
+let liveCards = 0;
 
 function poll() {
   fetch('/admin/stats', { credentials: 'same-origin' })
@@ -31,12 +35,14 @@ function poll() {
     .catch(function () {});
 }
 
-function start() {
-  if (timer) { clearInterval(timer); timer = null; } // never leak a second poller
-  if (document.querySelector('[data-stat]')) {
-    timer = setInterval(poll, 20000);
-  }
-}
-
-start();
-document.addEventListener('dispatcher:morphed', start);
+register('live-stats', {
+  selector: '[data-stat]',
+  connect() {
+    liveCards++;
+    if (!timer) timer = setInterval(poll, 20000);
+  },
+  disconnect() {
+    liveCards = Math.max(0, liveCards - 1);
+    if (liveCards === 0 && timer) { clearInterval(timer); timer = null; }
+  },
+});

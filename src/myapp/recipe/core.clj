@@ -30,9 +30,18 @@
   "Pull pattern for a fully-rendered recipe, including its owner and (if any)
   the recipe it was forked from."
   [:db/id :recipe/id :recipe/title :recipe/description :recipe/servings
-   :recipe/ingredients :recipe/steps :recipe/created-at :recipe/updated-at
+   :recipe/ingredients :recipe/steps :recipe/position
+   :recipe/created-at :recipe/updated-at
    {:recipe/user [:db/id :user/email :user/display-name]}
    {:recipe/forked-from [:recipe/id :recipe/title {:recipe/user [:user/display-name]}]}])
+
+(def ^:private versioned-attrs
+  "The content attributes whose changes constitute a new VERSION of a recipe.
+  `version-history` counts a transaction as a version only when it touched one
+  of these — so bookkeeping-only edits (notably :recipe/position from a
+  dashboard reorder) never pollute the timeline or show up as an empty diff."
+  [:recipe/title :recipe/description :recipe/servings
+   :recipe/ingredients :recipe/steps :recipe/forked-from])
 
 (defn lines
   "Split newline-separated text into a vector of non-blank, right-trimmed lines."
@@ -66,12 +75,26 @@
        (sort-by :recipe/updated-at #(compare %2 %1))
        vec))
 
+(defn- dashboard-order
+  "Comparator for the owner's dashboard: explicit :recipe/position ascending,
+  then (for recipes the user hasn't reordered yet) most-recently-updated first.
+  Positioned recipes always sort ahead of unpositioned ones."
+  [a b]
+  (let [pa (:recipe/position a)
+        pb (:recipe/position b)]
+    (cond
+      (and pa pb) (compare (long pa) (long pb))
+      pa -1
+      pb 1
+      :else (compare (:recipe/updated-at b) (:recipe/updated-at a)))))
+
 (defn recipes-by-user
-  "Recipes owned by `user-eid`, most-recently-updated first."
+  "Recipes owned by `user-eid`, in the owner's chosen dashboard order
+  (see `dashboard-order`)."
   [db user-eid]
   (->> (d/q '[:find [?e ...] :in $ ?u :where [?e :recipe/user ?u]] db user-eid)
        (map #(db/pull* db pull-pattern %))
-       (sort-by :recipe/updated-at #(compare %2 %1))
+       (sort dashboard-order)
        vec))
 
 (defn owned-by?
@@ -120,11 +143,13 @@
   (when-let [eid (d/entid db [:recipe/id id])]
     (let [h (d/history db)
           txs (->> (d/q '[:find ?tx ?inst
-                          :in $ ?e
+                          :in $ ?e [?a ...]
                           :where
-                          [?e _ _ ?tx true]
+                          ;; Only transactions that asserted a CONTENT attribute
+                          ;; count as a version — a position-only reorder does not.
+                          [?e ?a _ ?tx true]
                           [?tx :db/txInstant ?inst]]
-                        h eid)
+                        h eid versioned-attrs)
                    ;; Sort by basis-t, not :db/txInstant — two edits in the same
                    ;; millisecond tie on the instant, which would make version
                    ;; order (and "latest") non-deterministic. t is monotonic.
@@ -233,12 +258,23 @@
 ;; Mutations
 ;; ---------------------------------------------------------------------------
 
+(defn- next-position
+  "One past the highest :recipe/position among `user-eid`'s recipes (0 if none),
+  so a freshly created recipe appends to the end of the owner's dashboard."
+  [db user-eid]
+  (let [m (d/q '[:find (max ?p) .
+                 :in $ ?u
+                 :where [?r :recipe/user ?u] [?r :recipe/position ?p]]
+               db user-eid)]
+    (if m (inc (long m)) 0)))
+
 (defn create!
   "Create a new recipe owned by `user-eid`. Returns the new `:recipe/id` (UUID).
   Pass `:forked-from-eid` to record provenance (used by `fork!`)."
   [conn user-eid {:keys [title description servings ingredients steps forked-from-eid]}]
   (let [id (UUID/randomUUID)
-        now (time/now)]
+        now (time/now)
+        position (next-position (d/db conn) user-eid)]
     @(db/transact* conn
        [(cond-> {:db/id "new-recipe"
                  :recipe/id id
@@ -248,10 +284,42 @@
                  :recipe/servings (long (or servings 1))
                  :recipe/ingredients (or ingredients "")
                  :recipe/steps (or steps "")
+                 :recipe/position position
                  :recipe/created-at now
                  :recipe/updated-at now}
           forked-from-eid (assoc :recipe/forked-from forked-from-eid))])
     id))
+
+(defn reorder!
+  "Set explicit :recipe/position on `ids` (UUIDs) in the given order, for recipes
+  owned by `user-eid`. Ids not owned by the user are silently skipped (tenant
+  isolation). Does NOT bump :recipe/updated-at — a reorder is not a content edit
+  and must not create a version. Returns true."
+  [conn user-eid ids]
+  (let [db (d/db conn)
+        tx (->> ids
+                (map-indexed
+                  (fn [i id]
+                    (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
+                      {:db/id eid :recipe/position (long i)})))
+                (remove nil?)
+                vec)]
+    (when (seq tx) @(db/transact* conn tx))
+    true))
+
+(defn move!
+  "Move recipe `id` one step `dir` (:up or :down) within its owner's ordered
+  dashboard list, owner-checked. This is the no-JS reorder path (the up/down
+  form buttons); it normalises every recipe's position as a side effect via
+  `reorder!`. Returns true."
+  [conn user-eid id dir]
+  (let [db (d/db conn)
+        ids (mapv :recipe/id (recipes-by-user db user-eid))
+        i (.indexOf ^java.util.List ids id)
+        j (case dir :up (dec i) :down (inc i) i)]
+    (when (and (nat-int? i) (nat-int? j) (< j (count ids)) (not= i j))
+      (reorder! conn user-eid (assoc ids i (nth ids j) j (nth ids i))))
+    true))
 
 (defn fork!
   "Fork the recipe `source-id` (any owner's) into a new recipe owned by

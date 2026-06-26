@@ -176,6 +176,16 @@ button:active, a:active, [role="button"]:active {
   transform: translateY(-1px);
 }
 
+/* Stretched link: the title link's ::after overlays the whole (relative) card,
+   so the entire card is clickable WITHOUT wrapping it in an <a> (which would nest
+   anchors). Secondary links inside the card lift above the overlay with z-index. */
+.card-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
 /* Interaction: smooth group expand/collapse */
 .group-content {
   display: grid;
@@ -209,6 +219,185 @@ details[open] .group-chevron {
 }
 .action-pulse {
   animation: gentle-pulse 3s ease-in-out infinite;
+}
+
+/* -------------------------------------------------------------------------
+   Layer 1: platform primitives (popover, dialog, :has, @starting-style).
+   All progressive — where a feature is unsupported the element still works,
+   it just appears without the animation / anchored placement.
+   ------------------------------------------------------------------------- */
+
+/* Owner actions menu — a declarative popover (opened via popovertarget, no JS),
+   anchor-positioned under its trigger. The @supports block upgrades placement;
+   without it the popover still opens in the top layer. */
+.actions-trigger {
+  font-size: 1.25rem;
+  line-height: 1;
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.375rem;
+  color: var(--color-text-secondary);
+}
+.actions-trigger:hover {
+  color: var(--color-text-primary);
+}
+
+.actions-menu {
+  margin: 0;
+  padding: 0.25rem;
+  min-width: 9rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  background: var(--color-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  /* Enter/leave transition, including in and out of display:none, which the
+     popover toggles — hence transition-behavior: allow-discrete. */
+  transition:
+    opacity 120ms ease-out,
+    transform 120ms ease-out,
+    overlay 120ms allow-discrete,
+    display 120ms allow-discrete;
+}
+.actions-menu:not(:popover-open) {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+@starting-style {
+  .actions-menu:popover-open {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@supports (anchor-name: --x) {
+  .actions-menu {
+    position: absolute;
+    inset: auto;
+    top: calc(anchor(bottom) + 4px);
+    right: anchor(right);
+  }
+}
+.actions-menu a,
+.actions-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.375rem 0.625rem;
+  border: none;
+  border-radius: 0.375rem;
+  background: none;
+  font-size: 0.875rem;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+.actions-menu a:hover,
+.actions-menu button:hover {
+  background: var(--color-surface-subtle);
+}
+.actions-menu .actions-danger {
+  color: var(--color-negative);
+}
+
+/* Confirm dialog — a native <dialog>, animated in via @starting-style. */
+.confirm-dialog {
+  max-width: 22rem;
+  padding: 1.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  transition:
+    opacity 140ms ease-out,
+    transform 140ms ease-out,
+    overlay 140ms allow-discrete,
+    display 140ms allow-discrete;
+}
+.confirm-dialog:not([open]) {
+  opacity: 0;
+  transform: scale(0.96);
+}
+@starting-style {
+  .confirm-dialog[open] {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+.confirm-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.4);
+}
+.confirm-dialog p {
+  font-size: 0.9375rem;
+}
+.confirm-dialog .confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.confirm-dialog button {
+  padding: 0.375rem 0.875rem;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.confirm-dialog .confirm-cancel {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-subtle);
+  color: var(--color-text-primary);
+}
+.confirm-dialog .confirm-ok {
+  border: 1px solid var(--color-negative);
+  background: var(--color-negative);
+  color: #fff;
+}
+
+/* Drag-to-reorder showcase. The sortable controller only tracks the pointer and
+   sets `--dy`; every bit of motion below is CSS (plus a View Transition for the
+   drop settle). Siblings glide via a transform transition; the lifted row
+   follows the pointer with no transition (instant) and gets a tilt + shadow. */
+[data-controller~="sortable"] [data-drag-handle] {
+  cursor: grab;
+  touch-action: none;          /* the handle owns touch gestures — no scroll-steal */
+}
+[data-controller~="sortable"].is-sorting {
+  user-select: none;
+  -webkit-user-select: none;
+}
+[data-controller~="sortable"] > li {
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);   /* siblings glide aside */
+}
+[data-controller~="sortable"] > li.dragging {
+  transition: none;            /* the dragged row tracks the pointer with no lag */
+  transform: translateY(var(--dy, 0)) scale(1.03) rotate(-0.6deg);
+  /* position + z-index so the lifted row paints above ALL siblings. Each row's
+     transform makes its own stacking context (z-index:auto), which paint in DOM
+     order — so a bare z-index on a static box does nothing. Positioning it
+     promotes it above those auto contexts regardless of DOM order. */
+  position: relative;
+  z-index: 10;
+  cursor: grabbing;
+}
+[data-controller~="sortable"] > li.dragging .card {
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.18);
+  border-color: var(--color-primary-vivid);
+}
+/* Siblings recede a touch while a drag is in progress — pure CSS via :has(). */
+[data-controller~="sortable"]:has(.dragging) > li:not(.dragging) .card {
+  opacity: 0.85;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-controller~="sortable"] > li { transition: none; }
+  [data-controller~="sortable"] > li.dragging { transform: translateY(var(--dy, 0)); }
+}
+
+/* Respect reduced-motion for same-document View Transitions. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
 }
 
 /* Accessibility: visible focus rings for keyboard navigation */

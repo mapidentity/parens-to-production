@@ -54,6 +54,8 @@
    :recipe/edit "Edit"
    :recipe/delete "Delete"
    :recipe/delete-confirm "Delete this recipe? This cannot be undone."
+   :recipe/actions "Actions"
+   :common/cancel "Cancel"
    :recipe/fork "Fork"
    :recipe/fork-this "Fork this recipe"
    :recipe/login-to-fork "Sign in to fork"
@@ -94,6 +96,10 @@
    :dashboard/your-recipes "Your recipes"
    :dashboard/no-recipes "You haven't created any recipes yet."
    :dashboard/create-cta "Create your first recipe"
+   :dashboard/reorder-hint "Drag the handle, or use ▲▼, to reorder."
+   :dashboard/drag-handle "Drag to reorder"
+   :dashboard/move-up "Move up"
+   :dashboard/move-down "Move down"
 
    ;; Errors
    :error/title "Error"

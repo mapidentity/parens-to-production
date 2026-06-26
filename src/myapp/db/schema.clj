@@ -85,6 +85,15 @@
     :db/valueType :db.type/ref
     :db/cardinality :db.cardinality/one
     :db/doc "The recipe this one was forked from. Absent on originals."}
+   {:db/ident :recipe/position
+    :db/valueType :db.type/long
+    :db/cardinality :db.cardinality/one
+    :db/doc
+    "Display order within the owner's dashboard (ascending). User-controlled
+     via drag-reorder. Deliberately excluded from the version timeline (see
+     myapp.recipe.core/versioned-attrs) so reordering never shows up as a
+     content change. Absent until the user first reorders; unset recipes sort
+     after positioned ones by recency."}
    {:db/ident :recipe/created-at
     :db/valueType :db.type/instant
     :db/cardinality :db.cardinality/one

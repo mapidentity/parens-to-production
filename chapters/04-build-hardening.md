@@ -22,7 +22,7 @@ That is it. The `:ns-default build` tells `clojure -T:build` to look for functio
 
 ## The Build Namespace
 
-Here is the build-hardening portion of `build.clj` -- the strict-compile gate and the uberjar task. The same file later grows a second half (content-hashing, SRI, the `assets`/`verify-assets` tasks, with two extra requires: `clojure.java.io` and `clojure.java.shell`) when [the asset pipeline chapter](19-asset-pipeline.md) arrives; we leave that out here and come back to it:
+Here is the build-hardening portion of `build.clj` -- the strict-compile gate and the uberjar task. The same file later grows a second half (content-hashing, SRI, the `assets`/`verify-assets` tasks, with two extra requires: `clojure.java.io` and `clojure.java.shell`) when [the asset pipeline chapter](22-asset-pipeline.md) arrives; we leave that out here and come back to it:
 
 ```clojure
 (ns build

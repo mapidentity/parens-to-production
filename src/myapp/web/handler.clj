@@ -285,6 +285,34 @@
   (recipe/delete! (db/get-connection) (:user-eid request) (path-uuid request))
   (response/redirect "/dashboard"))
 
+(defn- parse-uuid*
+  "Parse an arbitrary string as a UUID, or nil. (Distinct from `path-uuid`,
+  which reads the `:id` PATH param; this reads a body/query field.)"
+  [s]
+  (try (UUID/fromString s) (catch Exception _ nil)))
+
+(defn recipe-reorder
+  "POST /recipes/reorder — persist the owner's dashboard order, then PRG-redirect
+  to /dashboard. Two request shapes converge here:
+    - drag-and-drop sends `ids` (comma-separated UUIDs) → a full explicit order;
+    - the no-JS up/down buttons send `id` + `dir` (up|down) → a single-step move.
+  The dispatcher enhances both into a morph (animated by the View Transition);
+  without JS the 302 is an ordinary full navigation. Either way the server is the
+  source of truth and the dashboard re-renders in the new order."
+  [request]
+  (let [conn (db/get-connection)
+        user-eid (:user-eid request)
+        {:keys [ids id dir]} (:params request)
+        move-id (parse-uuid* id)
+        dir (some-> dir keyword)]
+    (cond
+      (seq ids)
+      (recipe/reorder! conn user-eid (keep parse-uuid* (str/split ids #",")))
+
+      (and move-id (#{:up :down} dir))
+      (recipe/move! conn user-eid move-id dir))
+    (response/redirect "/dashboard")))
+
 (defn recipe-history
   "GET /recipes/:id/history — the version timeline (public)."
   [request]

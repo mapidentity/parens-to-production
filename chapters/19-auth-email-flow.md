@@ -1,7 +1,7 @@
 # Passwordless Auth Part 2: Magic Link Emails and the Full Login Flow
 
 
-In the [previous chapter](15-auth-tokens.md), we built the cryptographic foundation for passwordless authentication: HMAC-SHA256 signed tokens with expiration. But a token sitting in memory is useless until it reaches the user's inbox and completes the round trip back to our server. This post wires up the complete flow: sending magic link emails, handling the callback, creating sessions, and gating access behind terms acceptance.
+In the [previous chapter](18-auth-tokens.md), we built the cryptographic foundation for passwordless authentication: HMAC-SHA256 signed tokens with expiration. But a token sitting in memory is useless until it reaches the user's inbox and completes the round trip back to our server. This post wires up the complete flow: sending magic link emails, handling the callback, creating sessions, and gating access behind terms acceptance.
 
 By the end, you will have a fully working passwordless login system with no passwords stored anywhere.
 
@@ -136,7 +136,7 @@ With token creation (from the previous post) and email sending in place, the han
 
 This handler does four things: create a token (and its nonce), send the email, **record the nonce**, and redirect. The redirect is the **Post-Redirect-Get pattern**; the nonce record is what makes the link single-use.
 
-Recall from [Part 1](15-auth-tokens.md) that `create-magic-link-token` returns `{:token ... :nonce ...}`. The token goes in the email; the nonce we write to a small server-side store keyed by `:magic-link/nonce`, alongside the email and request time. (This store is the same lightweight event log the admin dashboard reads for analytics -- its schema is defined there; here we only need the nonce field.) When the user clicks the link, verification will look this record up and atomically flip it to "consumed." A second click finds it already consumed and is rejected.
+Recall from [Part 1](18-auth-tokens.md) that `create-magic-link-token` returns `{:token ... :nonce ...}`. The token goes in the email; the nonce we write to a small server-side store keyed by `:magic-link/nonce`, alongside the email and request time. (This store is the same lightweight event log the admin dashboard reads for analytics -- its schema is defined there; here we only need the nonce field.) When the user clicks the link, verification will look this record up and atomically flip it to "consumed." A second click finds it already consumed and is rejected.
 
 ### Why Post-Redirect-Get Matters
 
@@ -360,7 +360,7 @@ All auth-related routes in one place:
 ["/terms/accept" {:post handler/accept-terms}]
 ```
 
-> **Handler-gated here, middleware-gated in the repo.** The handlers above each read `[:session :user-email]` and run their own "are you signed in? have you accepted terms?" checks inline, which keeps this chapter self-contained -- every handler is readable on its own. The companion repo factors those two questions out into middleware instead: a `wrap-auth` resolves the signed-in user once and puts `:user-email`/`:user-eid` directly on the request (redirecting to `/` if there is none), and a `wrap-terms-accepted` enforces the terms gate (redirecting to `/terms/welcome` until `:user/terms-accepted-at` is set). The route tree then nests the protected routes under those wrappers, and the handlers shrink to their actual work -- `dashboard` becomes a three-line render that trusts `(:user-email request)` is present. It is the same logic, lifted from each handler into one place so it cannot be forgotten on a new route; the [admin chapter](18-admin-dashboard.md)'s `wrap-admin` is the next layer in that same stack. If you have built the middleware, prefer it; the inline form here is the minimal equivalent.
+> **Handler-gated here, middleware-gated in the repo.** The handlers above each read `[:session :user-email]` and run their own "are you signed in? have you accepted terms?" checks inline, which keeps this chapter self-contained -- every handler is readable on its own. The companion repo factors those two questions out into middleware instead: a `wrap-auth` resolves the signed-in user once and puts `:user-email`/`:user-eid` directly on the request (redirecting to `/` if there is none), and a `wrap-terms-accepted` enforces the terms gate (redirecting to `/terms/welcome` until `:user/terms-accepted-at` is set). The route tree then nests the protected routes under those wrappers, and the handlers shrink to their actual work -- `dashboard` becomes a three-line render that trusts `(:user-email request)` is present. It is the same logic, lifted from each handler into one place so it cannot be forgotten on a new route; the [admin chapter](21-admin-dashboard.md)'s `wrap-admin` is the next layer in that same stack. If you have built the middleware, prefer it; the inline form here is the minimal equivalent.
 
 State-changing operations (request link, logout, accept terms) are POST. Idempotent reads (sent page, verify link, welcome page) are GET. The verify endpoint is GET because the user clicks a link in an email -- email clients do not POST.
 

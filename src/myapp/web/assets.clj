@@ -101,6 +101,33 @@
         (seq integrity) (assoc "integrity" integrity)))))
 
 ;; ---------------------------------------------------------------------------
+;; Speculation Rules (prerender-on-hover) — inline, allowed by CSP content hash
+;; ---------------------------------------------------------------------------
+
+(def speculation-rules-json
+  "The Speculation Rules document, emitted as an inline <script
+  type=speculationrules>. Prerenders same-origin GET pages at `moderate`
+  eagerness (hover / pointerdown), so a click activates an already-built page —
+  SPA-feel navigation on a plain multi-page app, with cross-document View
+  Transitions animating the swap. Excludes auth/terms/admin (stateful or heavy)
+  and anything tagged [data-no-prerender]. Honoured only where supported; an
+  inert tag elsewhere. We emit (and hash) this exact string."
+  (json/write-value-as-string
+    {"prerender"
+     [{"where" {"and" [{"href_matches" "/*"}
+                       {"not" {"href_matches" "/auth/*"}}
+                       {"not" {"href_matches" "/terms/*"}}
+                       {"not" {"href_matches" "/admin/*"}}
+                       {"not" {"selector_matches" "[data-no-prerender]"}}]}
+       "eagerness" "moderate"}]}))
+
+(defn speculation-rules-tag
+  "Inline <script type=speculationrules> carrying `speculation-rules-json`.
+  Its sha256 enters the CSP via `csp-script-hashes`."
+  []
+  [:script {:type "speculationrules"} (h2/raw speculation-rules-json)])
+
+;; ---------------------------------------------------------------------------
 ;; Content-Security-Policy (static, no-nonce; hashes for inline, 'self' for modules)
 ;; ---------------------------------------------------------------------------
 
@@ -126,8 +153,11 @@
   assets + the import map JSON). Recomputed each call (cheap); in dev the inline
   content hot-reloads, so the policy self-heals."
   []
-  (conj (mapv (fn [p] (sha256-b64 (slurp (io/resource p)))) (sort @inline-scripts))
-        (sha256-b64 (importmap-json))))
+  (-> (mapv (fn [p] (sha256-b64 (slurp (io/resource p)))) (sort @inline-scripts))
+      (conj (sha256-b64 (importmap-json)))
+      ;; The Speculation Rules inline script (same hash mechanism as defn-asset
+      ;; inline scripts; it carries no executable JS but is still script-src).
+      (conj (sha256-b64 speculation-rules-json))))
 
 (def ^:private csp-rest
   "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")

@@ -75,10 +75,18 @@
       ;; so window.Idiomorph is available when dispatcher.js runs.
       (script-tag "idiomorph" {:defer true})
       (script-tag "js/dispatcher.js" {:type "module"})
+      ;; Island layer: the registry, then the controllers that build on it.
+      (script-tag "js/controllers.js" {:type "module"})
+      (script-tag "js/sortable.js" {:type "module"})
+      (script-tag "js/confirm.js" {:type "module"})
       (script-tag "js/live-form.js" {:type "module"})
       (script-tag "js/defer-details.js" {:type "module"})
       (script-tag "js/server-preview.js" {:type "module"})
       (script-tag "js/admin-stats.js" {:type "module"})
+      ;; Speculation Rules: prerender same-origin GET pages on hover, so a click
+      ;; activates an already-built page. Honoured only where supported; an inert
+      ;; <script type=speculationrules> elsewhere. CSP allows it by content hash.
+      (assets/speculation-rules-tag)
       [:style
        (h/raw "@keyframes page-enter{from{opacity:.92;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}main{animation:page-enter .12s ease-out}")]]
      [:body (tag-root body)
@@ -260,10 +268,12 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- fork-badge
-  "Small 'forked from X' pill linking to the parent recipe."
+  "Small 'forked from X' pill linking to the parent recipe.
+  `.relative.z-10` lifts it above a card's stretched-link ::after overlay so it
+  stays independently clickable (see `recipe-card`)."
   [locale recipe]
   (when-let [parent (:recipe/forked-from recipe)]
-    [:a.inline-flex.items-center.gap-1.text-xs.text-text-secondary.hover:text-primary-vivid
+    [:a.fork-badge.relative.z-10.inline-flex.items-center.gap-1.text-xs.text-text-secondary.hover:text-primary-vivid
      {:href (str "/recipes/" (:recipe/id parent))}
      [:svg.h-3.5.w-3.5 {:fill "none" :viewBox "0 0 24 24" :stroke-width "1.5" :stroke "currentColor"}
       [:path {:stroke-linecap "round" :stroke-linejoin "round"
@@ -271,12 +281,18 @@
      (t locale :recipe/forked-from) " " [:span.font-medium (:recipe/title parent)]]))
 
 (defn- recipe-card
-  "Summary card for a recipe in a list."
+  "Summary card for a recipe in a list.
+  The whole card is clickable via a STRETCHED LINK on the title -- its ::after
+  overlays the card (see .card-link in the stylesheet) -- while the fork badge is
+  a SEPARATE sibling link that sits above the overlay. The card and the badge are
+  never nested `<a>`s: an anchor inside an anchor is invalid HTML, and the browser
+  splits it (hoisting the inner link out and leaving an empty stub)."
   [locale recipe]
-  [:a.card.block.bg-surface.border.border-border.rounded-lg.p-5.no-underline
-   {:href (str "/recipes/" (:recipe/id recipe))}
+  [:div.card.relative.bg-surface.border.border-border.rounded-lg.p-5
    [:div.flex.items-baseline.justify-between.gap-3
-    [:h3.text-lg.font-semibold.text-text-primary (:recipe/title recipe)]
+    [:h3.text-lg.font-semibold.text-text-primary
+     [:a.card-link.no-underline.text-text-primary
+      {:href (str "/recipes/" (:recipe/id recipe))} (:recipe/title recipe)]]
     [:span.text-xs.text-text-secondary.whitespace-nowrap
      (t locale :recipe/servings) ": " (:recipe/servings recipe)]]
    [:p.mt-1.text-sm.text-text-secondary
@@ -319,6 +335,30 @@
       [:span.text-text-secondary "→"]
       [:span.font-medium.text-text-primary "this recipe"]]]))
 
+(defn- owner-actions-menu
+  "Owner-only Edit/Delete as a declarative Popover menu (Layer 1).
+  The menu opens with zero JS via `popovertarget`; CSS anchor positioning places
+  it under the trigger. Delete carries `data-controller=confirm`, so it asks via
+  a <dialog> when JS is present and posts directly otherwise."
+  [locale recipe]
+  (let [id (:recipe/id recipe)
+        pop-id (str "actions-" id)
+        anchor (str "--" pop-id)]
+    [:div.relative.inline-block
+     [:button.actions-trigger
+      {:type "button" :popovertarget pop-id
+       :style (str "anchor-name:" anchor)
+       :aria-label (t locale :recipe/actions)}
+      "⋯"]
+     [:div.actions-menu {:id pop-id :popover "auto" :style (str "position-anchor:" anchor)}
+      [:a {:href (str "/recipes/" id "/edit")} (t locale :recipe/edit)]
+      [:form {:method "POST" :action (str "/recipes/" id "/delete")
+              :data-controller "confirm"
+              :data-confirm (t locale :recipe/delete-confirm)
+              :data-confirm-ok (t locale :recipe/delete)
+              :data-confirm-cancel (t locale :common/cancel)}
+       [:button.actions-danger {:type "submit"} (t locale :recipe/delete)]]]]))
+
 ;; ---------------------------------------------------------------------------
 ;; Recipe pages
 ;; ---------------------------------------------------------------------------
@@ -359,12 +399,7 @@
          [:a.text-sm.font-semibold.text-primary-vivid.hover:text-primary {:href "/"}
           (t locale :recipe/login-to-fork)])
        (when owner?
-         [:div.flex.gap-2
-          [:a.text-sm.text-text-secondary.hover:text-primary-vivid
-           {:href (str "/recipes/" (:recipe/id recipe) "/edit")} (t locale :recipe/edit)]
-          [:form {:method "POST" :action (str "/recipes/" (:recipe/id recipe) "/delete")}
-           [:button.text-sm.text-negative.hover:underline {:type "submit"}
-            (t locale :recipe/delete)]]])]]
+         (owner-actions-menu locale recipe))]]
 
      (when-not (str/blank? (:recipe/description recipe))
        [:div.legal-content.mt-4 (h/raw (markdown/render (:recipe/description recipe)))])
@@ -559,8 +594,49 @@
 ;; Dashboard
 ;; ---------------------------------------------------------------------------
 
+(defn- drag-handle
+  "Pointer drag affordance for a sortable item.
+  `data-drag-handle` is the hook the sortable controller grabs (via Pointer
+  Events — mouse, touch, and pen); the controller reorders the parent <li>. The
+  grab cursor and `touch-action: none` come from CSS keyed on the marker."
+  [locale]
+  [:button.p-1.text-text-secondary.hover:text-text-primary
+   {:type "button" :data-drag-handle true
+    :aria-label (t locale :dashboard/drag-handle)}
+   [:svg.h-5.w-5 {:fill "none" :viewBox "0 0 24 24" :stroke-width "1.5" :stroke "currentColor"
+                  :aria-hidden "true"}
+    [:path {:stroke-linecap "round" :stroke-linejoin "round" :d "M3.75 9h16.5m-16.5 6.75h16.5"}]]])
+
+(defn- reorder-controls
+  "No-JS / keyboard reorder path (Layer 0).
+  Up & down submit buttons POST a single-step move to /recipes/reorder. The
+  dispatcher enhances the submit into an animated morph; without JS it is an
+  ordinary form post + redirect."
+  [locale id]
+  [:form.flex.flex-col.items-center.leading-none {:method "POST" :action "/recipes/reorder"}
+   [:input {:type "hidden" :name "id" :value (str id)}]
+   [:button.px-1.text-text-secondary.hover:text-primary-vivid
+    {:type "submit" :name "dir" :value "up" :aria-label (t locale :dashboard/move-up)} "▲"]
+   [:button.px-1.text-text-secondary.hover:text-primary-vivid
+    {:type "submit" :name "dir" :value "down" :aria-label (t locale :dashboard/move-down)} "▼"]])
+
+(defn- dashboard-recipe-item
+  "A dashboard recipe row: a control rail beside the shared recipe card.
+  The rail holds the drag handle + up/down buttons. `data-id` identifies the row
+  to the sortable controller and `view-transition-name` lets it animate to its
+  new slot on reorder."
+  [locale recipe]
+  (let [id (:recipe/id recipe)]
+    [:li.flex.items-stretch.gap-2
+     {:data-id (str id) :style (str "view-transition-name:recipe-" id)}
+     [:div.flex.flex-col.items-center.justify-center.gap-1.shrink-0
+      (drag-handle locale)
+      (reorder-controls locale id)]
+     [:div.min-w-0.flex-1 (recipe-card locale recipe)]]))
+
 (defn dashboard
-  "Signed-in user's home: their own recipes."
+  "Signed-in user's home: their own recipes, in their chosen order.
+  Drag to reorder — see the sortable controller and POST /recipes/reorder."
   [locale user-email admin? recipes]
   (app-layout
     locale user-email :dashboard {:admin? admin?}
@@ -569,8 +645,11 @@
      [:a.inline-flex.items-center.gap-1.text-sm.font-semibold.text-white.bg-primary.hover:bg-primary-vivid.px-3.py-2.rounded-md
       {:href "/recipes/new"} "+ " (t locale :recipe/new)]]
     (if (seq recipes)
-      [:div.grid.gap-4.sm:grid-cols-2
-       (for [r recipes] ^{:key (:recipe/id r)} (recipe-card locale r))]
+      [:div
+       [:p.mb-3.text-xs.text-text-secondary (t locale :dashboard/reorder-hint)]
+       [:ul.space-y-3.list-none.p-0.m-0
+        {:data-controller "sortable" :data-sortable-url "/recipes/reorder"}
+        (for [r recipes] ^{:key (:recipe/id r)} (dashboard-recipe-item locale r))]]
       [:div.text-center.py-12
        [:p.text-text-secondary (t locale :dashboard/no-recipes)]
        [:a.mt-4.inline-block.text-sm.font-semibold.text-white.bg-primary.hover:bg-primary-vivid.px-4.py-2.rounded-md

@@ -469,6 +469,6 @@ At the end of this post, we have a complete token-based authentication primitive
 
 The entire implementation is about 60 lines of Clojure with zero external dependencies beyond `clojure.data.json` (for JSON) and Datomic. The crypto comes from the JDK. The token format is simple enough to explain in one sentence and audit in five minutes.
 
-What we do not have yet: HTTP routes, email sending, sessions, the server-side recording and one-shot consumption of the nonce, and the actual magic link flow that ties it all together. That is [Part 2](16-auth-email-flow.md).
+What we do not have yet: HTTP routes, email sending, sessions, the server-side recording and one-shot consumption of the nonce, and the actual magic link flow that ties it all together. That is [Part 2](19-auth-email-flow.md).
 
 *All code in this series is from a real production SaaS. If you are building something similar, the patterns here should translate directly -- just swap in your own namespace and database.*

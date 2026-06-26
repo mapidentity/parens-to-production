@@ -2,17 +2,31 @@
 // show a soft "this page may be stale" banner when a source file fails to
 // reload. Only emitted when myapp is running in dev mode (hot-reload namespace
 // resolvable). Production never sees this script.
-const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/dev/ws');
-ws.onmessage = function (event) {
-  const data = JSON.parse(event.data);
-  if (data.type === 'reload') {
-    if (data.morphable) { morphReload(); } else { hardReload(); }
-  } else if (data.type === 'css') {
-    swapStylesheet();                    // CSS rebuilt — swap the <link>, no reload
-  } else if (data.type === 'reload-error') {
-    showStaleWarning(data.file, data.error);
-  }
-};
+// Open the dev WebSocket lazily. A prerendered page (via the Speculation Rules
+// prerender) is not permitted to hold a WebSocket and would be discarded if it
+// tried — so defer the connection until the page is actually activated. On a
+// normal load document.prerendering is false and we connect immediately.
+function connectDevReload() {
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/dev/ws');
+  ws.onmessage = function (event) {
+    const data = JSON.parse(event.data);
+    if (data.type === 'reload') {
+      if (data.morphable) { morphReload(); } else { hardReload(); }
+    } else if (data.type === 'css') {
+      swapStylesheet();                    // CSS rebuilt — swap the <link>, no reload
+    } else if (data.type === 'reload-error') {
+      showStaleWarning(data.file, data.error);
+    }
+  };
+  ws.onopen = function () { console.log('Dev reload WebSocket connected'); };
+  ws.onerror = function (error) { console.log('WebSocket error:', error); };
+}
+
+if (document.prerendering) {
+  document.addEventListener('prerenderingchange', connectDevReload, { once: true });
+} else {
+  connectDevReload();
+}
 
 // A view-ns edit: morph <main> in place via the dispatcher (state-preserving — keeps
 // scroll, focus, open <details>). Falls back to a full reload on any failure, and
@@ -51,8 +65,6 @@ try {
     window.addEventListener('load', function () { window.scrollTo(0, parseInt(savedScroll, 10) || 0); });
   }
 } catch (e) {}
-ws.onopen = function () { console.log('Dev reload WebSocket connected'); };
-ws.onerror = function (error) { console.log('WebSocket error:', error); };
 
 // A source file failed to (re)load on the server, so this page didn't refresh
 // and may not reflect the latest edit. We can't be sure it uses the broken file
