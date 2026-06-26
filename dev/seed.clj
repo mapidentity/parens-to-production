@@ -103,3 +103,19 @@
       (println (format "  %-50s /recipes/%s" label id)))
     {:users [alice bob carol dave]
      :recipes {:carbonara carbonara :spicy spicy :margherita margherita :focaccia focaccia}}))
+
+(defn seed-if-empty!
+  "Seed the dev database only when it has no recipes yet.
+
+  Called from the dev startup (hot-reload/start), so a fresh dev DB comes up
+  populated with the demo recipe graph, while an already-seeded DB is left
+  untouched — `seed!` is additive, so re-seeding on every restart would pile up
+  duplicate recipes. Returns true when it seeded."
+  []
+  (let [n (or (d/q '[:find (count ?e) . :where [?e :recipe/id]] (db/get-db)) 0)]
+    (if (zero? (long n))
+      (do (println "Empty dev database — seeding demo recipes...")
+          (seed!)
+          true)
+      (do (println (format "Dev database has %d recipe(s) — skipping seed." (long n)))
+          false))))

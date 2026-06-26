@@ -4,7 +4,8 @@
     [clojure.tools.logging :as log]
     [dev-reload :as dev-reload]
     [myapp.core :as core]
-    [inspector-load :as inspector-load])
+    [inspector-load :as inspector-load]
+    [seed])
   (:import
     [java.nio.file FileSystems Files Path StandardWatchEventKinds WatchEvent]
     [java.nio.file.attribute BasicFileAttributes]
@@ -198,6 +199,10 @@
   []
   (core/start-dev-server)
   (log/info "Development server started" {:url "http://localhost:3000"})
+  ;; Populate a fresh dev database with the demo recipe graph. No-op once seeded
+  ;; (so restarts don't pile up duplicates); dev-only, since this path only runs
+  ;; under the :dev REPL's (start!).
+  (seed/seed-if-empty!)
   ;; One long-lived Tailwind --watch writes static/styles.css (served unhashed in
   ;; dev); CSS is no longer rebuilt per .clj save.
   (start-tailwind-watch!)
