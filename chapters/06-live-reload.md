@@ -339,6 +339,17 @@ The last piece ties it together into a single command. `user.clj` loads when you
 (defn reload! [] (hot-reload/reload!))
 ```
 
+This is the rewiring the [web-server chapter](05-web-server.md) promised: `start!` now goes through `hot-reload/start` instead of calling `core/start-server!` directly. That entry point calls a small new function in `myapp.core` -- `start-dev-server`, which flips the `myapp.dev` system property on (later chapters read it to decide whether to mount dev-only affordances) and then delegates to the same `start-server!` from the previous chapter:
+
+```clojure
+;; added to myapp.core
+(defn start-dev-server
+  "Start the server in development mode."
+  []
+  (System/setProperty "myapp.dev" "true")
+  (start-server!))
+```
+
 And `hot-reload/start` brings up the server and the watcher:
 
 ```clojure

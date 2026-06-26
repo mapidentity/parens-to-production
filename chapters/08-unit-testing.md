@@ -36,34 +36,7 @@ All shared test infrastructure lives in a single file: `test/myapp/test_helpers.
 
 ### The Database Fixture
 
-The centerpiece is `with-test-db`, a Clojure test fixture that creates a throwaway Datomic database for each test:
-
-```clojure
-(def ^:dynamic *conn*
-  "Bound to a fresh Datomic connection per test by the with-test-db fixture."
-  nil)
-
-(defn with-test-db
-  "Fixture: creates a fresh in-memory Datomic DB per test.
-   Binds *conn* and stubs db/get-connection."
-  [f]
-  (let [uri (str "datomic:mem://myapp-test-" (System/nanoTime))]
-    (d/create-database uri)
-    (let [conn (d/connect uri)]
-      @(d/transact conn schema/schema)
-      (binding [*conn* conn]
-        (with-redefs [db/get-connection (fn [] *conn*)]
-          (f)))
-      (d/delete-database uri))))
-```
-
-Here is what happens step by step:
-
-1. **Unique URI per test.** `System/nanoTime` ensures no two tests collide, even when running in parallel.
-2. **Create and connect.** A fresh in-memory database, indistinguishable from a real one for query purposes.
-3. **Transact the schema.** The test database has the same schema as production. You are testing against the real data model.
-4. **Bind and stub.** `*conn*` holds the connection for tests that need direct access. `with-redefs` makes `db/get-connection` return this test connection, so application code that calls `(db/get-connection)` transparently gets the test database.
-5. **Clean up.** After the test function `f` runs, the database is deleted. No residue.
+The centerpiece is `with-test-db`, which creates a throwaway in-memory Datomic database per test, binds `*conn*`, and stubs `db/get-connection` so application code transparently hits the test DB. We built it in [the Datomic chapter](07-datomic.md#isolated-test-databases) -- a unique `datomic:mem://` URI per test (via `System/nanoTime`, so parallel runs never collide), the full schema transacted, and the database deleted when the test function returns -- so we will not reprint it here. This chapter is about the infrastructure that surrounds it: a parallel fixture for the analytics database, deterministic config, and a request builder.
 
 The same pattern applies to the analytics database, if your app has one. It uses the `analytics` alias from the `:require` above (`myapp.analytics.db`, which we build in [the admin dashboard chapter](21-admin-dashboard.md) -- omit both the require and this fixture until then):
 
@@ -484,6 +457,6 @@ The infrastructure supports more:
 - **A request builder**, for when you start testing handlers end-to-end.
 - **Coverage enforcement**, so coverage can only go up as you add features.
 
-The investment is small -- one helpers file, two test files, a three-line shell script, and a couple of aliases in `deps.edn`. But it establishes patterns that scale. Every new feature you add gets tested against this infrastructure, and you find out in seconds whether it works.
+The investment is small -- one helpers file, two test files, and a couple of aliases in `deps.edn` (the test commands run directly, no wrapper script). But it establishes patterns that scale. Every new feature you add gets tested against this infrastructure, and you find out in seconds whether it works.
 
 Next time you sit down to add a feature, you write the test first (or at least alongside), and you have everything you need to run it.

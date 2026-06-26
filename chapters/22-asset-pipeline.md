@@ -327,26 +327,7 @@ If the gate fails, the pipeline stops and no inconsistent asset tree reaches pro
 
 Here is the part that makes the whole pipeline drift-free. There is exactly one set of sources and one build. Development and production differ only in *how the same files are delivered* -- not in what they are.
 
-**Development: stable URLs + `no-store`.** Dev serves the `static/` source directory directly (`static-root` is `"static"`), at stable, unhashed URLs. A single long-lived `tailwindcss --watch` process rebuilds `static/styles.css` incrementally as you edit; esbuild is not involved (the ESM is served as-is, the vendored library unminified). Because the URLs are stable but the bytes behind them change as you work, the Ring file handler is wrapped to send `Cache-Control: no-store` for every `.css`/`.js`:
-
-```clojure
-(defn wrap-dev-no-store
-  "Dev only: Cache-Control: no-store on served .css/.js so a stable (unhashed) dev
-  URL never serves stale bytes after Tailwind --watch / esbuild rewrites the file."
-  [handler]
-  (fn [request]
-    (let [resp (handler request)]
-      (if (and resp (re-find #"\.(?:css|js)$" (or (:uri request) "")))
-        (assoc-in resp [:headers "Cache-Control"] "no-store")
-        resp))))
-```
-
-The file handler is only wrapped in dev:
-
-```clojure
-(cond-> (ring/create-file-handler {:path "/" :root assets/static-root})
-  assets/dev? wrap-dev-no-store)
-```
+**Development: stable URLs + `no-store`.** Dev serves the `static/` source directory directly (`static-root` is `"static"`), at stable, unhashed URLs. A single long-lived `tailwindcss --watch` process rebuilds `static/styles.css` incrementally as you edit; esbuild is not involved (the ESM is served as-is, the vendored library unminified). Because the URLs are stable but the bytes behind them change as you work, the Ring file handler is wrapped in `wrap-dev-no-store` to send `Cache-Control: no-store` for every `.css`/`.js` -- the mechanism we built in [the morph-reload chapter](16-morph-reload.md#stable-dev-urls-with-no-store), so a stable URL never serves stale bytes after a rebuild. That is the *dev* half of this engine; the production half is the rest of this chapter.
 
 **Production: content hash + immutable.** Prod serves the generated `myapp/static/` tree (`static-root` is `"myapp/static"`), at content-hashed URLs, with year-long `immutable` cache headers set by Caddy. No `no-store` -- a hashed URL's bytes can never change, so the browser need never revalidate.
 

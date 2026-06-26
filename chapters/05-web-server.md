@@ -272,7 +272,7 @@ Let's walk through the middleware stack:
 
 1. **`wrap-params`** -- Parses query string and form body parameters into a `:params` map on the request.
 2. **`wrap-keyword-params`** -- Converts string parameter keys to keywords, so you get `(:email params)` instead of `(get params "email")`.
-3. **`wrap-session`** -- Manages sessions using encrypted cookies. The session key comes from our config. Cookie attributes are set for security: `http-only` prevents JavaScript access, `secure` requires HTTPS, `same-site :lax` provides CSRF protection, and `max-age` sets a 30-day expiry.
+3. **`wrap-session`** -- Manages sessions using encrypted cookies. The session key comes from our config. Cookie attributes are set for security: `http-only` prevents JavaScript access, `secure` requires HTTPS, `same-site :lax` provides CSRF protection, and `max-age` sets a 30-day expiry. One consequence of `secure` is worth stating now: the browser will only *send the cookie back* over HTTPS, so authenticated flows must be reached over TLS -- which in dev means the Caddy `.lan` hostname above (`https://myapp.lan`), not `http://localhost:3000`. The plain-`localhost` `curl` we run in a moment hits `/health`, which carries no session, so it is unaffected; but if you log in over plain HTTP and wonder why the session never sticks, this attribute is why. We keep `secure` on unconditionally rather than relaxing it in dev, because the dev environment is already HTTPS by design.
 
 Two structural choices worth noting:
 

@@ -332,6 +332,6 @@ After this setup, you have:
 - **A single `lhci autorun` command** that integrates with your existing CI pipeline -- no bespoke runner script in between.
 - **Fixes for common Lighthouse failures**: viewport and description meta tags in the base layout, `font-display: swap` for custom fonts, semantic HTML elements (`<main>`, `<nav>`, `<label>`), and a color palette with sufficient contrast ratios.
 
-The total cost is one Clojure file on the test classpath, one JavaScript configuration file, and one shell script. The ongoing cost is zero -- Lighthouse runs automatically on every commit. The value is that performance, accessibility, and SEO regressions are caught at the moment they are introduced, not weeks later when someone happens to run an audit manually.
+The total cost is one Clojure file on the test classpath and one JavaScript configuration file -- no wrapper script, since `lhci autorun` is the whole command. The ongoing cost is zero -- Lighthouse runs automatically on every commit. The value is that performance, accessibility, and SEO regressions are caught at the moment they are introduced, not weeks later when someone happens to run an audit manually.
 
 Start with 100. Stay at 100. The CI pipeline enforces it.
