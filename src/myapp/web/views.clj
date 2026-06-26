@@ -98,6 +98,7 @@
       (script-tag "js/defer-details.js" {:type "module"})
       (script-tag "js/server-preview.js" {:type "module"})
       (script-tag "js/admin-stats.js" {:type "module"})
+      (script-tag "js/tagline.js" {:type "module"})
       ;; Speculation Rules: prerender same-origin GET pages on hover, so a click
       ;; activates an already-built page. Honoured only where supported; an inert
       ;; <script type=speculationrules> elsewhere. CSP allows it by content hash.
@@ -218,9 +219,6 @@
 ;; Landing + auth + terms
 ;; ---------------------------------------------------------------------------
 
-(def ^:private tagline-keys
-  (mapv #(keyword "home" (str "tagline-" %)) (range 1 7)))
-
 (defn home-page
   "Landing page with the magic-link sign-in form."
   [locale]
@@ -233,7 +231,13 @@
         :alt "MyApp"
         :width 220
         :height 48}]
-      [:p.mt-3.text-lg.font-medium.text-text-primary (t locale (rand-nth tagline-keys))]
+      ;; A fixed default tagline keeps this page deterministic (cacheable /
+      ;; prerenderable); the `tagline` island swaps in a random one after load,
+      ;; and with no JS the default simply stays. See handler/tagline.
+      [:p#tagline.mt-3.text-lg.font-medium.text-text-primary
+       {:data-controller "tagline"
+        :data-tagline-url "/partials/tagline"}
+       (t locale :home/tagline-1)]
       [:p.mt-2.text-sm.text-text-secondary (t locale :home/lead)]]
      [:div.bg-surface.py-8.px-6.border.border-border.rounded-lg
       [:h2.text-2xl.font-semibold.text-text-primary.mb-4 (t locale :home/get-started)]

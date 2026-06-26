@@ -16,6 +16,30 @@
 // Stable identifier so links share an AbortController per destination.
 let inflight = new Map();
 
+// Navigation pending indicator (Layer 1). A counter, not a boolean, so
+// overlapping navigations never clear it early; CSS keyed on
+// `html.is-navigating` paints a thin top progress bar. Live-preview updates
+// (ignoreActiveValue) opt out — a per-keystroke bar would be visual noise.
+let pendingNav = 0;
+let navWatchdog = null;
+const NAV_WATCHDOG_MS = 8000;
+function setNavigating(on) {
+  pendingNav = Math.max(0, pendingNav + (on ? 1 : -1));
+  const active = pendingNav > 0;
+  document.documentElement.classList.toggle('is-navigating', active);
+  // Safety net, decoupled from fetchAndMorph's control flow: if a navigation
+  // somehow never settles (e.g. a View Transition's updateCallbackDone parks),
+  // the bar must not stay up forever. Force-clear after a generous timeout — by
+  // then the navigation has either completed or visibly failed.
+  if (navWatchdog) { clearTimeout(navWatchdog); navWatchdog = null; }
+  if (active) {
+    navWatchdog = setTimeout(() => {
+      pendingNav = 0;
+      document.documentElement.classList.remove('is-navigating');
+    }, NAV_WATCHDOG_MS);
+  }
+}
+
 function sameOrigin(url) {
   try {
     const u = new URL(url, window.location.href);
@@ -69,23 +93,13 @@ function morph(targetEl, newDocOrEl, opts) {
     ...opts,
   };
   window.Idiomorph.morph(targetEl, newDocOrEl, options);
-  executeScripts(targetEl);
-}
-
-// Browsers do NOT execute <script> tags that come in via innerHTML/morph.
-// Server-rendered pages embed per-page scripts inside <main>, so after
-// a morph we need to materialise them by cloning into fresh <script>
-// elements (which the browser does execute). Each script is marked
-// `data-executed` so subsequent morphs leave it alone.
-function executeScripts(root) {
-  const scripts = root.querySelectorAll('script:not([data-executed])');
-  scripts.forEach((old) => {
-    const fresh = document.createElement('script');
-    for (const attr of old.attributes) fresh.setAttribute(attr.name, attr.value);
-    fresh.setAttribute('data-executed', 'true');
-    fresh.text = old.textContent;
-    old.replaceWith(fresh);
-  });
+  // We deliberately do NOT re-execute <script> tags found in a morphed fragment.
+  // All per-page behaviour attaches through the controller registry (data-
+  // controller markers, re-scanned on `dispatcher:morphed`), so a fragment never
+  // needs to carry an inline script — and the strict, no-nonce CSP authorises
+  // only the inline scripts hashed at boot, never an arbitrary injected one. The
+  // policy enumerates exactly what may run; injecting scripts into fragments is a
+  // door we keep shut by construction. Inline scripts live once in <head>/<body>.
 }
 
 function pickResponseFragment(htmlString, selector) {
@@ -152,108 +166,116 @@ export async function fetchAndMorph(url, opts = {}) {
     ignoreActiveValue = false,
   } = opts;
 
-  const abortKey = key || (target + '|' + url);
-  const signal = abortInflight(abortKey);
-
-  let res;
+  // Show the pending bar for real navigations/updates, but not for live-typing
+  // previews (ignoreActiveValue), where a per-keystroke flash would be noise.
+  const showPending = !ignoreActiveValue;
+  if (showPending) setNavigating(true);
   try {
-    res = await fetch(url, {
-      method,
-      body,
-      credentials: 'same-origin',
-      redirect: 'follow',
-      signal,
-      headers: { 'Accept': 'text/html' },
-    });
-  } catch (err) {
-    if (err.name === 'AbortError') return;
-    // Network error: fall back to native navigation. For form submits
-    // the caller has already prevented default; do a synthetic full nav
-    // so the user isn't stranded.
-    if (method === 'GET') window.location.assign(url);
-    return;
-  }
+    const abortKey = key || (target + '|' + url);
+    const signal = abortInflight(abortKey);
 
-  const finalUrl = res.url || url;
-  // Dev-only: the construction-view tracer stamps every HTML response with an
-  // X-Myapp-Trace header. Tag the morphed region with it so the overlay can show
-  // the construction of THIS partial update, not just the initial page load.
-  // Absent in prod (header not set) → no-op.
-  const traceId = res.headers.get('X-Myapp-Trace');
-  const html = await res.text();
-
-  // 4xx/5xx with HTML body — morph in place so server-rendered errors
-  // appear. The server is the source of truth; client doesn't interpret.
-  const { fragmentEl, parsedDoc } = pickResponseFragment(html, target);
-  const targetEl = document.querySelector(target);
-  if (!targetEl) {
-    // Target disappeared — usually a stale debounced/late call after
-    // the page already morphed away. Bail silently rather than forcing
-    // a full nav (which would clobber the user's current location).
-    return;
-  }
-
-  // Cross-layout navigation: if the response's <main data-layout> tag
-  // differs from the live page's, the chrome structure is different
-  // (e.g. public-layout → app-layout). An in-place morph would leave
-  // the wrong chrome around; full reload is the honest fix.
-  if (target === 'main') {
-    const liveLayout = document.querySelector('main[data-layout]');
-    const newLayout = parsedDoc.querySelector('main[data-layout]');
-    if (liveLayout && newLayout
-        && liveLayout.dataset.layout !== newLayout.dataset.layout) {
-      window.location.assign(finalUrl);
+    let res;
+    try {
+      res = await fetch(url, {
+        method,
+        body,
+        credentials: 'same-origin',
+        redirect: 'follow',
+        signal,
+        headers: { 'Accept': 'text/html' },
+      });
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      // Network error: fall back to native navigation. For form submits
+      // the caller has already prevented default; do a synthetic full nav
+      // so the user isn't stranded.
+      if (method === 'GET') window.location.assign(url);
       return;
     }
+
+    const finalUrl = res.url || url;
+    // Dev-only: the construction-view tracer stamps every HTML response with an
+    // X-Myapp-Trace header. Tag the morphed region with it so the overlay can show
+    // the construction of THIS partial update, not just the initial page load.
+    // Absent in prod (header not set) → no-op.
+    const traceId = res.headers.get('X-Myapp-Trace');
+    const html = await res.text();
+
+    // 4xx/5xx with HTML body — morph in place so server-rendered errors
+    // appear. The server is the source of truth; client doesn't interpret.
+    const { fragmentEl, parsedDoc } = pickResponseFragment(html, target);
+    const targetEl = document.querySelector(target);
+    if (!targetEl) {
+      // Target disappeared — usually a stale debounced/late call after
+      // the page already morphed away. Bail silently rather than forcing
+      // a full nav (which would clobber the user's current location).
+      return;
+    }
+
+    // Cross-layout navigation: if the response's <main data-layout> tag
+    // differs from the live page's, the chrome structure is different
+    // (e.g. public-layout → app-layout). An in-place morph would leave
+    // the wrong chrome around; full reload is the honest fix.
+    if (target === 'main') {
+      const liveLayout = document.querySelector('main[data-layout]');
+      const newLayout = parsedDoc.querySelector('main[data-layout]');
+      if (liveLayout && newLayout
+          && liveLayout.dataset.layout !== newLayout.dataset.layout) {
+        window.location.assign(finalUrl);
+        return;
+      }
+    }
+
+    // Apply the server's new markup. Wrapping the mutation in a View Transition
+    // lets the browser animate the change — a cross-fade of the root by default,
+    // and shared-element FLIP for anything carrying a `view-transition-name`
+    // (e.g. dashboard cards that move on reorder). This is Layer 2 of the
+    // progressive-enhancement stack and is pure enhancement: where the API is
+    // absent the same mutation just applies instantly. We skip it for live/typing
+    // updates (ignoreActiveValue), where per-keystroke animation would be noise,
+    // and when the user has asked for reduced motion.
+    const applyMorph = () => {
+      morph(targetEl, fragmentEl, { morphStyle: 'innerHTML', ignoreActiveValue });
+      // morphed region carries its own trace-id (see note above); dev-only.
+      if (traceId) targetEl.setAttribute('data-myapp-trace-id', traceId);
+    };
+    const animate = !!document.startViewTransition
+      && !ignoreActiveValue
+      && !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    if (animate) {
+      await document.startViewTransition(applyMorph).updateCallbackDone;
+    } else {
+      applyMorph();
+    }
+
+    updateTitle(parsedDoc);
+
+    // History bookkeeping. When fetch followed a 302, finalUrl reflects
+    // the redirect target — we want that in the address bar, not the
+    // originally-requested URL. Normalise both to absolute URLs before
+    // comparing, otherwise a relative `url` vs an absolute `finalUrl`
+    // would always look different even when they point to the same place.
+    const absUrl = new URL(url, window.location.href).href;
+    if (pushUrl) {
+      history.pushState({ dispatcher: true }, '', finalUrl);
+    } else if (replaceUrl) {
+      history.replaceState({ dispatcher: true }, '', finalUrl);
+    } else if (method !== 'GET' && finalUrl !== absUrl) {
+      // POST followed by a server-side redirect (PRG pattern). Reflect
+      // the new location in the address bar so a refresh doesn't re-POST.
+      history.pushState({ dispatcher: true }, '', finalUrl);
+    }
+
+    const shouldFocus = focus === undefined ? pushUrl : focus;
+    if (shouldFocus) focusMain();
+
+    // Hook for modules / future features.
+    document.dispatchEvent(new CustomEvent('dispatcher:morphed', {
+      detail: { url: finalUrl, target, method, traceId },
+    }));
+  } finally {
+    if (showPending) setNavigating(false);
   }
-
-  // Apply the server's new markup. Wrapping the mutation in a View Transition
-  // lets the browser animate the change — a cross-fade of the root by default,
-  // and shared-element FLIP for anything carrying a `view-transition-name`
-  // (e.g. dashboard cards that move on reorder). This is Layer 2 of the
-  // progressive-enhancement stack and is pure enhancement: where the API is
-  // absent the same mutation just applies instantly. We skip it for live/typing
-  // updates (ignoreActiveValue), where per-keystroke animation would be noise,
-  // and when the user has asked for reduced motion.
-  const applyMorph = () => {
-    morph(targetEl, fragmentEl, { morphStyle: 'innerHTML', ignoreActiveValue });
-    // morphed region carries its own trace-id (see note above); dev-only.
-    if (traceId) targetEl.setAttribute('data-myapp-trace-id', traceId);
-  };
-  const animate = !!document.startViewTransition
-    && !ignoreActiveValue
-    && !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  if (animate) {
-    await document.startViewTransition(applyMorph).updateCallbackDone;
-  } else {
-    applyMorph();
-  }
-
-  updateTitle(parsedDoc);
-
-  // History bookkeeping. When fetch followed a 302, finalUrl reflects
-  // the redirect target — we want that in the address bar, not the
-  // originally-requested URL. Normalise both to absolute URLs before
-  // comparing, otherwise a relative `url` vs an absolute `finalUrl`
-  // would always look different even when they point to the same place.
-  const absUrl = new URL(url, window.location.href).href;
-  if (pushUrl) {
-    history.pushState({ dispatcher: true }, '', finalUrl);
-  } else if (replaceUrl) {
-    history.replaceState({ dispatcher: true }, '', finalUrl);
-  } else if (method !== 'GET' && finalUrl !== absUrl) {
-    // POST followed by a server-side redirect (PRG pattern). Reflect
-    // the new location in the address bar so a refresh doesn't re-POST.
-    history.pushState({ dispatcher: true }, '', finalUrl);
-  }
-
-  const shouldFocus = focus === undefined ? pushUrl : focus;
-  if (shouldFocus) focusMain();
-
-  // Hook for modules / future features.
-  document.dispatchEvent(new CustomEvent('dispatcher:morphed', {
-    detail: { url: finalUrl, target, method, traceId },
-  }));
 }
 
 function onClick(e) {

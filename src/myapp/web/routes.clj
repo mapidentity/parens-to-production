@@ -41,15 +41,27 @@
         (assoc-in response [:headers "Cache-Control"] "no-store")
         response))))
 
+(defn admin-email?
+  "True when `email` matches the configured admin email (case-insensitive).
+  The single source of the admin predicate — resolved once per request in
+  `wrap-current-user` and read back as `:admin?` by handlers and `wrap-admin`."
+  [email]
+  (let [admin-email (config/get-config :admin-email)]
+    (boolean
+      (and email admin-email (= (str/lower-case email) (str/lower-case admin-email))))))
+
 (defn wrap-current-user
   "Soft auth that never redirects.
-  If the session names an existing user, assoc `:user-email` and
-  `:user-eid` onto the request; otherwise pass through unchanged.
+  If the session names an existing user, resolve the user entity ONCE and assoc
+  `:user-email`, `:user-eid`, and `:admin?` onto the request; otherwise pass
+  through unchanged.
 
   This is what lets the PUBLIC, auth-aware pages (the recipe reads) show a
   signed-in visitor their own controls — Edit/Delete on recipes they own, the
   authenticated Fork button — while anonymous visitors still get the page.
-  `wrap-auth` below is the HARD gate for routes that require a user."
+  `wrap-auth` below is the HARD gate for routes that require a user; it relies on
+  this middleware having run first (it always nests inside it), so the user
+  lookup happens exactly once per request rather than once per gate."
   [handler]
   (fn [request]
     (let [email (get-in request [:session :user-email])
@@ -58,30 +70,27 @@
         (handler
           (assoc request
             :user-email email
-            :user-eid eid))
+            :user-eid eid
+            :admin? (admin-email? email)))
         (handler request)))))
 
 (defn wrap-auth
-  "Establish the authenticated user for protected routes.
+  "Hard gate for protected routes — assumes `wrap-current-user` ran first.
 
-  Reads `:user-email` from the session, resolves the user entity, and assocs
-  `:user-email` and `:user-eid` onto the request. Unauthenticated requests are
-  rejected — HTML gets a redirect to `/`, JSON-tagged routes get a 401. Stale
-  sessions (cookie email but no such user) are treated as unauthenticated AND
-  the session is cleared, to avoid a landing-page redirect loop."
+  `wrap-current-user` (which always nests outside this) has already resolved the
+  session user to `:user-eid`; we only check it here, so the lookup is not
+  repeated. Unauthenticated requests are rejected — HTML gets a redirect to `/`,
+  JSON-tagged routes get a 401. A stale session (cookie email but no such user)
+  arrives here with no `:user-eid`, so it is treated as unauthenticated AND the
+  session is cleared, to avoid a landing-page redirect loop."
   [handler]
   (fn [request]
-    (let [user-email (get-in request [:session :user-email])
-          user-eid (when user-email (auth/find-user-by-email (d/db (db/get-connection)) user-email))
-          json? (get-in request [:reitit.core/match :data :json?])]
-      (cond
-        user-eid (handler
-                   (assoc request
-                     :user-email user-email
-                     :user-eid user-eid))
-        json? (handler/json-response {:error "unauthorized"} :status 401)
-        :else (-> (response/redirect "/")
-                  (assoc :session nil))))))
+    (cond
+      (:user-eid request) (handler request)
+      (get-in request [:reitit.core/match :data :json?])
+      (handler/json-response {:error "unauthorized"} :status 401)
+      :else (-> (response/redirect "/")
+                (assoc :session nil)))))
 
 (defn wrap-terms-accepted
   "Require `:user/terms-accepted-at` on the authenticated user, else redirect to `/terms/welcome`.
@@ -98,21 +107,37 @@
       (if accepted? (handler request) (response/redirect "/terms/welcome")))))
 
 (defn wrap-admin
-  "Restrict access to admin routes (assumes wrap-auth ran first).
-  Compares the session email (case-insensitive) to `:admin-email`. Non-admins get a redirect
-  to /dashboard (HTML) or 403 (JSON-tagged routes)."
+  "Restrict access to admin routes (assumes wrap-current-user + wrap-auth ran first).
+  Reads the `:admin?` flag those middlewares already resolved. Non-admins get a
+  redirect to /dashboard (HTML) or 403 (JSON-tagged routes)."
   [handler]
   (fn [request]
-    (let [user-email (:user-email request)
-          admin-email (config/get-config :admin-email)
-          json? (get-in request [:reitit.core/match :data :json?])
-          admin?
-          (and user-email admin-email (= (str/lower-case user-email) (str/lower-case admin-email)))]
-      (if admin?
-        (handler request)
-        (if json?
-          (handler/json-response {:error "forbidden"} :status 403)
-          (response/redirect "/dashboard"))))))
+    (if (:admin? request)
+      (handler request)
+      (if (get-in request [:reitit.core/match :data :json?])
+        (handler/json-response {:error "forbidden"} :status 403)
+        (response/redirect "/dashboard")))))
+
+(defn- dev-json-handler
+  "Build a dev-only Ring handler for a construction-view tracer JSON endpoint.
+  `sym` is the trace fn's qualified symbol, resolved lazily — nil in prod / non-
+  storm, so the route 404s there. `extract` is called with the resolved fn and the
+  request and returns a JSON string (or nil → 404). Centralizes the
+  requiring-resolve + try/catch + 200/404 plumbing every /dev/__* route repeated."
+  [sym extract]
+  (fn [request]
+    (or
+      (try
+        (when-let [f (requiring-resolve sym)]
+          (when-let [j (extract f request)]
+            {:status 200
+             :headers {"Content-Type" "application/json"
+                       "Cache-Control" "no-store"}
+             :body j}))
+        (catch Throwable _ nil))
+      {:status 404
+       :headers {"Content-Type" "application/json"}
+       :body "{}"})))
 
 (def routes
   "Reitit route tree.
@@ -133,6 +158,9 @@
     ["/auth/sent" {:get #'handler/magic-link-sent}]
     ["/auth/verify" {:get #'handler/verify-magic-link}]
     ["/recipes" {:get #'handler/recipes-index}]
+    ;; Random landing tagline, fetched by the `tagline` island so the landing
+    ;; page itself stays deterministic/cacheable. See handler/tagline.
+    ["/partials/tagline" {:get #'handler/tagline}]
 
     ;; ---- Authenticated ----
     ["" {:middleware [wrap-auth]}
@@ -177,50 +205,61 @@
               (handler request)
               {:status 404}))}]
    ;; Construction-view tracer (dev+storm only): the overlay fetches a page's
-   ;; recorded trace by the id it reads from <html data-myapp-trace-id>.
-   ;; requiring-resolve is nil without the :dev trace ns, so this 404s in prod.
+   ;; recorded data by the id it reads from <html data-myapp-trace-id>. Each
+   ;; endpoint resolves its trace fn lazily via `dev-json-handler`, so all of
+   ;; these 404 in prod (the dev trace ns isn't loaded); each route below supplies
+   ;; only how to pull its args from the request.
    ["/dev/__trace/:id"
-    {:get (fn [request]
-            (or
-              (try
-                (when-let [gj (requiring-resolve 'trace/get-trace-json)]
-                  (when-let [j (gj (get-in request [:path-params :id]))]
-                    {:status 200
-                     :headers {"Content-Type" "application/json"
-                               "Cache-Control" "no-store"}
-                     :body j}))
-                (catch Throwable _ nil))
-              {:status 404
-               :headers {"Content-Type" "application/json"}
-               :body "{}"}))}]
+    {:get (dev-json-handler 'trace/get-trace-json
+            (fn [f req] (f (get-in req [:path-params :id]))))}]
    ;; Flow drill-down: ?name=<data-myapp-name>&idx=<instance>&src=<file:line:col>
    ["/dev/__flow/:id"
-    {:get (fn [request]
-            (or
-              (try
-                (when-let [gf (requiring-resolve 'trace/get-flow-json)]
-                  (let [{:keys [name idx src]} (:params request)
-                        line (some-> src
-                                     (str/split #":")
-                                     (nth 1 nil)
-                                     (->> (re-find #"\d+"))
-                                     parse-long)]
-                    (when-let [j (gf
-                                   (get-in request [:path-params :id])
-                                   name
-                                   (or
-                                     (some-> idx
-                                             parse-long)
-                                     0)
-                                   line)]
-                      {:status 200
-                       :headers {"Content-Type" "application/json"
-                                 "Cache-Control" "no-store"}
-                       :body j})))
-                (catch Throwable _ nil))
-              {:status 404
-               :headers {"Content-Type" "application/json"}
-               :body "{}"}))}]
+    {:get (dev-json-handler 'trace/get-flow-json
+            (fn [f req]
+              (let [{:keys [name idx src]} (:params req)
+                    line (some-> src
+                                 (str/split #":")
+                                 (nth 1 nil)
+                                 (->> (re-find #"\d+"))
+                                 parse-long)]
+                (f (get-in req [:path-params :id])
+                   name
+                   (or (some-> idx parse-long) 0)
+                   line))))}]
+   ;; Expand a recorded value one level: ?frame=<id>&slot=arg0|ret&path=0,2,1
+   ["/dev/__value/:id"
+    {:get (dev-json-handler 'trace/get-value-json
+            (fn [f req]
+              (let [{:keys [frame slot path]} (:params req)
+                    p (if (seq path) (vec (keep parse-long (str/split path #","))) [])]
+                (f (get-in req [:path-params :id]) (some-> frame parse-long) slot p))))}]
+   ;; Conditionals in a frame that didn't render (why a section is empty): ?frame=<id>
+   ["/dev/__branches/:id"
+    {:get (dev-json-handler 'trace/get-branches-json
+            (fn [f req]
+              (f (get-in req [:path-params :id])
+                 (some-> (get-in req [:params :frame]) parse-long))))}]
+   ;; Where a frame's entity came from (producing DB reads): ?frame=<id>
+   ["/dev/__source/:id"
+    {:get (dev-json-handler 'trace/get-source-json
+            (fn [f req]
+              (f (get-in req [:path-params :id])
+                 (some-> (get-in req [:params :frame]) parse-long))))}]
+   ;; The produced-markup (Hiccup) tree of a frame: ?frame=<id>&slot=ret
+   ["/dev/__hiccup/:id"
+    {:get (dev-json-handler 'trace/get-hiccup-json
+            (fn [f req]
+              (let [{:keys [frame slot]} (:params req)]
+                (f (get-in req [:path-params :id]) (some-> frame parse-long) slot))))}]
+   ;; Every frame a value flows through: ?frame=<id>&slot=arg0|ret
+   ["/dev/__value-threads/:id"
+    {:get (dev-json-handler 'trace/get-threads-json
+            (fn [f req]
+              (let [{:keys [frame slot]} (:params req)]
+                (f (get-in req [:path-params :id]) (some-> frame parse-long) slot))))}]
+   ;; The most recent uncaught-error trace (so a good page can surface a prior 500)
+   ["/dev/__last-error"
+    {:get (dev-json-handler 'trace/get-last-error-json (fn [f _req] (f)))}]
    ;; On-demand recorder clear: lets a long dev session reclaim memory.
    ;; requiring-resolve is nil in prod, so this is a harmless no-op there.
    ["/dev/__trace-clear"
@@ -230,119 +269,7 @@
             {:status 200
              :headers {"Content-Type" "application/json"
                        "Cache-Control" "no-store"}
-             :body "{\"cleared\":true}"})}]
-   ;; The most recent uncaught-error trace (so a good page can surface a prior 500)
-   ["/dev/__last-error"
-    {:get (fn [_]
-            (or
-              (try
-                (when-let [le (requiring-resolve 'trace/get-last-error-json)]
-                  {:status 200
-                   :headers {"Content-Type" "application/json"
-                             "Cache-Control" "no-store"}
-                   :body (le)})
-                (catch Throwable _ nil))
-              {:status 404
-               :headers {"Content-Type" "application/json"}
-               :body "{}"}))}]
-   ;; Expand a recorded value one level: ?frame=<id>&slot=arg0|ret&path=0,2,1
-   ["/dev/__value/:id"
-    {:get (fn [request]
-            (or
-              (try
-                (when-let [gv (requiring-resolve 'trace/get-value-json)]
-                  (let [{:keys [frame slot path]} (:params request)
-                        p (if (seq path) (vec (keep parse-long (str/split path #","))) [])]
-                    (when-let [j (gv
-                                   (get-in request [:path-params :id])
-                                   (some-> frame
-                                           parse-long)
-                                   slot
-                                   p)]
-                      {:status 200
-                       :headers {"Content-Type" "application/json"
-                                 "Cache-Control" "no-store"}
-                       :body j})))
-                (catch Throwable _ nil))
-              {:status 404
-               :headers {"Content-Type" "application/json"}
-               :body "{}"}))}]
-   ;; Conditionals in a frame that didn't render (why a section is empty): ?frame=<id>
-   ["/dev/__branches/:id"
-    {:get (fn [request]
-            (or
-              (try
-                (when-let [gb (requiring-resolve 'trace/get-branches-json)]
-                  (when-let [j (gb
-                                 (get-in request [:path-params :id])
-                                 (some-> (get-in request [:params :frame])
-                                         parse-long))]
-                    {:status 200
-                     :headers {"Content-Type" "application/json"
-                               "Cache-Control" "no-store"}
-                     :body j}))
-                (catch Throwable _ nil))
-              {:status 404
-               :headers {"Content-Type" "application/json"}
-               :body "{}"}))}]
-   ;; Where a frame's entity came from (producing DB reads): ?frame=<id>
-   ["/dev/__source/:id"
-    {:get (fn [request]
-            (or
-              (try
-                (when-let [gs (requiring-resolve 'trace/get-source-json)]
-                  (when-let [j (gs
-                                 (get-in request [:path-params :id])
-                                 (some-> (get-in request [:params :frame])
-                                         parse-long))]
-                    {:status 200
-                     :headers {"Content-Type" "application/json"
-                               "Cache-Control" "no-store"}
-                     :body j}))
-                (catch Throwable _ nil))
-              {:status 404
-               :headers {"Content-Type" "application/json"}
-               :body "{}"}))}]
-   ;; The produced-markup (Hiccup) tree of a frame: ?frame=<id>&slot=ret
-   ["/dev/__hiccup/:id"
-    {:get (fn [request]
-            (or
-              (try
-                (when-let [gh (requiring-resolve 'trace/get-hiccup-json)]
-                  (let [{:keys [frame slot]} (:params request)]
-                    (when-let [j (gh
-                                   (get-in request [:path-params :id])
-                                   (some-> frame
-                                           parse-long)
-                                   slot)]
-                      {:status 200
-                       :headers {"Content-Type" "application/json"
-                                 "Cache-Control" "no-store"}
-                       :body j})))
-                (catch Throwable _ nil))
-              {:status 404
-               :headers {"Content-Type" "application/json"}
-               :body "{}"}))}]
-   ;; Every frame a value flows through: ?frame=<id>&slot=arg0|ret
-   ["/dev/__value-threads/:id"
-    {:get (fn [request]
-            (or
-              (try
-                (when-let [gt (requiring-resolve 'trace/get-threads-json)]
-                  (let [{:keys [frame slot]} (:params request)]
-                    (when-let [j (gt
-                                   (get-in request [:path-params :id])
-                                   (some-> frame
-                                           parse-long)
-                                   slot)]
-                      {:status 200
-                       :headers {"Content-Type" "application/json"
-                                 "Cache-Control" "no-store"}
-                       :body j})))
-                (catch Throwable _ nil))
-              {:status 404
-               :headers {"Content-Type" "application/json"}
-               :body "{}"}))}]])
+             :body "{\"cleared\":true}"})}]])
 
 (defn wrap-dev-no-store
   "Dev only: Cache-Control: no-store on served .css/.js so a stable (unhashed) dev URL never serves stale bytes after Tailwind --watch / esbuild rewrites the file."

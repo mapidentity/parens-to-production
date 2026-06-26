@@ -9,7 +9,8 @@
     [myapp.recipe.core :as recipe]
     [myapp.test-helpers :as h]
     [myapp.time :as time]
-    [myapp.web.handler :as handler])
+    [myapp.web.handler :as handler]
+    [myapp.web.routes :as routes])
   (:import
     [java.util UUID]))
 
@@ -60,23 +61,32 @@
         (is (str/includes? (:body resp) "Risotto"))))
     (testing "history page renders"
       (is (ok? (handler/recipe-history (req (str "/recipes/" id "/history"))))))
-    (testing "point-in-time + diff render"
+    (testing "point-in-time + diff render, immutably cacheable by basis-t"
       (let [versions (recipe/version-history (d/db h/*conn*) id)
             t0 (:t (first versions))
-            t1 (:t (last versions))]
+            t1 (:t (last versions))
+            immutable "private, max-age=31536000, immutable"
+            vresp (handler/recipe-version
+                    (assoc (h/request :get "x")
+                      :path-params {:id (str id)
+                                    :t (str t0)}))
+            dresp (handler/recipe-diff
+                    (assoc (h/request :get "x"
+                                      :params {:from (str t0)
+                                               :to (str t1)})
+                      :path-params {:id (str id)}))]
+        (is (ok? vresp))
         (is
-          (ok?
-            (handler/recipe-version
-              (assoc (h/request :get "x")
-                :path-params {:id (str id)
-                              :t (str t0)}))))
+          (= immutable (get-in vresp [:headers "Cache-Control"]))
+          "point-in-time page is immutable by (id, basis-t)")
+        (is (ok? dresp))
         (is
-          (ok?
-            (handler/recipe-diff
-              (assoc (h/request :get "x"
-                                :params {:from (str t0)
-                                         :to (str t1)})
-                :path-params {:id (str id)}))))))
+          (= immutable (get-in dresp [:headers "Cache-Control"]))
+          "diff page is immutable by (id, from-t, to-t)")
+        ;; the CURRENT read is mutable — it must NOT carry the immutable header
+        (is
+          (nil? (get-in (handler/recipe-show (req (str "/recipes/" id))) [:headers "Cache-Control"]))
+          "current recipe read is not immutably cached")))
     (testing "unknown recipe id 404s"
       (is
         (=
@@ -111,3 +121,26 @@
                  :user-eid u))]
     (is (= 302 (:status resp)) "PRG redirect after create")
     (is (str/starts-with? (get-in resp [:headers "Location"]) "/recipes/"))))
+
+(deftest authenticated-responses-are-never-cached
+  (testing "wrap-no-cache-authenticated forces no-store, overriding even an immutable header"
+    ;; A point-in-time/diff page is immutable by basis-t, but its rendered chrome
+    ;; embeds the signed-in user's nav — so a SIGNED-IN response must never be
+    ;; cached (else bfcache shows it after logout). This is what makes the
+    ;; `private, immutable` header on those pages safe: it only ever sticks for
+    ;; anonymous viewers.
+    (let [immutable {:status 200
+                     :headers {"Content-Type" "text/html; charset=UTF-8"
+                               "Cache-Control" "private, max-age=31536000, immutable"}
+                     :body "x"}
+          wrapped (routes/wrap-no-cache-authenticated (constantly immutable))]
+      (is
+        (= "private, max-age=31536000, immutable"
+          (get-in (wrapped (h/request :get "/recipes/x/at/1")) [:headers "Cache-Control"]))
+        "anonymous: the handler's immutable header is preserved")
+      (is
+        (= "no-store"
+          (get-in
+            (wrapped (assoc-in (h/request :get "/recipes/x/at/1") [:session :user-email] "a@b.lan"))
+            [:headers "Cache-Control"]))
+        "authenticated: no-store overrides the immutable header"))))

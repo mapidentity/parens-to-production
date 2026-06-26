@@ -55,7 +55,9 @@ test('editing a recipe records a new version with a diff', async ({ page, reques
     steps: 'mix',
   });
 
-  // Edit: add an ingredient line
+  // Edit: add an ingredient line. Edit/Delete live in the owner-actions popover
+  // menu (Layer 1), so open it via the "Actions" trigger before clicking Edit.
+  await page.getByRole('button', { name: 'Actions' }).click();
   await page.getByRole('link', { name: 'Edit' }).click();
   await page.fill('textarea[name="ingredients"]', 'flour\nmilk\nvanilla');
   await page.getByRole('button', { name: 'Save recipe' }).click();

@@ -49,6 +49,23 @@
    :headers {"Content-Type" "text/html; charset=UTF-8"}
    :body (str body)})
 
+(def ^:private immutable-cache
+  "Cache-Control for pages addressed by (recipe id, Datomic basis-t).
+  Such a page is a pure function of those two values, so its bytes can never
+  change and the browser may cache them indefinitely.
+  `private` (not `public`) because the rendered chrome embeds the signed-in user's
+  nav, and `wrap-no-cache-authenticated` additionally forces no-store for
+  authenticated requests — so in practice this sticks for anonymous viewers,
+  exactly who benefits from prerender, back/forward, and revisits."
+  "private, max-age=31536000, immutable")
+
+(defn- html-immutable
+  "Like `html`, but marks the response hard-cacheable (see `immutable-cache`).
+  Use only for point-in-time and diff pages, which are immutable by basis-t."
+  [body]
+  (-> (html body)
+      (assoc-in [:headers "Cache-Control"] immutable-cache)))
+
 (defn csp-report
   "Receive a browser CSP violation report and log it.
   Public + unauthenticated, so in production you would
@@ -61,14 +78,6 @@
     (catch Exception _ nil))
   {:status 204
    :headers {}})
-
-(defn- admin?
-  "True when the request's session email matches the configured admin email."
-  [request]
-  (let [user-email (:user-email request)
-        admin-email (config/get-config :admin-email)]
-    (boolean
-      (and user-email admin-email (= (str/lower-case user-email) (str/lower-case admin-email))))))
 
 (defn- path-uuid
   "Parse the `:id` path param as a UUID, or nil."
@@ -92,19 +101,34 @@
 (defn home
   "Landing page handler. Redirects authenticated users to the dashboard.
 
-  Belt-and-suspenders against stale sessions: a session cookie carrying an
-  email for a deleted user must NOT redirect to /dashboard, because wrap-auth
-  would then redirect back here — an infinite loop. `/` lives outside wrap-auth,
-  so we verify the user exists before redirecting and clear the session
-  otherwise."
+  Belt-and-suspenders against stale sessions: a session cookie carrying an email
+  for a deleted user must NOT redirect to /dashboard, because wrap-auth would then
+  redirect back here — an infinite loop. `wrap-current-user` (which wraps this
+  route) resolves the session user once and assocs `:user-eid` only when the user
+  still exists, so we redirect on that; a stale cookie (email present but no
+  `:user-eid`) renders the landing page and clears the session."
   [request]
-  (let [email (get-in request [:session :user-email])
-        user-exists? (and email (auth/find-user-by-email (d/db (db/get-connection)) email))]
-    (cond
-      user-exists? (response/redirect "/dashboard")
-      email (-> (html (views/home-page (:locale request)))
-                (assoc :session nil))
-      :else (html (views/home-page (:locale request))))))
+  (cond
+    (:user-eid request) (response/redirect "/dashboard")
+    (get-in request [:session :user-email])
+    (-> (html (views/home-page (:locale request)))
+        (assoc :session nil))
+    :else (html (views/home-page (:locale request)))))
+
+(def ^:private tagline-keys
+  (mapv #(keyword "home" (str "tagline-" %)) (range 1 7)))
+
+(defn tagline
+  "GET /partials/tagline — one random landing tagline as text/plain.
+  Keeps the landing page itself deterministic (and so cacheable / prerenderable):
+  the page server-renders a fixed default tagline, and the `tagline` island swaps
+  in a random one after load. no-store so each fetch can rotate; the body is plain
+  text, set via textContent on the client, so there is nothing to escape."
+  [request]
+  {:status 200
+   :headers {"Content-Type" "text/plain; charset=UTF-8"
+             "Cache-Control" "no-store"}
+   :body (t (:locale request) (rand-nth tagline-keys))})
 
 (defn request-magic-link
   "Handle a magic-link request — send the email + record the nonce, then redirect (PRG).
@@ -206,7 +230,7 @@
   [request]
   (let [db (d/db (db/get-connection))
         recipes (recipe/recipes-by-user db (:user-eid request))]
-    (html (views/dashboard (:locale request) (:user-email request) (admin? request) recipes))))
+    (html (views/dashboard (:locale request) (:user-email request) (:admin? request) recipes))))
 
 ;; ---------------------------------------------------------------------------
 ;; Recipes
@@ -220,7 +244,7 @@
       (views/recipes-index
         (:locale request)
         (:user-email request)
-        (admin? request)
+        (:admin? request)
         (recipe/all-recipes db)))))
 
 (defn recipe-show
@@ -234,7 +258,7 @@
         (views/recipe-detail
           (:locale request)
           (:user-email request)
-          (admin? request)
+          (:admin? request)
           r
           {:owner? (recipe/owned-by? r (:user-eid request))
            :lineage (recipe/lineage db id)
@@ -245,7 +269,7 @@
 (defn recipe-new-form
   "GET /recipes/new — blank create form (auth + terms)."
   [request]
-  (html (views/recipe-form (:locale request) (:user-email request) (admin? request) nil)))
+  (html (views/recipe-form (:locale request) (:user-email request) (:admin? request) nil)))
 
 (defn- recipe-params
   "Extract the recipe content fields from request params."
@@ -269,7 +293,7 @@
         id (path-uuid request)
         r (recipe/recipe-by-id db id)]
     (if (and r (recipe/owned-by? r (:user-eid request)))
-      (html (views/recipe-form (:locale request) (:user-email request) (admin? request) r))
+      (html (views/recipe-form (:locale request) (:user-email request) (:admin? request) r))
       (not-found request))))
 
 (defn recipe-update
@@ -343,7 +367,7 @@
         versions (recipe/version-history db id)]
     (if r
       (html
-        (views/recipe-history (:locale request) (:user-email request) (admin? request) r versions))
+        (views/recipe-history (:locale request) (:user-email request) (:admin? request) r versions))
       (not-found request))))
 
 (defn recipe-version
@@ -354,11 +378,11 @@
         t (parse-long (str (get-in request [:path-params :t])))
         r (when t (recipe/version-as-of db id t))]
     (if r
-      (html
+      (html-immutable
         (views/recipe-version
           (:locale request)
           (:user-email request)
-          (admin? request)
+          (:admin? request)
           r
           (:recipe/updated-at r)))
       (not-found request))))
@@ -373,11 +397,11 @@
         old (when from-t (recipe/version-as-of db id from-t))
         new (when to-t (recipe/version-as-of db id to-t))]
     (if (and old new)
-      (html
+      (html-immutable
         (views/recipe-diff
           (:locale request)
           (:user-email request)
-          (admin? request)
+          (:admin? request)
           new
           (:recipe/updated-at old)
           (:recipe/updated-at new)

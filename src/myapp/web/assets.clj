@@ -129,6 +129,8 @@
                                    {"not" {"href_matches" "/auth/*"}}
                                    {"not" {"href_matches" "/terms/*"}}
                                    {"not" {"href_matches" "/admin/*"}}
+                                   ;; partials are fetched by islands, never navigated to
+                                   {"not" {"href_matches" "/partials/*"}}
                                    {"not" {"selector_matches" "[data-no-prerender]"}}]}
                    "eagerness" "moderate"}]}))
 
