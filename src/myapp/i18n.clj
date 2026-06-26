@@ -12,8 +12,7 @@
 (set! *warn-on-reflection* true)
 
 (def default-locale
-  "Fallback locale when a key is missing in the requested locale, and the
-  default for visitors whose Accept-Language matches neither :en nor :nl."
+  "Fallback locale when a key is missing in the requested locale, and the default for visitors whose Accept-Language matches neither :en nor :nl."
   :en)
 
 (def ^:private locale-vars

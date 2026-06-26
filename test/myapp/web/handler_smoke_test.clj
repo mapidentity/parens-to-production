@@ -17,7 +17,8 @@
 
 (use-fixtures :each h/with-test-db h/with-test-analytics-db h/with-test-config)
 
-(def ^:private admin-email "admin@test.myapp.lan")
+(def ^:private admin-email
+  "admin@test.myapp.lan")
 
 (defn- mk-user!
   "Create a user (with terms accepted) and return its eid."
@@ -37,17 +38,22 @@
   (and (= 200 (:status response)) (string? (:body response)) (pos? (count (:body response)))))
 
 (deftest public-pages-render
-  (testing "landing page (no session)"
-    (is (ok? (handler/home (h/request :get "/")))))
-  (testing "browse list when empty"
-    (is (ok? (handler/recipes-index (h/request :get "/recipes"))))))
+  (testing "landing page (no session)" (is (ok? (handler/home (h/request :get "/")))))
+  (testing "browse list when empty" (is (ok? (handler/recipes-index (h/request :get "/recipes"))))))
 
 (deftest recipe-pages-render
   (let [u (mk-user! "cook@x.lan")
-        id (recipe/create! h/*conn* u {:title "Risotto" :servings 4
-                                       :ingredients "rice\nstock" :steps "stir\nstir more"})
+        id (recipe/create!
+             h/*conn*
+             u
+             {:title "Risotto"
+              :servings 4
+              :ingredients "rice\nstock"
+              :steps "stir\nstir more"})
         _ (recipe/update! h/*conn* u id {:recipe/ingredients "rice\nstock\nwine"})
-        req (fn [uri] (assoc (h/request :get uri) :path-params {:id (str id)}))]
+        req (fn [uri]
+              (assoc (h/request :get uri)
+                :path-params {:id (str id)}))]
     (testing "detail page renders with lineage/forks"
       (let [resp (handler/recipe-show (req (str "/recipes/" id)))]
         (is (ok? resp))
@@ -58,15 +64,27 @@
       (let [versions (recipe/version-history (d/db h/*conn*) id)
             t0 (:t (first versions))
             t1 (:t (last versions))]
-        (is (ok? (handler/recipe-version
-                   (assoc (h/request :get "x") :path-params {:id (str id) :t (str t0)}))))
-        (is (ok? (handler/recipe-diff
-                   (assoc (h/request :get "x" :params {:from (str t0) :to (str t1)})
-                     :path-params {:id (str id)}))))))
+        (is
+          (ok?
+            (handler/recipe-version
+              (assoc (h/request :get "x")
+                :path-params {:id (str id)
+                              :t (str t0)}))))
+        (is
+          (ok?
+            (handler/recipe-diff
+              (assoc (h/request :get "x"
+                                :params {:from (str t0)
+                                         :to (str t1)})
+                :path-params {:id (str id)}))))))
     (testing "unknown recipe id 404s"
-      (is (= 404 (:status (handler/recipe-show
-                            (assoc (h/request :get "x")
-                              :path-params {:id (str (UUID/randomUUID))}))))))))
+      (is
+        (=
+          404
+          (:status
+            (handler/recipe-show
+              (assoc (h/request :get "x")
+                :path-params {:id (str (UUID/randomUUID))}))))))))
 
 (deftest authed-pages-render
   (let [_ (mk-user! "cook@x.lan")]
@@ -79,15 +97,17 @@
 
 (deftest admin-dashboard-renders
   (mk-user! admin-email)
-  (is (ok? (handler/admin-dashboard
-             (h/auth-request :get "/admin" admin-email)))))
+  (is (ok? (handler/admin-dashboard (h/auth-request :get "/admin" admin-email)))))
 
 (deftest create-then-redirects
   (let [u (mk-user! "cook@x.lan")
         resp (handler/recipe-create
-               (assoc (h/auth-request :post "/recipes/new"
-                        "cook@x.lan"
-                        :params {:title "New One" :servings "2" :ingredients "a\nb" :steps "x"})
+               (assoc (h/auth-request :post
+                                      "/recipes/new" "cook@x.lan"
+                                      :params {:title "New One"
+                                               :servings "2"
+                                               :ingredients "a\nb"
+                                               :steps "x"})
                  :user-eid u))]
     (is (= 302 (:status resp)) "PRG redirect after create")
     (is (str/starts-with? (get-in resp [:headers "Location"]) "/recipes/"))))

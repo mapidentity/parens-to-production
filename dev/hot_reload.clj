@@ -3,8 +3,8 @@
   (:require
     [clojure.tools.logging :as log]
     [dev-reload :as dev-reload]
-    [myapp.core :as core]
     [inspector-load :as inspector-load]
+    [myapp.core :as core]
     [seed])
   (:import
     [java.nio.file FileSystems Files Path StandardWatchEventKinds WatchEvent]
@@ -33,7 +33,8 @@
   (log/info "Code refresh starting..."))
 
 (defn after-refresh
-  "Runs after a changed .clj file reloads: notify the browser. A view-ns edit is
+  "Runs after a changed .clj file reloads: notify the browser.
+  A view-ns edit is
   morphable (state-preserving <main> morph); other .clj edits force a full reload.
   CSS is rebuilt out-of-band by the Tailwind --watch process, not here."
   [morphable?]
@@ -48,19 +49,23 @@
 ;; cancelled and rescheduled on each event.
 (defonce ^:private css-debounce-pool
   (Executors/newSingleThreadScheduledExecutor
-    (reify ThreadFactory
-      (newThread [_ r] (doto (Thread. ^Runnable r "css-reload-debounce") (.setDaemon true))))))
+    (reify
+      ThreadFactory
+        (newThread [_ r] (doto (Thread. ^Runnable r "css-reload-debounce") (.setDaemon true))))))
 
 (defonce ^:private css-debounce-task (atom nil))
 
 (defn- debounced-css-reload!
-  "Coalesce a burst of styles.css writes into a single browser refresh ~150ms
-  after the last write, guaranteeing the new CSS is fully on disk first."
+  "Coalesce a burst of styles.css writes into a single browser refresh ~150ms after the last write, guaranteeing the new CSS is fully on disk first."
   []
-  (when-let [^ScheduledFuture t @css-debounce-task] (.cancel t false))
+  (when-let [^ScheduledFuture t @css-debounce-task]
+    (.cancel t false))
   (reset! css-debounce-task
-    (.schedule ^ScheduledExecutorService css-debounce-pool
-      ^Runnable (fn [] (dev-reload/notify-css!)) 150 TimeUnit/MILLISECONDS)))
+    (.schedule
+      ^ScheduledExecutorService css-debounce-pool
+      ^Runnable (fn [] (dev-reload/notify-css!))
+      150
+      TimeUnit/MILLISECONDS)))
 
 (defn- load-changed-file
   "Loads a changed file."
@@ -91,7 +96,10 @@
             ;; Reload failed (syntax error, etc.) — the edit didn't take and we
             ;; did NOT reload the browser, so its page is now potentially stale.
             ;; Warn the browser (soft: we don't know it uses the broken file).
-            (dev-reload/notify-reload-error! file-path (some-> e .getMessage))
+            (dev-reload/notify-reload-error!
+              file-path
+              (some-> e
+                      .getMessage))
             (let [duration-seconds (/ (- (System/nanoTime) start-time) 1e9)]
               (log/error e "Error reloading file"
                 {:file-path file-path
@@ -105,8 +113,7 @@
 (defonce ^{:doc "The long-lived Tailwind --watch Process, or nil."} tailwind-watcher (atom nil))
 
 (defn stop-tailwind-watch!
-  "Stop the Tailwind --watch process, WAITING for it to actually exit before
-  returning — so a restart can never leave two tailwinds writing styles.css at once."
+  "Stop the Tailwind --watch process, WAITING for it to actually exit before returning — so a restart can never leave two tailwinds writing styles.css at once."
   []
   (when-let [^Process p @tailwind-watcher]
     (.destroy p)
@@ -117,20 +124,24 @@
 (defonce ^:private tailwind-shutdown-hook
   ;; Destroy the external Tailwind process on JVM exit so a killed REPL never
   ;; orphans it (an orphan would keep writing styles.css behind our back).
-  (delay (.addShutdownHook (Runtime/getRuntime)
-           (Thread. ^Runnable (fn [] (stop-tailwind-watch!)) "tailwind-shutdown"))))
+  (delay
+    (.addShutdownHook
+      (Runtime/getRuntime)
+      (Thread. ^Runnable (fn [] (stop-tailwind-watch!)) "tailwind-shutdown"))))
 
 (defn start-tailwind-watch!
-  "Start ONE long-lived `tailwindcss --watch=always` writing static/styles.css for
-  dev (served unhashed, no-store). --watch=always (not plain --watch) is required:
+  "Start ONE long-lived `tailwindcss --watch=always` writing static/styles.css for dev (served unhashed, no-store).
+  --watch=always (not plain --watch) is required:
   plain --watch exits as soon as stdin closes, which a script/REPL launch triggers.
   Tailwind v4 also watches the @source globs (./src), so a .clj edit that adds a
   utility class rebuilds the stylesheet on its own — decoupled from code reload."
   []
-  (stop-tailwind-watch!)        ; fully terminate any prior process first — no double writers
-  @tailwind-shutdown-hook       ; install the JVM-exit cleanup once
-  (let [^"[Ljava.lang.String;" cmd (into-array String
-                                     ["tailwindcss" "-i" "input.css" "-o" "static/styles.css" "--minify" "--watch=always"])
+  (stop-tailwind-watch!)  ; fully terminate any prior process first — no double writers
+  @tailwind-shutdown-hook ; install the JVM-exit cleanup once
+  (let [^"[Ljava.lang.String;" cmd (into-array
+                                     String
+                                     ["tailwindcss" "-i" "input.css" "-o" "static/styles.css"
+                                      "--minify" "--watch=always"])
         pb (doto (ProcessBuilder. cmd) (.inheritIO))
         p (.start pb)]
     (reset! tailwind-watcher p)
@@ -214,7 +225,8 @@
   ;; tries to load flow-storm.
   (when (System/getProperty "clojure.storm.instrumentEnable")
     (try
-      (when-let [setup (requiring-resolve 'trace/setup!)] (setup))
+      (when-let [setup (requiring-resolve 'trace/setup!)]
+        (setup))
       (log/info "Construction-view tracer enabled (ClojureStorm)")
       (catch Throwable e (log/warn e "Trace setup failed"))))
   (start-file-watcher)

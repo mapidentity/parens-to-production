@@ -1,6 +1,5 @@
 (ns myapp.web.assets
-  "Static-asset resolution, Subresource Integrity, the strict CSP header, and the
-  `defn-asset` inline macro.
+  "Static-asset resolution, Subresource Integrity, the strict CSP header, and the `defn-asset` inline macro.
 
   SOURCES live in static/ (committed). The build (`clojure -T:build assets`)
   generates the served, content-hashed, minified tree into myapp/static/ plus an
@@ -33,33 +32,39 @@
   (some? (io/resource "hot_reload.clj")))
 
 (def static-root
-  "Dir the Ring file handler serves from: source static/ in dev, the built
-  myapp/static/ tree in prod (also what Caddy mounts)."
+  "Dir the Ring file handler serves from: source static/ in dev, the built myapp/static/ tree in prod (also what Caddy mounts)."
   (if dev? "static" "myapp/static"))
 
-(def ^:private asset-out "myapp/static")
+(def ^:private asset-out
+  "myapp/static")
 
 (defonce ^:private manifest
   ;; {:assets {logical-name served-url} :sri {served-url sri-token}}
-  (atom {:assets {} :sri {}}))
+  (atom
+    {:assets {}
+     :sri {}}))
 
 (defn- dev-manifest
-  "Derive the dev manifest from the source tree: identity URLs for css/js served
-  straight from static/, and UNMINIFIED vendored libs (readable for debugging).
-  No SRI in dev — the source files change as you edit them."
+  "Derive the dev manifest from the source tree.
+  Identity URLs for css/js served straight from static/, and UNMINIFIED
+  vendored libs (readable for debugging). No SRI in dev — the source files
+  change as you edit them."
   []
   (let [js-dir (io/file "static/js")
         js (when (.isDirectory js-dir)
-             (into {} (for [^java.io.File f (.listFiles js-dir)
-                            :when (str/ends-with? (.getName f) ".js")]
-                        [(str "js/" (.getName f)) (str "/js/" (.getName f))])))
+             (into
+               {}
+               (for [^java.io.File f (.listFiles js-dir)
+                     :when (str/ends-with? (.getName f) ".js")]
+                 [(str "js/" (.getName f)) (str "/js/" (.getName f))])))
         idiomorph (when (.exists (io/file "static/idiomorph-0.7.4.js"))
                     {"idiomorph" "/idiomorph-0.7.4.js"})]
     {:assets (merge {"styles.css" "/styles.css"} js idiomorph)
      :sri {}}))
 
 (defn load-manifest!
-  "Load the asset manifest once at startup. PROD reads myapp/static/asset-manifest.edn;
+  "Load the asset manifest once at startup.
+  PROD reads myapp/static/asset-manifest.edn;
   DEV derives an identity/source manifest from static/."
   []
   (reset! manifest
@@ -68,15 +73,18 @@
       (let [f (io/file asset-out "asset-manifest.edn")]
         (if (.exists f)
           (edn/read-string (slurp f))
-          (do (println "Assets: WARNING no asset-manifest.edn — run `clojure -T:build assets`")
-              {:assets {} :sri {}})))))
-  (println (str "Assets: " (count (:assets @manifest)) (if dev? " dev" " prod") " manifest entries")))
+          (do
+            (println "Assets: WARNING no asset-manifest.edn — run `clojure -T:build assets`")
+            {:assets {}
+             :sri {}})))))
+  (println
+    (str "Assets: " (count (:assets @manifest)) (if dev? " dev" " prod") " manifest entries")))
 
 (defn asset
-  "Resolve a logical asset name (e.g. \"styles.css\", \"js/dispatcher.js\",
-  \"idiomorph\") to its served URL. Falls back to an identity URL if unmapped."
-  [name]
-  (or (get-in @manifest [:assets name]) (str "/" name)))
+  "Resolve a logical asset name (e.g. \"styles.css\", \"js/dispatcher.js\", \"idiomorph\") to its served URL.
+  Falls back to an identity URL if unmapped."
+  [asset-name]
+  (or (get-in @manifest [:assets asset-name]) (str "/" asset-name)))
 
 (defn asset-sri
   "SRI token for a served URL, or nil (e.g. always nil in dev)."
@@ -84,42 +92,45 @@
   (get-in @manifest [:sri url]))
 
 (defn importmap-json
-  "JSON for a <script type=importmap> remapping each ESM module's identity URL to
-  its served (hashed) URL, with an `integrity` block (per-module SRI) in prod so a
-  hash-based CSP can authorize the resolved modules. Identity no-op in dev. Emit it
-  BEFORE any module script."
+  "JSON for a <script type=importmap> remapping each ESM module's identity URL to its served (hashed) URL, with an `integrity` block (per-module SRI) in prod so a hash-based CSP can authorize the resolved modules.
+  Identity no-op in dev. Emit it BEFORE any module script."
   []
   (let [as (:assets @manifest)
         sri (:sri @manifest)
-        imports (into (sorted-map)
-                  (for [[k v] as :when (str/starts-with? k "js/")]
+        imports (into
+                  (sorted-map)
+                  (for [[k v] as
+                        :when (str/starts-with? k "js/")]
                     [(str "/" k) v]))
-        integrity (into (sorted-map)
-                    (for [[_ v] imports :when (sri v)] [v (sri v)]))]
+        integrity (into
+                    (sorted-map)
+                    (for [[_ v] imports
+                          :when (sri v)]
+                      [v (sri v)]))]
     (json/write-value-as-string
       (cond-> {"imports" imports}
-        (seq integrity) (assoc "integrity" integrity)))))
+        (seq integrity) (assoc "integrity"
+                          integrity)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Speculation Rules (prerender-on-hover) — inline, allowed by CSP content hash
 ;; ---------------------------------------------------------------------------
 
 (def speculation-rules-json
-  "The Speculation Rules document, emitted as an inline <script
-  type=speculationrules>. Prerenders same-origin GET pages at `moderate`
+  "The Speculation Rules document, emitted as an inline <script type=speculationrules>.
+  Prerenders same-origin GET pages at `moderate`
   eagerness (hover / pointerdown), so a click activates an already-built page —
   SPA-feel navigation on a plain multi-page app, with cross-document View
   Transitions animating the swap. Excludes auth/terms/admin (stateful or heavy)
   and anything tagged [data-no-prerender]. Honoured only where supported; an
   inert tag elsewhere. We emit (and hash) this exact string."
   (json/write-value-as-string
-    {"prerender"
-     [{"where" {"and" [{"href_matches" "/*"}
-                       {"not" {"href_matches" "/auth/*"}}
-                       {"not" {"href_matches" "/terms/*"}}
-                       {"not" {"href_matches" "/admin/*"}}
-                       {"not" {"selector_matches" "[data-no-prerender]"}}]}
-       "eagerness" "moderate"}]}))
+    {"prerender" [{"where" {"and" [{"href_matches" "/*"}
+                                   {"not" {"href_matches" "/auth/*"}}
+                                   {"not" {"href_matches" "/terms/*"}}
+                                   {"not" {"href_matches" "/admin/*"}}
+                                   {"not" {"selector_matches" "[data-no-prerender]"}}]}
+                   "eagerness" "moderate"}]}))
 
 (defn speculation-rules-tag
   "Inline <script type=speculationrules> carrying `speculation-rules-json`.
@@ -143,14 +154,14 @@
   (atom #{}))
 
 (defn register-inline-script!
-  "Record an inline <script> resource path so its hash enters the CSP. Called by
-  defn-asset for script assets."
+  "Record an inline <script> resource path so its hash enters the CSP.
+  Called by defn-asset for script assets."
   [path]
   (swap! inline-scripts conj path))
 
 (defn- csp-script-hashes
-  "sha256 CSP tokens for every inline <script> the app may emit (registered inline
-  assets + the import map JSON). Recomputed each call (cheap); in dev the inline
+  "The sha256 CSP tokens for every inline <script> the app may emit (registered inline assets + the import map JSON).
+  Recomputed each call (cheap); in dev the inline
   content hot-reloads, so the policy self-heals."
   []
   (-> (mapv (fn [p] (sha256-b64 (slurp (io/resource p)))) (sort @inline-scripts))
@@ -164,16 +175,23 @@
 
 (defn- build-csp-header
   []
-  (str "default-src 'none'; "
-       "script-src 'self' " (str/join " " (map #(str "'" % "'") (csp-script-hashes))) "; "
-       "connect-src 'self'" (if dev? " ws: wss:" "") "; "
-       csp-rest
-       "; report-uri /csp-report; report-to csp"))
+  (str
+    "default-src 'none'; "
+    "script-src 'self' "
+    (str/join " " (map #(str "'" % "'") (csp-script-hashes)))
+    "; "
+    "connect-src 'self'"
+    (if dev? " ws: wss:" "")
+    "; "
+    csp-rest
+    "; report-uri /csp-report; report-to csp"))
 
-(def ^:private csp-cached (delay (build-csp-header)))
+(def ^:private csp-cached
+  (delay (build-csp-header)))
 
 (defn csp-header
-  "The strict CSP header value. Static in prod (computed once); recomputed in dev
+  "The strict CSP header value.
+  Static in prod (computed once); recomputed in dev
   so it tracks hot-reloaded inline scripts."
   []
   (if dev? (build-csp-header) @csp-cached))
@@ -190,8 +208,8 @@
     (.endsWith ^String path ".js") :script))
 
 (defmacro defn-asset
-  "Defines a private zero-arity fn returning a hiccup element for a classpath
-  resource (an INLINE <script>/<style>). Content is emitted RAW (unescaped) so the
+  "Defines a private zero-arity fn returning a hiccup element for a classpath resource (an INLINE <script>/<style>).
+  Content is emitted RAW (unescaped) so the
   emitted bytes equal what the CSP hashes. In prod content is read once at load; in
   dev it is re-read every call so inline scripts hot-reload. Script assets register
   their path so their hash enters the CSP."
@@ -200,6 +218,15 @@
         wrap (if tag (fn [expr] [tag `(h2/raw ~expr)]) identity)
         reg (when (= tag :script) `(register-inline-script! ~path))]
     (if dev?
-      `(do ~reg (defn- ~sym [] ~(wrap `(slurp (io/resource ~path)))))
+      `(do
+         ~reg
+         (defn- ~sym
+           []
+           ~(wrap `(slurp (io/resource ~path)))))
       (let [content (wrap (slurp (io/resource path)))]
-        `(do ~reg (let [v# ~content] (defn- ~sym [] v#)))))))
+        `(do
+           ~reg
+           (let [v# ~content]
+             (defn- ~sym
+               []
+               v#)))))))

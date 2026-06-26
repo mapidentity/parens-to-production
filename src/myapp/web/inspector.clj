@@ -1,5 +1,6 @@
 (ns myapp.web.inspector
-  "Dev-only source inspector. Two layers, no source-level ceremony — plain
+  "Dev-only source inspector.
+  Two layers, no source-level ceremony — plain
   `defn` views are instrumented automatically by the dev loader.
 
   COMPONENT level. In dev, the loader (`inspector-load`) re-defines every fn in
@@ -78,12 +79,16 @@
   attribute map (creating one if absent); otherwise return `h` unchanged. An
   already-tagged element is left alone so the innermost component's location wins."
   [h src nm]
-  (if (and (element? h)
-           (not (and (map? (second h)) (contains? (second h) :data-myapp-src))))
+  (if (and (element? h) (not (and (map? (second h)) (contains? (second h) :data-myapp-src))))
     (let [has-attrs? (map? (second h))
           attrs (if has-attrs? (second h) {})
           children (subvec h (if has-attrs? 2 1))]
-      (into [(first h) (assoc attrs :data-myapp-src src :data-myapp-name nm)] children))
+      (into
+        [(first h)
+         (assoc attrs
+           :data-myapp-src src
+           :data-myapp-name nm)]
+        children))
     h))
 
 (defn add-file-meta
@@ -207,7 +212,10 @@
 ;; never runs), so resolve-cursor returns nil and the feature is inert.
 ;; ---------------------------------------------------------------------------
 
-(defonce ^{:doc "Atom: classpath-relative file -> {:defns [{:name \"ns/fn\" :span [l c el ec]} …]
+(defonce
+  ^{:doc
+    "Reverse index of view source spans, keyed by classpath-relative file.
+  Atom: classpath-relative file -> {:defns [{:name \"ns/fn\" :span [l c el ec]} …]
   :elements [{:key \"file:line:col\" :span [l c el ec]} …]}. Spans are inclusive
   start / EXCLUSIVE end (tools.reader's :end-column is one past the last char).
   defonce so hot-reloading this ns (a non-view .clj edit triggers a plain
@@ -216,8 +224,7 @@
   (atom {}))
 
 (defn- form-span
-  "[line column end-line end-column] from a form's reader metadata, or nil when
-  the indexing reader didn't record a full span."
+  "Return [line column end-line end-column] from a form's reader metadata, or nil when the indexing reader didn't record a full span."
   [form]
   (let [m (meta form)]
     (when (and (:line m) (:column m) (:end-line m) (:end-column m))
@@ -229,8 +236,7 @@
   (str file ":" line ":" (or column 1)))
 
 (defn tag-callsite
-  "DEV: stamp `data-myapp-callsite` (the INVOCATION site \"file:line:col\") onto
-  `x` if it's an element vector, else return `x` unchanged.
+  "DEV: stamp `data-myapp-callsite` (the INVOCATION site \"file:line:col\") onto `x` if it's an element vector, else return `x` unchanged.
 
   The dev loader wraps calls to view fns with this, so each rendered instance
   carries the call site that produced it — which is what lets a cursor on one of
@@ -242,21 +248,26 @@
     (let [has-attrs? (map? (second x))
           attrs (if has-attrs? (second x) {})
           children (subvec x (if has-attrs? 2 1))]
-      (into [(first x) (assoc attrs :data-myapp-callsite loc)] children))
+      (into
+        [(first x)
+         (assoc attrs
+           :data-myapp-callsite loc)]
+        children))
     x))
 
 (defn- collect-elements
-  "Depth-first collect {:key :span} for every element-vector literal in `form`
-  that carries a reader span."
+  "Depth-first collect {:key :span} for every element-vector literal in `form` that carries a reader span."
   [file form]
   (cond
     (vector? form)
     (concat
       (when (and (element? form) (form-span form))
         (let [[l c] (form-span form)]
-          [{:key (src-key file l c) :span (form-span form)}]))
+          [{:key (src-key file l c)
+            :span (form-span form)}]))
       (mapcat #(collect-elements file %) form))
-    (map? form) (mapcat (fn [[k v]] (concat (collect-elements file k) (collect-elements file v))) form)
+    (map? form) (mapcat (fn [[k v]] (concat (collect-elements file k) (collect-elements file v)))
+                  form)
     (set? form) (mapcat #(collect-elements file %) form)
     (seq? form) (mapcat #(collect-elements file %) form)
     :else nil))
@@ -264,34 +275,33 @@
 (defn- defn-form?
   "True for (defn …) / (defn- …) top-level forms (any ns-qualification)."
   [form]
-  (and (seq? form)
-       (symbol? (first form))
-       (contains? #{"defn" "defn-"} (name (first form)))
-       (symbol? (second form))))
+  (and
+    (seq? form)
+    (symbol? (first form))
+    (contains? #{"defn" "defn-"} (name (first form)))
+    (symbol? (second form))))
 
 (def ^:private reserved-call-heads
-  "Names never treated as view fns — special forms / core whose calls would break
-  if rewritten out of position (e.g. a fn shadowing `recur`)."
-  #{"recur" "fn" "fn*" "let" "loop" "def" "do" "if" "quote" "var" "throw"
-    "try" "catch" "finally" "new" "set!" "monitor-enter" "monitor-exit"})
+  "Names never treated as view fns — special forms / core whose calls would break if rewritten out of position (e.g. a fn shadowing `recur`)."
+  #{"recur" "fn" "fn*" "let" "loop" "def" "do" "if" "quote" "var" "throw" "try" "catch" "finally"
+    "new" "set!" "monitor-enter" "monitor-exit"})
 
 (defn view-defn-names
-  "Set of (string) names of the fns defined in `forms` — the call heads we treat
-  as view components for call-site tagging and indexing. Excludes reserved names."
+  "Set of (string) names of the fns defined in `forms` — the call heads we treat as view components for call-site tagging and indexing.
+  Excludes reserved names."
   [forms]
   (into #{} (comp (filter defn-form?) (map #(name (second %))) (remove reserved-call-heads)) forms))
 
 (defn- call-head
-  "The bare name of `form`'s head if it's an UNqualified symbol naming a view fn,
-  else nil. Qualified heads (other-ns/foo) are never treated as local calls."
+  "The bare name of `form`'s head if it's an UNqualified symbol naming a view fn, else nil.
+  Qualified heads (other-ns/foo) are never treated as local calls."
   [names form]
   (let [h (and (seq? form) (first form))]
-    (when (and (symbol? h) (nil? (namespace h)) (contains? names (name h)))
-      (name h))))
+    (when (and (symbol? h) (nil? (namespace h)) (contains? names (name h))) (name h))))
 
 (defn- collect-calls
-  "Depth-first collect {:key :span} for every call `(name …)` whose head is an
-  unqualified symbol in `names`. Records ALL such call sites — the browser's
+  "Depth-first collect {:key :span} for every call `(name …)` whose head is an unqualified symbol in `names`.
+  Records ALL such call sites — the browser's
   data-myapp-callsite existence check reconciles ones that didn't get wrapped."
   [names file form]
   (cond
@@ -299,10 +309,12 @@
     (concat
       (when (and (call-head names form) (form-span form))
         (let [[l c] (form-span form)]
-          [{:key (src-key file l c) :span (form-span form)}]))
+          [{:key (src-key file l c)
+            :span (form-span form)}]))
       (mapcat #(collect-calls names file %) form))
     (vector? form) (mapcat #(collect-calls names file %) form)
-    (map? form) (mapcat (fn [[k v]] (concat (collect-calls names file k) (collect-calls names file v))) form)
+    (map? form)
+    (mapcat (fn [[k v]] (concat (collect-calls names file k) (collect-calls names file v))) form)
     (set? form) (mapcat #(collect-calls names file %) form)
     :else nil))
 
@@ -315,9 +327,8 @@
     "quote"})
 
 (defn wrap-callsites
-  "Rewrite `form` so each call to a view fn (head ∈ `names`) becomes
-  `(tag-callsite \"file:l:c\" <call>)`, stamping the invocation site on the
-  rendered result. Preserves all reader metadata so element-level tagging and
+  "Rewrite `form` so each call to a view fn (head ∈ `names`) becomes `(tag-callsite \"file:l:c\" <call>)`, stamping the invocation site on the rendered result.
+  Preserves all reader metadata so element-level tagging and
   the index keep working. `wrap?` starts true; it's forced false inside
   threading/doto forms (see `no-wrap-heads`) where wrapping would be unsafe."
   [names file form wrap?]
@@ -325,7 +336,9 @@
     (seq? form)
     (let [head-name (when (symbol? (first form)) (name (first form)))
           child-wrap? (if (contains? no-wrap-heads head-name) false wrap?)
-          walked (with-meta (apply list (map #(wrap-callsites names file % child-wrap?) form)) (meta form))]
+          walked (with-meta
+                   (apply list (map #(wrap-callsites names file % child-wrap?) form))
+                   (meta form))]
       (if (and wrap? (call-head names form) (form-span form))
         (let [[l c] (form-span form)]
           (with-meta (list `tag-callsite (src-key file l c) walked) (meta form)))
@@ -334,40 +347,58 @@
     (with-meta (mapv #(wrap-callsites names file % wrap?) form) (meta form))
     (map? form)
     (with-meta
-      (into (empty form) (map (fn [[k v]] [(wrap-callsites names file k wrap?) (wrap-callsites names file v wrap?)])) form)
+      (into
+        (empty form)
+        (map (fn [[k v]] [(wrap-callsites names file k wrap?) (wrap-callsites names file v wrap?)]))
+        form)
       (meta form))
     (set? form)
     (with-meta (into (empty form) (map #(wrap-callsites names file % wrap?)) form) (meta form))
     :else form))
 
 (defn index-ns!
-  "Build the `view-index` entry for `file` (classpath-relative) from the read
-  top-level `forms` of view namespace `ns-sym`. Replaces any prior entry, so a
+  "Build the `view-index` entry for `file` (classpath-relative) from the read top-level `forms` of view namespace `ns-sym`.
+  Replaces any prior entry, so a
   hot-reload re-indexes cleanly. Returns a small summary."
   [file ns-sym forms]
   (let [defn-forms (filter defn-form? forms)
         names (view-defn-names forms)
-        defns (keep (fn [form]
-                      (when-let [span (form-span form)]
-                        {:name (str ns-sym "/" (second form)) :span span}))
-                    defn-forms)
+        defns (keep
+                (fn [form]
+                  (when-let [span (form-span form)]
+                    {:name (str ns-sym "/" (second form))
+                     :span span}))
+                defn-forms)
         ;; Only index elements/calls that live inside a defn — a cursor only
         ;; resolves when it's inside a defn anyway, and this skips phantom
         ;; element literals in (comment …) blocks or top-level data defs.
         elements (vec (mapcat #(collect-elements file %) defn-forms))
         calls (vec (mapcat #(collect-calls names file %) defn-forms))]
-    (swap! view-index assoc file {:defns (vec defns) :elements elements :calls calls})
-    {:file file :defns (count defns) :elements (count elements) :calls (count calls)}))
+    (swap! view-index assoc
+      file
+      {:defns (vec defns)
+       :elements elements
+       :calls calls})
+    {:file file
+     :defns (count defns)
+     :elements (count elements)
+     :calls (count calls)}))
 
 (defn- contains-pos?
   "True when [line col] (1-based) lies in `span` (inclusive start, exclusive end)."
   [[l c el ec] line col]
-  (let [l (long l) c (long c) el (long el) ec (long ec) line (long line) col (long col)]
-    (and (or (< l line) (and (= l line) (<= c col)))
-         (or (< line el) (and (= line el) (< col ec))))))
+  (let [l (long l)
+        c (long c)
+        el (long el)
+        ec (long ec)
+        line (long line)
+        col (long col)]
+    (and
+      (or (< l line) (and (= l line) (<= c col)))
+      (or (< line el) (and (= line el) (< col ec))))))
 
 (defn- span-extent
-  "[lines columns] extent of a span — for ordering innermost (smallest) first."
+  "The [lines columns] extent of a span — for ordering innermost (smallest) first."
   [[l c el ec]]
   [(- (long el) (long l)) (- (long ec) (long c))])
 
@@ -379,18 +410,19 @@
 (defn- innermost-containing
   "The smallest-span item from `items` whose span contains [line col], or nil."
   [items line col]
-  (reduce (fn [best it]
-            (if (and (contains-pos? (:span it) line col)
-                     (or (nil? best) (span-smaller? (:span it) (:span best))))
-              it
-              best))
-          nil
-          items))
+  (reduce
+    (fn [best it]
+      (if
+        (and
+          (contains-pos? (:span it) line col)
+          (or (nil? best) (span-smaller? (:span it) (:span best))))
+        it
+        best))
+    nil
+    items))
 
 (defn resolve-cursor
-  "Map an editor cursor (classpath-relative `file`, 1-based `line`/`col`) to
-  {:component \"ns/fn\" :file <file> :defn-lines [start end]
-   :element \"file:line:col\" :callsite \"file:line:col\"}.
+  "Map an editor cursor (classpath-relative `file`, 1-based `line`/`col`) to {:component \"ns/fn\" :file <file> :defn-lines [start end] :element \"file:line:col\" :callsite \"file:line:col\"}.
 
   - `:component`/`:defn-lines` — the enclosing defn (for the soft component frame;
     span-membership handles components with no single DOM root, e.g. layouts).

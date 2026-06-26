@@ -27,8 +27,8 @@
 (set! *warn-on-reflection* true)
 
 (def pull-pattern
-  "Pull pattern for a fully-rendered recipe, including its owner and (if any)
-  the recipe it was forked from."
+  "Pull pattern for a fully-rendered recipe.
+  Includes its owner and (if any) the recipe it was forked from."
   [:db/id :recipe/id :recipe/title :recipe/description :recipe/servings
    :recipe/ingredients :recipe/steps :recipe/position
    :recipe/created-at :recipe/updated-at
@@ -76,9 +76,10 @@
        vec))
 
 (defn- dashboard-order
-  "Comparator for the owner's dashboard: explicit :recipe/position ascending,
-  then (for recipes the user hasn't reordered yet) most-recently-updated first.
-  Positioned recipes always sort ahead of unpositioned ones."
+  "Comparator for the owner's dashboard.
+  Explicit :recipe/position ascending, then (for recipes the user hasn't
+  reordered yet) most-recently-updated first. Positioned recipes always sort
+  ahead of unpositioned ones."
   [a b]
   (let [pa (:recipe/position a)
         pb (:recipe/position b)]
@@ -89,8 +90,7 @@
       :else (compare (:recipe/updated-at b) (:recipe/updated-at a)))))
 
 (defn recipes-by-user
-  "Recipes owned by `user-eid`, in the owner's chosen dashboard order
-  (see `dashboard-order`)."
+  "Recipes owned by `user-eid`, in the owner's chosen dashboard order (see `dashboard-order`)."
   [db user-eid]
   (->> (d/q '[:find [?e ...] :in $ ?u :where [?e :recipe/user ?u]] db user-eid)
        (map #(db/pull* db pull-pattern %))
@@ -136,8 +136,8 @@
 ;; ---------------------------------------------------------------------------
 
 (defn version-history
-  "Every version of recipe `id`, oldest first, reconstructed from Datomic
-  history. Each entry is `{:tx <tx-eid> :t <basis-t> :instant <Instant>
+  "Every version of recipe `id`, oldest first, reconstructed from Datomic history.
+  Each entry is `{:tx <tx-eid> :t <basis-t> :instant <Instant>
   :recipe <state as-of that tx>}`. Returns nil if the recipe doesn't exist."
   [db id]
   (when-let [eid (d/entid db [:recipe/id id])]
@@ -149,21 +149,24 @@
                           ;; count as a version — a position-only reorder does not.
                           [?e ?a _ ?tx true]
                           [?tx :db/txInstant ?inst]]
-                        h eid versioned-attrs)
+                        h
+                        eid
+                        versioned-attrs)
                    ;; Sort by basis-t, not :db/txInstant — two edits in the same
                    ;; millisecond tie on the instant, which would make version
                    ;; order (and "latest") non-deterministic. t is monotonic.
                    (sort-by (fn [[tx _]] (d/tx->t tx))))]
-      (mapv (fn [[tx inst]]
-              {:tx tx
-               :t (d/tx->t tx)
-               :instant (db/as-instant inst)
-               :recipe (db/pull* (d/as-of db tx) pull-pattern eid)})
-            txs))))
+      (mapv
+        (fn [[tx inst]]
+          {:tx tx
+           :t (d/tx->t tx)
+           :instant (db/as-instant inst)
+           :recipe (db/pull* (d/as-of db tx) pull-pattern eid)})
+        txs))))
 
 (defn version-as-of
-  "The state of recipe `id` as of basis point `t` (a basis-t, tx-eid, or
-  Instant/Date). nil if the recipe doesn't exist."
+  "The state of recipe `id` as of basis point `t` (a basis-t, tx-eid, or Instant/Date).
+  nil if the recipe doesn't exist."
   [db id t]
   (when-let [eid (d/entid db [:recipe/id id])]
     (db/pull* (d/as-of db t) pull-pattern eid)))
@@ -173,9 +176,8 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- lcs-suffix-table
-  "Map from [i j] to the length of the longest common subsequence of the
-  suffixes a[i..] and b[j..]. Missing entries (the boundary row/column) read
-  as 0 via the lookup default."
+  "Map from [i j] to the length of the longest common subsequence of the suffixes a[i..] and b[j..].
+  Missing entries (the boundary row/column) read as 0 via the lookup default."
   [a b]
   (let [n (count a)
         m (count b)]
@@ -193,11 +195,12 @@
               dp
               (recur
                 (dec j)
-                (assoc! dp [i j]
+                (assoc!
+                  dp
+                  [i j]
                   (if (= (nth a i) (nth b j))
                     (inc (long (get dp [(inc i) (inc j)] 0)))
-                    (max (long (get dp [(inc i) j] 0))
-                         (long (get dp [i (inc j)] 0)))))))))))))
+                    (max (long (get dp [(inc i) j] 0)) (long (get dp [i (inc j)] 0)))))))))))))
 
 (defn line-diff
   "A git-style line diff of two newline-separated strings.
@@ -217,13 +220,31 @@
            acc (transient [])]
       (cond
         (and (< i n) (< j m) (= (nth a i) (nth b j)))
-        (recur (inc i) (inc j) (conj! acc {:op :ctx :text (nth a i)}))
+        (recur
+          (inc i)
+          (inc j)
+          (conj!
+            acc
+            {:op :ctx
+             :text (nth a i)}))
 
         (and (< j m) (or (= i n) (>= (long (dp [i (inc j)] 0)) (long (dp [(inc i) j] 0)))))
-        (recur i (inc j) (conj! acc {:op :add :text (nth b j)}))
+        (recur
+          i
+          (inc j)
+          (conj!
+            acc
+            {:op :add
+             :text (nth b j)}))
 
         (< i n)
-        (recur (inc i) j (conj! acc {:op :del :text (nth a i)}))
+        (recur
+          (inc i)
+          j
+          (conj!
+            acc
+            {:op :del
+             :text (nth a i)}))
 
         :else
         (persistent! acc)))))
@@ -238,7 +259,9 @@
   (let [scalar (fn [k]
                  (let [o (get old-recipe k)
                        nw (get new-recipe k)]
-                   {:changed? (not= o nw) :old o :new nw}))
+                   {:changed? (not= o nw)
+                    :old o
+                    :new nw}))
         ingredients (line-diff (:recipe/ingredients old-recipe) (:recipe/ingredients new-recipe))
         steps (line-diff (:recipe/steps old-recipe) (:recipe/steps new-recipe))
         any-line-change? (fn [d] (some #(not= :ctx (:op %)) d))]
@@ -248,24 +271,27 @@
      :ingredients ingredients
      :steps steps
      :changed? (boolean
-                 (or (not= (:recipe/title old-recipe) (:recipe/title new-recipe))
-                     (not= (:recipe/description old-recipe) (:recipe/description new-recipe))
-                     (not= (:recipe/servings old-recipe) (:recipe/servings new-recipe))
-                     (any-line-change? ingredients)
-                     (any-line-change? steps)))}))
+                 (or
+                   (not= (:recipe/title old-recipe) (:recipe/title new-recipe))
+                   (not= (:recipe/description old-recipe) (:recipe/description new-recipe))
+                   (not= (:recipe/servings old-recipe) (:recipe/servings new-recipe))
+                   (any-line-change? ingredients)
+                   (any-line-change? steps)))}))
 
 ;; ---------------------------------------------------------------------------
 ;; Mutations
 ;; ---------------------------------------------------------------------------
 
 (defn- next-position
-  "One past the highest :recipe/position among `user-eid`'s recipes (0 if none),
-  so a freshly created recipe appends to the end of the owner's dashboard."
+  "One past the highest :recipe/position among `user-eid`'s recipes (0 if none).
+  So a freshly created recipe appends to the end of the owner's dashboard."
   [db user-eid]
-  (let [m (d/q '[:find (max ?p) .
-                 :in $ ?u
-                 :where [?r :recipe/user ?u] [?r :recipe/position ?p]]
-               db user-eid)]
+  (let [m (d/q
+            '[:find (max ?p) .
+              :in $ ?u
+              :where [?r :recipe/user ?u] [?r :recipe/position ?p]]
+            db
+            user-eid)]
     (if m (inc (long m)) 0)))
 
 (defn create!
@@ -287,50 +313,61 @@
                  :recipe/position position
                  :recipe/created-at now
                  :recipe/updated-at now}
-          forked-from-eid (assoc :recipe/forked-from forked-from-eid))])
+          forked-from-eid (assoc :recipe/forked-from
+                            forked-from-eid))])
     id))
 
 (defn reorder!
-  "Set explicit :recipe/position on `ids` (UUIDs) in the given order, for recipes
-  owned by `user-eid`. Ids not owned by the user are silently skipped (tenant
+  "Set explicit :recipe/position on `ids` (UUIDs) in the given order, for recipes owned by `user-eid`.
+  Ids not owned by the user are silently skipped (tenant
   isolation). Does NOT bump :recipe/updated-at — a reorder is not a content edit
   and must not create a version. Returns true."
   [conn user-eid ids]
   (let [db (d/db conn)
         tx (->> ids
-                (map-indexed
-                  (fn [i id]
-                    (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
-                      {:db/id eid :recipe/position (long i)})))
+                (map-indexed (fn [i id]
+                               (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
+                                 {:db/id eid
+                                  :recipe/position (long i)})))
                 (remove nil?)
                 vec)]
     (when (seq tx) @(db/transact* conn tx))
     true))
 
 (defn move!
-  "Move recipe `id` one step `dir` (:up or :down) within its owner's ordered
-  dashboard list, owner-checked. This is the no-JS reorder path (the up/down
+  "Move recipe `id` one step `dir` (:up or :down) within its owner's ordered dashboard list, owner-checked.
+  This is the no-JS reorder path (the up/down
   form buttons); it normalises every recipe's position as a side effect via
   `reorder!`. Returns true."
   [conn user-eid id dir]
   (let [db (d/db conn)
         ids (mapv :recipe/id (recipes-by-user db user-eid))
         i (.indexOf ^java.util.List ids id)
-        j (case dir :up (dec i) :down (inc i) i)]
+        j (case dir
+            :up (dec i)
+            :down (inc i)
+            i)]
     (when (and (nat-int? i) (nat-int? j) (< j (count ids)) (not= i j))
-      (reorder! conn user-eid (assoc ids i (nth ids j) j (nth ids i))))
+      (reorder!
+        conn
+        user-eid
+        (assoc ids
+          i (nth ids j)
+          j (nth ids i))))
     true))
 
 (defn fork!
-  "Fork the recipe `source-id` (any owner's) into a new recipe owned by
-  `user-eid`, copying the current fields and recording `:recipe/forked-from`.
+  "Fork the recipe `source-id` (any owner's) into a new recipe owned by `user-eid`.
+  Copies the current fields and records `:recipe/forked-from`.
   Returns the new `:recipe/id`, or nil if the source doesn't exist."
   [conn user-eid source-id]
   (let [db (d/db conn)
         src (recipe-by-id db source-id)
         src-eid (d/entid db [:recipe/id source-id])]
     (when src
-      (create! conn user-eid
+      (create!
+        conn
+        user-eid
         {:title (:recipe/title src)
          :description (:recipe/description src)
          :servings (:recipe/servings src)
@@ -339,24 +376,26 @@
          :forked-from-eid src-eid}))))
 
 (defn update!
-  "Apply `changes` (a subset of the `:recipe/*` content keys) to recipe `id`,
-  if owned by `user-eid`. Bumps `:recipe/updated-at`. Returns true on success,
+  "Apply `changes` (a subset of the `:recipe/*` content keys) to recipe `id`, if owned by `user-eid`.
+  Bumps `:recipe/updated-at`. Returns true on success,
   nil if the recipe is missing or not owned by the user."
   [conn user-eid id changes]
   (let [db (d/db conn)]
     (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
       @(db/transact* conn
-         [(merge {:db/id eid
-                  :recipe/updated-at (time/now)}
-                 (select-keys changes
-                   [:recipe/title :recipe/description :recipe/servings
-                    :recipe/ingredients :recipe/steps]))])
+         [(merge
+            {:db/id eid
+             :recipe/updated-at (time/now)}
+            (select-keys
+              changes
+              [:recipe/title :recipe/description :recipe/servings
+               :recipe/ingredients :recipe/steps]))])
       true)))
 
 (defn delete!
-  "Retract recipe `id` if owned by `user-eid`. Returns true on success, nil
-  otherwise. (Forks keep their own copies — `:recipe/forked-from` simply
-  dangles, which lineage tolerates.)"
+  "Retract recipe `id` if owned by `user-eid`.
+  Returns true on success, nil otherwise. (Forks keep their own copies —
+  `:recipe/forked-from` simply dangles, which lineage tolerates.)"
   [conn user-eid id]
   (let [db (d/db conn)]
     (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]

@@ -13,8 +13,10 @@
    :home/email-label "E-mailadres"
    :home/email-placeholder "jij@voorbeeld.nl"
    :home/sign-in "Inloggen"
-   :home/magic-link-explanation "We mailen je een magic link om in te loggen. Geen wachtwoord nodig."
-   :home/lead "Fork elk recept, maak het van jou en bewaar elke versie. Zie regel voor regel het verschil tussen 'oma's' en die van jou."
+   :home/magic-link-explanation
+   "We mailen je een magic link om in te loggen. Geen wachtwoord nodig."
+   :home/lead
+   "Fork elk recept, maak het van jou en bewaar elke versie. Zie regel voor regel het verschil tussen 'oma's' en die van jou."
    :home/tagline-1 "Git, maar dan voor koken."
    :home/tagline-2 "Fork het recept. Behoud de afstamming."
    :home/tagline-3 "Elke aanpassing, in versies."
@@ -25,7 +27,8 @@
    ;; Auth
    :auth/check-email "Check je e-mail"
    :auth/email-sent-to "We hebben een magic link gestuurd naar "
-   :auth/link-expires "Klik op de link in de e-mail om in te loggen. De link verloopt over 15 minuten."
+   :auth/link-expires
+   "Klik op de link in de e-mail om in te loggen. De link verloopt over 15 minuten."
    :auth/safe-to-close "Je kunt dit tabblad sluiten — de link opent in een nieuw venster."
    :auth/back-to-home "← Terug naar home"
    :auth/sign-out "Uitloggen"
@@ -38,7 +41,8 @@
    ;; Terms / onboarding
    :terms/welcome-title "Welkom bij MyApp"
    :terms/welcome-explanation "Voor je begint met koken, even de huisregels."
-   :terms/terms-summary "Dit is een demo-applicatie uit het boek \"Building a Clojure/Datomic SaaS from Scratch.\" Recepten die je maakt zijn openbaar en mogen door iedereen geforkt worden. Wees aardig, plaats niets wat je niet gedeeld wilt zien, en veel plezier."
+   :terms/terms-summary
+   "Dit is een demo-applicatie uit het boek \"Building a Clojure/Datomic SaaS from Scratch.\" Recepten die je maakt zijn openbaar en mogen door iedereen geforkt worden. Wees aardig, plaats niets wat je niet gedeeld wilt zien, en veel plezier."
    :terms/accept-button "Akkoord, ik ga koken"
    :terms/decline-button "Nee bedankt, log me uit"
 

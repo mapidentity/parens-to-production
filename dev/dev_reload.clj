@@ -1,6 +1,5 @@
 (ns dev-reload
-  "Development-only dev channel between the browser overlay, the editor (Joyride),
-  and this server.
+  "Development-only dev channel between the browser overlay, the editor (Joyride), and this server.
 
   One `/dev/ws` socket per peer; the server is a small relay hub:
     - browser  -> {type:\"open\" src line col}  -> open the file in the editor
@@ -55,58 +54,76 @@
   (filter #(= role (get @client-roles % :browser)) @websocket-clients))
 
 (defn- send-json!
-  "Send `msg` (a map) to `channels`. http-kit's send! returns false for a closed
+  "Send `msg` (a map) to `channels`.
+  http-kit's send! returns false for a closed
   channel WITHOUT throwing, so prune on both false and exceptions. Returns the
   number of channels the message was actually delivered to."
   [channels msg]
   (let [s (json/write-value-as-string msg)]
-    (reduce (fn [n client]
-              (if (try
-                    (http-kit/send! client s)
-                    (catch Exception e
-                      (log/warn e "Failed to send dev message to client")
-                      false))
-                (inc n)
-                (do (remove-client! client) n)))
-            0
-            channels)))
+    (reduce
+      (fn [n client]
+        (if
+          (try
+            (http-kit/send! client s)
+            (catch Exception e (log/warn e "Failed to send dev message to client") false))
+          (inc n)
+          (do (remove-client! client) n)))
+      0
+      channels)))
 
 (defn notify-reload!
-  "Tell every browser client to reload. `morphable?` (default false) lets the browser
+  "Tell every browser client to reload.
+  `morphable?` (default false) lets the browser
   take the state-preserving morph fast path (a view-ns edit) instead of a full
   reload (non-view .clj, .js, or a manual trigger)."
   ([] (notify-reload! false))
   ([morphable?]
-   (send-json! (clients-of :browser) {:type "reload" :morphable (boolean morphable?)})))
+   (send-json!
+     (clients-of :browser)
+     {:type "reload"
+      :morphable (boolean morphable?)})))
 
 (defn notify-css!
-  "Tell browsers to hot-swap the stylesheet <link> (no reload). The dev CSS URL is
+  "Tell browsers to hot-swap the stylesheet <link> (no reload).
+  The dev CSS URL is
   stable, so the browser cache-busts it to refetch the rebuilt file."
   []
   (send-json! (clients-of :browser) {:type "css"}))
 
 (defn notify-reload-error!
-  "Tell browsers a source file failed to (re)load (a syntax error or similar), so
-  the page can warn it MAY be stale. We can't know the current page actually uses
+  "Tell browsers a source file failed to (re)load (a syntax error or similar), so the page can warn it MAY be stale.
+  We can't know the current page actually uses
   the broken file — it could be an unrelated reload — hence the soft 'may be'. A
   later successful reload navigates the page and clears the warning on its own."
   [file error]
-  (send-json! (clients-of :browser) {:type "reload-error" :file file :error error}))
+  (send-json!
+    (clients-of :browser)
+    {:type "reload-error"
+     :file file
+     :error error}))
 
 (defn notify-highlight!
-  "Tell every browser to apply the `resolved` highlight (the map from
-  inspector/resolve-cursor: :component :file :defn-lines :element :callsite).
+  "Tell every browser to apply the `resolved` highlight (the map from inspector/resolve-cursor: :component :file :defn-lines :element :callsite).
   Highlights arrive in order over the socket, so the browser applies each
   unconditionally — no sequence number needed."
   [resolved]
-  (send-json! (clients-of :browser) (assoc resolved :type "highlight")))
+  (send-json!
+    (clients-of :browser)
+    (assoc resolved
+      :type "highlight")))
 
 (defn push-open!
-  "Push an open-file command to connected editors. Returns the number of editors
+  "Push an open-file command to connected editors.
+  Returns the number of editors
   it was actually DELIVERED to (a half-open channel counts as 0), so the caller
   can report failure when the push didn't land."
   [abs-path line column]
-  (send-json! (clients-of :editor) {:type "open" :file abs-path :line line :col column}))
+  (send-json!
+    (clients-of :editor)
+    {:type "open"
+     :file abs-path
+     :line line
+     :col column}))
 
 ;; ---------------------------------------------------------------------------
 ;; Path trust boundary. resolve-source-file confines every browser/editor-
@@ -139,8 +156,8 @@
         cf))))
 
 (defn- classpath-relative
-  "Path of `f` relative to src/ (e.g. \"myapp/web/views.clj\") — the key the
-  reverse index and data-myapp-src use. Normalized to forward slashes so the
+  "Path of `f` relative to src/ (e.g. \"myapp/web/views.clj\") — the key the reverse index and data-myapp-src use.
+  Normalized to forward slashes so the
   key matches data-myapp-src on any OS."
   [^File f]
   (-> (.toPath ^File @src-root)
@@ -153,32 +170,46 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- handle-open!
-  "Browser -> open file. Pushes the open to a connected editor (vscode API via
+  "Browser -> open file.
+  Pushes the open to a connected editor (vscode API via
   Joyride). With no editor connected the open fails — there is no `code -g`
   fallback. Replies an open-result to the browser for its toast."
   [channel src line column]
-  (let [reply (fn [m] (http-kit/send! channel (json/write-value-as-string (assoc m :type "open-result"))))]
+  (let [reply (fn [m]
+                (http-kit/send!
+                  channel
+                  (json/write-value-as-string
+                    (assoc m
+                      :type "open-result"))))]
     (if-let [f (resolve-source-file src)]
       (if (pos? (push-open! (.getPath f) line column))
-        (reply {:ok true :src src :line line :column column})
-        (reply {:ok false :src src :error "no editor connected (open this workspace in VS Code with Joyride)"}))
-      (reply {:ok false :error (str "unresolved source: " (pr-str src))}))))
+        (reply
+          {:ok true
+           :src src
+           :line line
+           :column column})
+        (reply
+          {:ok false
+           :src src
+           :error "no editor connected (open this workspace in VS Code with Joyride)"}))
+      (reply
+        {:ok false
+         :error (str "unresolved source: " (pr-str src))}))))
 
 (defn- handle-cursor!
-  "Editor -> highlight. Confine the path, resolve the cursor to a component +
+  "Editor -> highlight.
+  Confine the path, resolve the cursor to a component +
   element via the reverse index, and broadcast a highlight to the browsers."
   [file line column]
-  (let [column (if (number? column) column 1)]   ; tolerate a missing col like the open path
+  (let [column (if (number? column) column 1)] ; tolerate a missing col like the open path
     (when (number? line)
       (when-let [f (resolve-source-file file)]
         (let [resolved (inspector/resolve-cursor (classpath-relative f) line column)]
-          (when (:component resolved)
-            (notify-highlight! resolved)))))))
+          (when (:component resolved) (notify-highlight! resolved)))))))
 
 (defn request-cursor-resend!
-  "Ask connected editors to re-emit their current cursor, so the reverse
-  highlight reappears after a browser (re)connect — e.g. a save-triggered page
-  reload — without waiting for the user to move the cursor. No-op with no editor."
+  "Ask connected editors to re-emit their current cursor, so the reverse highlight reappears after a browser (re)connect — e.g. a save-triggered page reload — without waiting for the user to move the cursor.
+  No-op with no editor."
   []
   (send-json! (clients-of :editor) {:type "resend-cursor"}))
 
@@ -201,8 +232,9 @@
          (let [msg (json/read-value message)]
            (case (get msg "type")
              "hello" (set-role! channel (keyword (get msg "role" "browser")))
-             "cursor" (do (set-role! channel :editor)
-                          (handle-cursor! (get msg "file") (get msg "line") (get msg "col")))
+             "cursor" (do
+                        (set-role! channel :editor)
+                        (handle-cursor! (get msg "file") (get msg "line") (get msg "col")))
              "open" (handle-open! channel (get msg "src") (get msg "line") (get msg "col"))
              ;; After a morph the browser asks for the editor's cursor to be re-sent,
              ;; so the reverse highlight reappears against the freshly-morphed DOM.

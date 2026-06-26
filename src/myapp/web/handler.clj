@@ -50,15 +50,17 @@
    :body (str body)})
 
 (defn csp-report
-  "Receive a browser CSP violation report and log it. Public + unauthenticated, so
-  in production you would sample/rate-limit this (or point report-to at a managed
+  "Receive a browser CSP violation report and log it.
+  Public + unauthenticated, so in production you would
+   sample/rate-limit this (or point report-to at a managed
   collector) — an open report sink can be spammed."
   [request]
   (try
     (when-let [body (:body request)]
       (log/warn "CSP violation" {:report (slurp body)}))
     (catch Exception _ nil))
-  {:status 204 :headers {}})
+  {:status 204
+   :headers {}})
 
 (defn- admin?
   "True when the request's session email matches the configured admin email."
@@ -76,7 +78,7 @@
     (catch Exception _ nil)))
 
 (defn- not-found
-  "404 HTML response."
+  "A 404 HTML response."
   [request]
   (let [locale (:locale request)]
     {:status 404
@@ -100,12 +102,12 @@
         user-exists? (and email (auth/find-user-by-email (d/db (db/get-connection)) email))]
     (cond
       user-exists? (response/redirect "/dashboard")
-      email (-> (html (views/home-page (:locale request))) (assoc :session nil))
+      email (-> (html (views/home-page (:locale request)))
+                (assoc :session nil))
       :else (html (views/home-page (:locale request))))))
 
 (defn request-magic-link
-  "Handle a magic-link request — send the email + record the nonce, then
-  redirect (PRG).
+  "Handle a magic-link request — send the email + record the nonce, then redirect (PRG).
 
   The nonce is the one-shot key: we record it here, alongside email and
   request-time, so verify can CAS-stamp the matching analytics entry."
@@ -121,8 +123,9 @@
         :magic-link/nonce nonce
         :magic-link/requested-at (time/now)}])
     (response/redirect
-      (str "/auth/sent?email="
-           (java.net.URLEncoder/encode ^String email java.nio.charset.StandardCharsets/UTF_8)))))
+      (str
+        "/auth/sent?email="
+        (java.net.URLEncoder/encode ^String email java.nio.charset.StandardCharsets/UTF_8)))))
 
 (defn magic-link-sent
   "Show the confirmation page (GET after redirect)."
@@ -144,8 +147,7 @@
       (when eid
         @(d/transact conn [[:db.fn/cas eid :magic-link/verified-at nil (time/now-date)]])
         true))
-    (catch Exception _e
-      false)))
+    (catch Exception _e false)))
 
 (defn verify-magic-link
   "Verify the magic-link token and create the user-and-session.
@@ -161,7 +163,9 @@
         token-data (auth/verify-token signing-key token)
         nonce-str (:nonce token-data)
         nonce-uuid (when nonce-str
-                     (try (UUID/fromString nonce-str) (catch IllegalArgumentException _ nil)))]
+                     (try
+                       (UUID/fromString nonce-str)
+                       (catch IllegalArgumentException _ nil)))]
     (if (and token-data nonce-uuid (consume-magic-link-nonce! nonce-uuid))
       (let [email (:email token-data)
             conn (db/get-connection)]
@@ -175,22 +179,23 @@
 (defn terms-welcome
   "Show the terms acceptance page (requires authentication)."
   [request]
-  (if (:user-eid request)
-    (html (views/welcome-page (:locale request)))
-    (response/redirect "/")))
+  (if (:user-eid request) (html (views/welcome-page (:locale request))) (response/redirect "/")))
 
 (defn accept-terms
   "Stamp `:user/terms-accepted-at` on the authenticated user, then continue."
   [request]
   (let [conn (db/get-connection)
         user-eid (:user-eid request)]
-    @(db/transact* conn [{:db/id user-eid :user/terms-accepted-at (time/now)}])
+    @(db/transact* conn
+       [{:db/id user-eid
+         :user/terms-accepted-at (time/now)}])
     (response/redirect "/dashboard")))
 
 (defn logout
   "Clear the session and return to the landing page."
   [_request]
-  (-> (response/redirect "/") (assoc :session nil)))
+  (-> (response/redirect "/")
+      (assoc :session nil)))
 
 ;; ---------------------------------------------------------------------------
 ;; Dashboard
@@ -211,8 +216,12 @@
   "GET /recipes — public browse list."
   [request]
   (let [db (d/db (db/get-connection))]
-    (html (views/recipes-index (:locale request) (:user-email request) (admin? request)
-            (recipe/all-recipes db)))))
+    (html
+      (views/recipes-index
+        (:locale request)
+        (:user-email request)
+        (admin? request)
+        (recipe/all-recipes db)))))
 
 (defn recipe-show
   "GET /recipes/:id — a recipe at its current version, with lineage and forks."
@@ -221,11 +230,16 @@
         id (path-uuid request)
         r (recipe/recipe-by-id db id)]
     (if r
-      (html (views/recipe-detail (:locale request) (:user-email request) (admin? request) r
-              {:owner? (recipe/owned-by? r (:user-eid request))
-               :lineage (recipe/lineage db id)
-               :forks (recipe/forks db id)
-               :version-count (count (recipe/version-history db id))}))
+      (html
+        (views/recipe-detail
+          (:locale request)
+          (:user-email request)
+          (admin? request)
+          r
+          {:owner? (recipe/owned-by? r (:user-eid request))
+           :lineage (recipe/lineage db id)
+           :forks (recipe/forks db id)
+           :version-count (count (recipe/version-history db id))}))
       (not-found request))))
 
 (defn recipe-new-form
@@ -259,12 +273,15 @@
       (not-found request))))
 
 (defn recipe-update
-  "POST /recipes/:id/edit — apply an edit (owner only). Creates a new version
-  in Datomic history."
+  "POST /recipes/:id/edit — apply an edit (owner only).
+  Creates a new version in Datomic history."
   [request]
   (let [id (path-uuid request)
         {:keys [title description servings ingredients steps]} (recipe-params request)
-        ok? (recipe/update! (db/get-connection) (:user-eid request) id
+        ok? (recipe/update!
+              (db/get-connection)
+              (:user-eid request)
+              id
               {:recipe/title title
                :recipe/description description
                :recipe/servings servings
@@ -286,14 +303,17 @@
   (response/redirect "/dashboard"))
 
 (defn- parse-uuid*
-  "Parse an arbitrary string as a UUID, or nil. (Distinct from `path-uuid`,
+  "Parse an arbitrary string as a UUID, or nil.
+  (Distinct from `path-uuid`,
   which reads the `:id` PATH param; this reads a body/query field.)"
   [s]
-  (try (UUID/fromString s) (catch Exception _ nil)))
+  (try
+    (UUID/fromString s)
+    (catch Exception _ nil)))
 
 (defn recipe-reorder
-  "POST /recipes/reorder — persist the owner's dashboard order, then PRG-redirect
-  to /dashboard. Two request shapes converge here:
+  "POST /recipes/reorder — persist the owner's dashboard order, then PRG-redirect to /dashboard.
+  Two request shapes converge here:
     - drag-and-drop sends `ids` (comma-separated UUIDs) → a full explicit order;
     - the no-JS up/down buttons send `id` + `dir` (up|down) → a single-step move.
   The dispatcher enhances both into a morph (animated by the View Transition);
@@ -304,7 +324,8 @@
         user-eid (:user-eid request)
         {:keys [ids id dir]} (:params request)
         move-id (parse-uuid* id)
-        dir (some-> dir keyword)]
+        dir (some-> dir
+                    keyword)]
     (cond
       (seq ids)
       (recipe/reorder! conn user-eid (keep parse-uuid* (str/split ids #",")))
@@ -321,8 +342,8 @@
         r (recipe/recipe-by-id db id)
         versions (recipe/version-history db id)]
     (if r
-      (html (views/recipe-history (:locale request) (:user-email request) (admin? request)
-              r versions))
+      (html
+        (views/recipe-history (:locale request) (:user-email request) (admin? request) r versions))
       (not-found request))))
 
 (defn recipe-version
@@ -333,8 +354,13 @@
         t (parse-long (str (get-in request [:path-params :t])))
         r (when t (recipe/version-as-of db id t))]
     (if r
-      (html (views/recipe-version (:locale request) (:user-email request) (admin? request)
-              r (:recipe/updated-at r)))
+      (html
+        (views/recipe-version
+          (:locale request)
+          (:user-email request)
+          (admin? request)
+          r
+          (:recipe/updated-at r)))
       (not-found request))))
 
 (defn recipe-diff
@@ -347,9 +373,15 @@
         old (when from-t (recipe/version-as-of db id from-t))
         new (when to-t (recipe/version-as-of db id to-t))]
     (if (and old new)
-      (html (views/recipe-diff (:locale request) (:user-email request) (admin? request)
-              new (:recipe/updated-at old) (:recipe/updated-at new)
-              (recipe/diff old new)))
+      (html
+        (views/recipe-diff
+          (:locale request)
+          (:user-email request)
+          (admin? request)
+          new
+          (:recipe/updated-at old)
+          (:recipe/updated-at new)
+          (recipe/diff old new)))
       (not-found request))))
 
 ;; ---------------------------------------------------------------------------

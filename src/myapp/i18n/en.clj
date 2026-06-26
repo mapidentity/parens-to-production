@@ -14,7 +14,8 @@
    :home/email-placeholder "you@example.com"
    :home/sign-in "Sign in"
    :home/magic-link-explanation "We'll email you a magic link to sign in. No password needed."
-   :home/lead "Fork any recipe, make it yours, and keep every version. See the diff between \"grandma's\" and yours line by line."
+   :home/lead
+   "Fork any recipe, make it yours, and keep every version. See the diff between \"grandma's\" and yours line by line."
    :home/tagline-1 "Git, but for cooking."
    :home/tagline-2 "Fork the recipe. Keep the lineage."
    :home/tagline-3 "Every tweak, versioned."
@@ -38,7 +39,8 @@
    ;; Terms / onboarding
    :terms/welcome-title "Welcome to MyApp"
    :terms/welcome-explanation "Before you start cooking, a quick word on the house rules."
-   :terms/terms-summary "This is a demo application from the book \"Building a Clojure/Datomic SaaS from Scratch.\" Recipes you create are public and may be forked by anyone. Be kind, don't post anything you wouldn't want shared, and have fun."
+   :terms/terms-summary
+   "This is a demo application from the book \"Building a Clojure/Datomic SaaS from Scratch.\" Recipes you create are public and may be forked by anyone. Be kind, don't post anything you wouldn't want shared, and have fun."
    :terms/accept-button "Agree and start cooking"
    :terms/decline-button "No thanks, log me out"
 

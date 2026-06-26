@@ -45,7 +45,11 @@
               *file* file]
       ;; Collect the read forms (they carry tools.reader's full position spans)
       ;; so we can both eval them and build the reverse-inspector index.
-      (let [read1 #(tr/read {:eof eof :read-cond :allow :features #{:clj}} rdr)
+      (let [read1 #(tr/read
+                     {:eof eof
+                      :read-cond :allow
+                      :features #{:clj}}
+                     rdr)
             ns-form (read1)]
         (if (identical? ns-form eof)
           0
@@ -73,10 +77,13 @@
                 ;; root-tags it; only this form's element-level tags are missing,
                 ;; and we log which one so the gap is visible, not silent.
                 (try
-                  (eval (inspector/add-file-meta file (inspector/wrap-callsites names file form true)))
+                  (eval
+                    (inspector/add-file-meta file (inspector/wrap-callsites names file form true)))
                   (catch Throwable e
-                    (log/warn e "Inspector: form failed to source-tag; loaded plain (no element tags)"
-                      {:file file :form (when (seq? form) (vec (take 2 form)))})
+                    (log/warn e
+                      "Inspector: form failed to source-tag; loaded plain (no element tags)"
+                      {:file file
+                       :form (when (seq? form) (vec (take 2 form)))})
                     (eval form))))
               ;; Component layer: source-tag every fn the ns just defined.
               (inspector/instrument-ns! (ns-name *ns*))
