@@ -84,7 +84,7 @@ The `:pivot` is the honest part of the whole feature. The trace explains how *th
 
 ## The dossier: on-demand projections
 
-The trace JSON keeps values shallow — a `summarize` per arg and return. When you actually want to *explore* a frame, the overlay asks for more, one frame and one level at a time. Each of these is a small projection over the same `read-window`, exposed as its own endpoint. The pattern is identical, so we build the value navigator in full and the rest in brief.
+The trace JSON keeps values shallow — a `summarize` per arg and return. When you actually want to *explore* a frame, the overlay asks for more, one frame and one level at a time. Each of these is a small projection over the same `read-window`, exposed as its own endpoint, and they all share one envelope: resolve the descriptor, read the window, build something, serialize (catching throwables into an `{:error …}` map). Because that envelope is identical, we show in full only the projections that carry a distinct *idea* — navigating a value lazily, recovering skipped branches, re-deriving the markup tree, threading a value by identity — and collapse the ones that are pure variations on the template to a sentence.
 
 ### Navigating a recorded value
 
@@ -168,24 +168,7 @@ On an anonymous request this immediately shows the three auth-gated `when`s in t
 
 ### Where a frame's data came from
 
-The eid-match from flow mode, but keyed by frame for the details pane — the producing reads for whatever entity a frame *received*:
-
-```clojure
-(defn get-source-json [id frame]
-  (when-let [d (get-desc id)]
-    (try
-      (let [{:keys [calls] :as w} (read-window (:tid d) (:start d) (:end d))
-            m (calls frame)
-            eid (when m (arg-eid (:fn-args m)))]
-        (json/write-value-as-string
-          (if-not eid
-            {:eid nil}
-            {:eid eid
-             :reads (->> (collect-db-exprs w)
-                         (map (fn [dx] (assoc (->db-op calls dx) :source (result-has-eid? (:result (:e dx)) eid))))
-                         (filter :source) vec)})))
-      (catch Throwable e (json/write-value-as-string {:error (str (.getMessage e))})))))
-```
+`get-source-json` is the details-pane twin of flow mode's eid-match: given a frame, it reads the eid off the frame's first argument and returns the recorded DB reads whose result contained that eid — the producing queries for whatever entity the frame *received*. The body is exactly flow's `collect-db-exprs` → `result-has-eid?` filter from the previous chapter, keyed by `frame` instead of by component, wrapped in the same `read-window`/`try`/serialize envelope as every projection here. Nothing new to show; the idea is the reuse.
 
 ### The produced markup
 
@@ -251,13 +234,7 @@ Every frame a given value flows through — by object identity (structural shari
 
 ### The last error
 
-And finally, the projection that lets a *successful* page surface a prior 500 — the descriptor `trace-request` stashed in `last-error` last chapter:
-
-```clojure
-(defn get-last-error-json []
-  (let [le @last-error]
-    (json/write-value-as-string (if (and le (get-desc (:id le))) le {}))))
-```
+Finally, the projection that lets a *successful* page surface a prior 500: `get-last-error-json` reads the `last-error` atom `trace-request` stashed last chapter and returns its descriptor if the recording still exists (`(if (and le (get-desc (:id le))) le {})`), else an empty map. One deref, one liveness check — the overlay turns a non-empty answer into a "the last request errored — view its trace" affordance.
 
 > **Deliberately not built — timing/profiling.** Instrumentation can't measure wall-clock honestly (the recorder's own overhead dominates), so the `ms` we show is the request total from `trace-request`, not per-frame timing. For real profiling, reach for a sampling profiler. The construction view answers *structure and data*, not *time*.
 

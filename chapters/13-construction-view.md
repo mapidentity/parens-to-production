@@ -410,6 +410,8 @@ pull*            (d/pull db pattern eid)  → {n=10}                            
 
 `build-spans` is the heart of the server. It takes a `read-window` result and produces the call tree the overlay renders: a map of span-id → span, plus the root ids. It is the densest function in the file, so we build it as a sequence of local definitions, each solving one problem.
 
+How to read what follows: there are two passes layered into one function. The *first* pass is the plain tree — "which frames survive, and who is each one's parent" (`kept?`, `eff-parent`, the per-instance rank). If you read only that, you have a working call tree and can skip ahead to the endpoints. The *second* pass is the corrections that make the tree match what a human expects under laziness and exceptions — re-parenting lazy frames to where they were *written* rather than where they were *forced*, and pinning a throw to its origin. Those are the genuinely hard parts; they are marked as we reach them, and they are worth a second reading rather than a first-pass stall.
+
 **Which frames survive.** A kept frame is one that is neither noise nor a folded self-delegation (defined next). `eff-parent` re-parents every surviving node onto its nearest *kept* ancestor, so dropping a noise frame never disconnects the tree:
 
 ```clojure
