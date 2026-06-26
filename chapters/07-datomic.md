@@ -20,6 +20,8 @@ In `deps.edn`:
 
 The PostgreSQL driver is there because in production, Datomic Peer stores its data in a SQL database. But during development and testing, we use something much lighter.
 
+> **Which Datomic is this?** `com.datomic/peer` is the artifact for **Datomic Pro** -- the on-prem product (it was the paid edition until Datomic became free in 2023, and Pro is the name it ships under now). The Peer model embeds the query engine in your application process and reads from a storage backend you run (here, PostgreSQL). The other current option is **Datomic Cloud**, an AWS-native deployment fronted by the *client* API (`com.datomic/client-cloud`) rather than the Peer library: queries run in a query group, your app talks to it over the wire, and there is no in-process Peer. We choose Pro/Peer here because it runs anywhere, has the in-memory backend that makes the per-test fixture below trivial, and keeps the query engine in-process where the time-travel reads this app leans on are cheapest. If you deploy on Cloud, the schema and query *shapes* in this chapter carry over, but the connection and transaction calls go through the client API instead.
+
 ## Two Storage Backends: Memory and SQL
 
 Datomic's connection URI determines the storage backend. This is one of its most practical features: the same code runs against a throwaway in-memory database during development and a durable SQL-backed database in production. No conditional logic, no test doubles for the database layer.
@@ -63,7 +65,7 @@ The code that connects to the database does not know or care which backend it is
   (d/db (get-connection)))
 ```
 
-`create-database!` is idempotent -- calling it when the database already exists is a no-op. It creates the database, connects, and transacts the schema. `get-db` returns an immutable database value: a snapshot of the database at a point in time. This is a key Datomic concept. The database value you get from `(d/db conn)` never changes. You can pass it around, query it later, and the results will always be consistent with that moment.
+`create-database!` is safe to call repeatedly. `d/create-database` returns `false` rather than erroring when the database already exists, and the schema transaction behind it is itself idempotent -- Datomic no-ops a `:db/ident` that is already installed with the same definition -- so re-running it reinstalls nothing. (It is not a literal no-op: the schema is re-transacted each call; it simply has no effect.) It creates the database, connects, and transacts the schema. `get-db` returns an immutable database value: a snapshot of the database at a point in time. This is a key Datomic concept. The database value you get from `(d/db conn)` never changes. You can pass it around, query it later, and the results will always be consistent with that moment.
 
 ## Schema Design
 
@@ -120,7 +122,7 @@ A few things to note about this design:
 
 ## The java.time Bridge
 
-Datomic's `:db.type/instant` stores `java.util.Date` internally. This is a holdover from Datomic's origins -- `java.util.Date` was the standard JVM date type when Datomic was designed. Modern Java code uses `java.time.Instant`, which is immutable, thread-safe, and generally superior.
+Datomic's `:db.type/instant` stores `java.util.Date` internally -- and still does today; this is not deprecated behavior we are working around, it is the current contract. It dates from Datomic's origins, when `java.util.Date` was the standard JVM date type. Modern Java code uses `java.time.Instant`, which is immutable, thread-safe, and generally superior, so the value a query hands back is the one place the older type would otherwise leak into our code.
 
 You do not want `java.util.Date` leaking into your application code. The solution is a thin conversion layer that translates automatically at the boundary. These functions live in the same `myapp.db.core` namespace shown above (whose `:import` already pulls in `java.time.Instant` and `java.util.Date`):
 
@@ -146,7 +148,7 @@ You do not want `java.util.Date` leaking into your application code. The solutio
 
 Both functions walk data structures recursively. `convert-instants` is used on the way *in* (before transacting), converting every `java.time.Instant` to `java.util.Date`. `convert-dates` is used on the way *out* (after pulling or querying), converting every `java.util.Date` back to `java.time.Instant`.
 
-The type hints (`^Date`, `^Instant`) are there because we have `*warn-on-reflection*` enabled -- without them, the `.toInstant` and `.getTime` calls would use reflection, which is both slow and triggers compiler warnings.
+The type hint `^Date` is there because we have `*warn-on-reflection*` enabled -- without it, the `.toInstant` call would resolve via reflection, which is both slow and triggers a compiler warning. (`convert-instants` needs no hint: `Date/from` is a static method, so there is nothing to reflect on.)
 
 ## Wrapped API Functions
 
@@ -221,7 +223,7 @@ The bridge handles the *type* of a timestamp. There is a second time problem, or
 
 `now` returns an `Instant` (which `transact*` then bridges to `Date`), `today` a `LocalDate` in the app's display timezone, `now-date` a `java.util.Date` for the rare raw-interop path. The point is the indirection: production runs on `Clock/system`, but a test wraps its body in `(with-clock (time/fixed-clock instant) …)` and every downstream `now`/`today` returns the pinned value -- so a token-expiry test or a "what did this look like last Tuesday" assertion is exact, not racy.
 
-This is the wrapper the [build-hardening chapter](04-build-hardening.md)'s `lint` script enforces: its grep fails the build on a stray `Instant/now` (or `LocalDate/now`, `System/currentTimeMillis`, …) anywhere but this file, because clj-kondo's `:discouraged-var` rule only sees Clojure vars, not Java static calls. From here on, application code calls `(time/now)`, never `(time/now)`.
+This is the wrapper the [build-hardening chapter](04-build-hardening.md)'s `lint` script enforces: its grep fails the build on a stray `Instant/now` (or `LocalDate/now`, `System/currentTimeMillis`, …) anywhere but this file, because clj-kondo's `:discouraged-var` rule only sees Clojure vars, not Java static calls. From here on, application code calls `(time/now)`, never `Instant/now` (or any other raw clock call) directly.
 
 Notice that `transact*` returns a future (just like `d/transact`). You deref it with `@` when you need to wait for the transaction to complete:
 

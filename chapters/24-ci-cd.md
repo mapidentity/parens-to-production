@@ -214,9 +214,13 @@ jobs:
 
       - name: Verify jar exists
         run: test -f myapp/target/myapp.jar
+```
 
 > **A note on the `myapp/` path prefix.** This workflow assumes a *monorepo* layout where the application lives in a `myapp/` subdirectory (hence `-w /workspace/myapp`, `myapp/target/myapp.jar`, and the `myapp/**` path filters above). The book's companion repository is flat -- the app *is* the repo root -- so there the build writes `target/myapp.jar` and the path filters drop the `myapp/` segment. Adjust the prefix to match your own layout; the steps are otherwise identical.
 
+The deploy steps continue in the same job:
+
+```yaml
       - name: Deploy static files
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         env:
@@ -232,6 +236,8 @@ jobs:
           scp $SSH_OPTS myapp/target/myapp.jar deploy@$APP_HOST:/tmp/myapp.jar
           ssh $SSH_OPTS deploy@$APP_HOST '/etc/scripts/deploy-myapp.sh /tmp/myapp.jar'
 ```
+
+> **One insecure default to close before production.** `StrictHostKeyChecking=no` disables SSH host-key verification on the deploy connection, which leaves it open to a man-in-the-middle on the runner-to-host path. It is the convenient choice for a first green pipeline, but it is the one place this otherwise-hardened workflow trusts the network. The fix is to pin the host's key: capture it once with `ssh-keyscan $APP_HOST` (verified out-of-band), store it as a secret, write it to `~/.ssh/known_hosts` in the job, and drop the flag (or use `StrictHostKeyChecking=yes` with that `known_hosts` in place). Treat the `no` above as a placeholder, not the recommendation.
 
 Let's walk through every stage.
 

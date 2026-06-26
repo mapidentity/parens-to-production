@@ -41,13 +41,17 @@ You could push harder — instrument more, propagate context across threads, cap
         :jvm-opts ["-Dclojure.storm.instrumentEnable=true"
                    "-Dclojure.storm.instrumentOnlyPrefixes=myapp."   ; our code only
                    "-Dclojure.storm.instrumentAutoPrefixes=false"
-                   "-Dflowstorm.startRecording=true"                 ; record from boot, headless
+                   ;; NOTE: no flowstorm.startRecording=true — recording is OFF at
+                   ;; boot and driven per-page by the tracer (see below).
+                   "-Xmx2g"                                          ; loud OOM if the leak ever returns
                    "-Dmyapp.dev=true"]}
 ```
 
 `:classpath-overrides {org.clojure/clojure nil}` drops the normal Clojure jar so ClojureStorm's build provides `clojure.core`; `instrumentOnlyPrefixes=myapp.` keeps the recording to *our* functions (instrumenting `clojure.core` would bury the signal under millions of frames). Production never sees any of this: it resolves `org.clojure/clojure`, sets no storm properties, records nothing. The compiler swap is the heaviest dev affordance in the book — it slows startup and makes the first hit to a page noticeably slower — which is precisely why it lives behind an alias you choose to type.
 
-The `startRecording` flag asks ClojureStorm to record from boot, but we don't lean on it alone. When the dev system starts under `:storm`, `hot-reload` flips recording on through the debugger API, guarded on the same storm property so a plain `:dev` REPL never tries to load FlowStorm:
+Notice what is *not* in that list: `flowstorm.startRecording=true`. The obvious move is to record from boot and read whatever's there — and it is the move we made first. It is also the move we backed out of, because it is a memory leak. ClojureStorm's per-thread timelines are append-only; with recording left on, every view-namespace load, every REPL eval, every background tick accretes entries that are never reclaimed, and over a days-long `:storm` session the recording grew to roughly **30 GB**. So recording is **off at boot**, and the tracer turns it on for exactly the span of one page render and off again — the recorder only ever holds the page currently on screen. The `-Xmx2g` cap is the backstop: if that leak ever creeps back, it surfaces as a fast, loud `OutOfMemoryError` instead of silently eating host RAM for a day. (The per-render gating is the middleware below; the finer question of *which* visit to retain across in-page morphs is a refinement we add in [chapter 15](15-construction-view-overlay.md).)
+
+When the dev system starts under `:storm`, `hot-reload` calls the tracer's `setup!` through the debugger API, guarded on the same storm property so a plain `:dev` REPL never tries to load FlowStorm:
 
 ```clojure
 ;; dev/hot_reload.clj — in the dev system startup
@@ -58,11 +62,17 @@ The `startRecording` flag asks ClojureStorm to record from boot, but we don't le
     (catch Throwable e (log/warn e "Trace setup failed"))))
 ```
 
-That resolves to two lines in `trace.clj` — the one place recording is turned on deliberately, and the same handle we use to *clear* the recorder later:
+That resolves to `setup!` in `trace.clj`, which — perhaps surprisingly — turns recording *off*. Recording is gated per page, so the steady state at boot is "not recording"; the page-render path is the only thing that flips it on:
 
 ```clojure
-(defn enable-recording! [] (try (dbg/set-recording true) (catch Throwable _ nil)))
-(defn setup! [] (enable-recording!))
+(defn enable-recording!  [] (try (dbg/set-recording true)  (catch Throwable _ nil)))
+(defn disable-recording! [] (try (dbg/set-recording false) (catch Throwable _ nil)))
+
+(defn setup! []
+  ;; Start NOT recording. A page request turns recording on for the duration of
+  ;; its own render and off again (see record-page), so boot-time view loading,
+  ;; DB seeding, REPL evals, and idle time accrete nothing.
+  (disable-recording!))
 ```
 
 > **Why a compiler and not a Java agent or OpenTelemetry?** A Java agent (Byte Buddy, AspectJ) is the same idea, less Clojure-aware — dominated. OpenTelemetry is the industrial answer and the right tool when you want spans to *leave the process* into Jaeger or Tempo; but its spans are coarse (HTTP, JDBC, manual boundaries) and exported elsewhere, neither of which serves an *in-page* view at *expression* granularity. We are building a debugger affordance, not an observability pipeline. The two are answers to different questions, and conflating them gets you the worst of both.
@@ -150,6 +160,7 @@ Where do `start` and `end` come from? A Ring middleware, placed outermost, recor
 ```clojure
 (defn- trace-request [handler req]
   (let [tid (thread-id) start (timeline-len tid) t0 (System/nanoTime)]
+    (enable-recording!)        ; record ONLY for this render...
     (try
       (let [resp (handler req) ms (/ (- (System/nanoTime) t0) 1e6)]
         (if (html? resp)
@@ -165,7 +176,9 @@ Where do `start` and `end` come from? A Ring middleware, placed outermost, recor
           (put! id {:id id :tid tid :start start :end (timeline-len tid) :epoch @epoch
                     :uri (:uri req) :method (:request-method req) :status 500 :ms ms :errored true})
           (reset! last-error {:id id :uri (:uri req) :ex (.getName (class e))})
-          (throw e))))))
+          (throw e)))
+      ;; ...and off again the moment it returns, so the recorder is idle between requests
+      (finally (disable-recording!)))))
 
 (defn wrap-trace [handler]
   (fn [req]
@@ -222,7 +235,7 @@ The descriptors live in a small bounded ring buffer — newest-wins, capped — 
     (catch Throwable _ nil)))
 ```
 
-> **Trade-off — the ring buffer bounds *our* store, not the recorder.** Lazy projection keeps the heavy values out of *our* heap, but it does not make memory unbounded-safe. FlowStorm's per-thread timeline is **append-only and grows for the life of the dev `:storm` JVM**; our descriptor ring buffer caps only the descriptors we keep, not the recording behind them. There is no automatic ring-drop on the recorder side, so you reclaim memory deliberately: call `(trace/clear-recordings!)`, hit the `/dev/__trace-clear` endpoint, or restart the REPL. This is a dev-only JVM you drive yourself, so a periodic clear is the whole discipline.
+> **What bounds memory — two caps, on two different things.** FlowStorm's per-thread timeline is append-only: while recording is on, it only grows. The fix is not to cap the timeline but to *stop writing to it* — recording is on only for the span of a render (the `enable`/`disable` pair above), so between requests the recorder is idle and accretes nothing. A full navigation additionally calls `clear-recordings!` to evict the previous visit, so the recorder holds at most the current page-visit (the page load plus any morphs layered onto it since — the morph refinement is [chapter 15](15-construction-view-overlay.md)). That is the cap that matters, and it is what replaced an earlier "record from boot" build whose timeline grew to ~30 GB. Our descriptor ring buffer is a *second*, independent cap on a much smaller thing — the four-field `{:tid :start :end}` descriptors, of which we keep the newest 256. The `clear-recordings!` handle and its `/dev/__trace-clear` endpoint still exist as an escape hatch, but they are no longer a discipline you have to remember: the per-render gating and the per-navigation clear keep memory flat on their own, and `-Xmx2g` is there only to make any regression fail loudly.
 
 Everything else in `trace.clj` is a *projection*: a pure function from a stored descriptor to JSON. They all start the same way — resolve the descriptor, `read-window` its slice, build something, serialize. The top-level one is `project`, which we assemble piece by piece over the next sections; here is the endpoint wrapper that serializes it:
 
