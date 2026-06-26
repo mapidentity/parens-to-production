@@ -281,6 +281,35 @@ Two structural choices worth noting:
 
 This three-entry stack is the foundation, not the whole. Later chapters insert more middleware here -- locale negotiation ([i18n](09-i18n.md)), a no-cache guard for authenticated pages, the current-user/auth/terms/admin gates ([auth](18-auth-tokens.md), [admin](21-admin-dashboard.md)), and a strict Content-Security-Policy ([asset pipeline](22-asset-pipeline.md)) -- and `myapp.config` learns to resolve more keys (a `:signing-key` for magic-link HMAC, `:database-uri`, an `:admin-email`) the same way it resolves `:session-key` here. The mechanism does not change; the stack and the config just get longer.
 
+Putting the pieces together, here is the whole path a request takes through the parts this chapter built. Each middleware is a layer the request passes *inward* through on the way to a handler, and the response passes back *outward* through on the way to the browser -- which is exactly why order matters, and why the outermost layer is listed first:
+
+```
+   HTTP request (http-kit)
+          │
+          ▼
+ ┌─────────────────────────────────────────────┐
+ │ wrap-params          parse query/form        │  ← outermost
+ │ ┌─────────────────────────────────────────┐ │
+ │ │ wrap-keyword-params   "email" → :email   │ │
+ │ │ ┌─────────────────────────────────────┐ │ │
+ │ │ │ wrap-session        cookie ⇄ session │ │ │
+ │ │ │ ┌─────────────────────────────────┐ │ │ │
+ │ │ │ │ reitit router                   │ │ │ │
+ │ │ │ │   matches the path → a handler  │ │ │ │
+ │ │ │ │   (or the default 404/405)      │ │ │ │
+ │ │ │ │        handler returns          │ │ │ │
+ │ │ │ │        a Ring response map      │ │ │ │
+ │ │ │ └─────────────────────────────────┘ │ │ │
+ │ │ └─────────────────────────────────────┘ │ │
+ │ └─────────────────────────────────────────┘ │
+ └─────────────────────────────────────────────┘
+          │
+          ▼
+   HTTP response (http-kit)
+```
+
+The request is a plain map going down; the response is a plain map coming back up; every layer is just a function that can look at or alter either one. That is the entire Ring model, and the rest of the book only ever adds layers to this onion -- it never changes its shape.
+
 ## The Entry Point
 
 The `myapp.core` namespace ties everything together:
