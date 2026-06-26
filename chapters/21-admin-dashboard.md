@@ -278,30 +278,6 @@ The funnel query spans both databases:
 
 Three counts, two databases. Links sent and verified come from the analytics database. Terms accepted comes from the operational database. Together they show the full funnel: how many people requested a magic link, how many clicked it, and how many accepted terms and actually signed up.
 
-### JVM Stats
-
-The JVM memory query is pure Java interop -- no Datomic involved:
-
-```clojure
-(defn jvm-stats
-  "Returns current JVM memory usage."
-  []
-  (let [runtime (Runtime/getRuntime)
-        max-mem (.maxMemory runtime)
-        total-mem (.totalMemory runtime)
-        free-mem (.freeMemory runtime)
-        used-mem (- total-mem free-mem)
-        mb (fn [^long n] (format "%.0f MB" (double (/ n 1048576))))]
-    {:max (mb max-mem)
-     :total (mb total-mem)
-     :free (mb free-mem)
-     :used (mb used-mem)}))
-```
-
-Four numbers: max (what the JVM is allowed to use), total (what it has claimed from the OS), free (unused within the claimed space), and used (total minus free). The `mb` helper converts bytes to megabytes with no decimal places.
-
-Note the `^long` type hint on the `mb` function parameter. Without it, the division would trigger a boxed math warning -- exactly the kind of thing the strict compilation setup from [the strict-compilation chapter](04-build-hardening.md) catches.
-
 ### The Polling Endpoint
 
 The JSON endpoint for live polling bundles everything into a flat map with numeric values:
@@ -323,7 +299,7 @@ The JSON endpoint for live polling bundles everything into a flat map with numer
      :jvm-max-mb (mb (.maxMemory runtime))}))
 ```
 
-This function returns `long` values (not formatted strings) because the JavaScript frontend needs numbers for comparison and animation. The key names match the `data-stat` attributes in the HTML, which is how the polling script knows which element to update.
+This function returns `long` values (not formatted strings) because the JavaScript frontend needs numbers for comparison and animation. The JVM memory figures are pure Java interop -- no Datomic involved -- read straight off `Runtime`: used is total minus free, and `max` is the ceiling the JVM is allowed to claim. Note the `^long` type hint on the `mb` helper: without it, the division would trigger a boxed-math warning -- exactly the kind of thing the strict compilation setup from [the strict-compilation chapter](04-build-hardening.md) catches. The key names match the `data-stat` attributes in the HTML, which is how the polling script knows which element to update.
 
 ## The Handler Layer
 
@@ -613,7 +589,7 @@ Below the stat grid, the dashboard renders two data tables. Here is the users ta
          "Active"]]]
       [:tbody.bg-surface.divide-y.divide-border
        (for [u users]
-         [:tr {:key (:user/email u)}
+         [:tr
           [:td.px-6.py-3.5.text-sm.text-text-primary (:user/email u)]
           [:td.px-6.py-3.5.text-sm.text-text-secondary
            (fmt-instant (:user/created-at u))]
@@ -649,7 +625,7 @@ And the magic links table, which includes the time-to-click metric:
          "Time to Click"]]]
       [:tbody.bg-surface.divide-y.divide-border
        (for [ml links]
-         [:tr {:key (str (:email ml) (:requested-at ml))}
+         [:tr
           [:td.px-6.py-3.5.text-sm.text-text-primary (:email ml)]
           [:td.px-6.py-3.5.text-sm.text-text-secondary
            (fmt-instant (:requested-at ml))]

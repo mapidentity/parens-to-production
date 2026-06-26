@@ -176,11 +176,9 @@
       (if user-email
         (list
           [:span
-           {:key "email"
-            :class "text-sm text-white/70 hidden sm:block"} user-email]
+           {:class "text-sm text-white/70 hidden sm:block"} user-email]
           [:form
-           {:key "out"
-            :method "POST"
+           {:method "POST"
             :action "/auth/logout"}
            [:button
             {:type "submit"
@@ -392,11 +390,9 @@
       ;; oldest → newest (lineage is parent-first, so reverse for root-first)
       (->> (reverse lineage)
            (map-indexed (fn [i anc]
-                          (list (when (pos? (long i))
-                                  [:span.text-text-secondary {:key (str "sep" i)} "→"])
+                          (list (when (pos? (long i)) [:span.text-text-secondary "→"])
                                 [:a.text-primary-vivid.hover:text-primary
-                                 {:key (:recipe/id anc)
-                                  :href (str "/recipes/" (:recipe/id anc))}
+                                 {:href (str "/recipes/" (:recipe/id anc))}
                                  (:recipe/title anc)
                                  " "
                                  [:span.text-text-secondary
@@ -454,7 +450,7 @@
     (if (seq recipes)
       [:div.grid.gap-4.sm:grid-cols-2
        (for [r recipes]
-         ^{:key (:recipe/id r)} (recipe-card locale r))]
+         (recipe-card locale r))]
       [:p.text-text-secondary (t locale :recipe/no-recipes)])))
 
 (defn recipe-detail
@@ -507,7 +503,7 @@
       (if (seq forks)
         [:ul.space-y-2
          (for [f forks]
-           [:li {:key (:recipe/id f)}
+           [:li
             [:a.text-primary-vivid.hover:text-primary {:href (str "/recipes/" (:recipe/id f))}
              (:recipe/title f)]
             [:span.text-text-secondary.text-sm
@@ -595,7 +591,7 @@
           (let [idx (long idx)
                 latest? (= idx (dec n))
                 first? (zero? idx)]
-            [:li.mb-6.ml-6 {:key (:t v)}
+            [:li.mb-6.ml-6
              [:span.absolute.-left-1.5.flex.h-3.w-3.rounded-full.bg-primary-vivid]
              [:div.flex.flex-wrap.items-baseline.gap-x-3
               [:span.font-medium.text-text-primary
@@ -646,8 +642,7 @@
   [:div.font-mono.text-sm.rounded-md.border.border-border.overflow-hidden
    (for [[i {:keys [op text]}] (map-indexed vector diff)]
      [:div
-      {:key i
-       :class (case op
+      {:class (case op
                 :add "diff-add px-3 py-0.5"
                 :del "diff-del px-3 py-0.5"
                 "px-3 py-0.5 text-text-secondary")}
@@ -784,7 +779,7 @@
         {:data-controller "sortable"
          :data-sortable-url "/recipes/reorder"}
         (for [r recipes]
-          ^{:key (:recipe/id r)} (dashboard-recipe-item locale r))]]
+          (dashboard-recipe-item locale r))]]
       [:div.text-center.py-12
        [:p.text-text-secondary (t locale :dashboard/no-recipes)]
        [:a.mt-4.inline-block.text-sm.font-semibold.text-white.bg-primary.hover:bg-primary-vivid.px-4.py-2.rounded-md

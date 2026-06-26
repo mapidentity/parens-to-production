@@ -79,20 +79,6 @@
      :links-verified links-verified
      :terms-accepted terms-accepted}))
 
-(defn jvm-stats
-  "Returns current JVM memory usage."
-  []
-  (let [^Runtime runtime (Runtime/getRuntime)
-        max-mem (.maxMemory runtime)
-        total-mem (.totalMemory runtime)
-        free-mem (.freeMemory runtime)
-        used-mem (- total-mem free-mem)
-        mb (fn [^long n] (format "%.0f MB" (double (/ n 1048576))))]
-    {:max (mb max-mem)
-     :total (mb total-mem)
-     :free (mb free-mem)
-     :used (mb used-mem)}))
-
 (defn dashboard-stats
   "Returns raw numeric stats for the live-polling JSON endpoint."
   [db analytics-db]

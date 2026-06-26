@@ -62,7 +62,7 @@
         [:th.px-6.py-3.5.text-left.text-xs.font-medium.text-text-secondary.uppercase "Active"]]]
       [:tbody.bg-surface.divide-y.divide-border
        (for [u users]
-         [:tr {:key (:user/email u)}
+         [:tr
           [:td.px-6.py-3.5.text-sm.text-text-primary (:user/email u)]
           [:td.px-6.py-3.5.text-sm.text-text-secondary (fmt-instant (:user/created-at u))]
           [:td.px-6.py-3.5.text-sm.text-text-secondary (fmt-instant (:user/terms-accepted-at u))]
@@ -87,7 +87,7 @@
          "Time to Click"]]]
       [:tbody.bg-surface.divide-y.divide-border
        (for [ml links]
-         [:tr {:key (str (:email ml) (:requested-at ml))}
+         [:tr
           [:td.px-6.py-3.5.text-sm.text-text-primary (:email ml)]
           [:td.px-6.py-3.5.text-sm.text-text-secondary (fmt-instant (:requested-at ml))]
           [:td.px-6.py-3.5.text-sm.text-text-secondary

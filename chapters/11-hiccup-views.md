@@ -233,8 +233,8 @@ The bar itself adapts to the signed-in state. Browse is always shown; "New recip
      [:div.flex.items-center.gap-x-2
       (if user-email
         (list
-          [:span {:key "email" :class "text-sm text-white/70 hidden sm:block"} user-email]
-          [:form {:key "out" :method "POST" :action "/auth/logout"}
+          [:span {:class "text-sm text-white/70 hidden sm:block"} user-email]
+          [:form {:method "POST" :action "/auth/logout"}
            [:button {:type "submit" :class "text-sm text-white/70 hover:text-white"}
             (t locale :auth/sign-out)]])
         [:a {:href "/" :class "text-sm text-white/70 hover:text-white"}
@@ -309,7 +309,7 @@ And here is the authenticated dashboard, using `app-layout`:
       {:href "/recipes/new"} "+ " (t locale :recipe/new)]]
     (if (seq recipes)
       [:div.grid.gap-4.sm:grid-cols-2
-       (for [r recipes] ^{:key (:recipe/id r)} (recipe-card locale r))]
+       (for [r recipes] (recipe-card locale r))]
       [:div.text-center.py-12
        [:p.text-text-secondary (t locale :dashboard/no-recipes)]
        [:a.mt-4.inline-block.text-sm.font-semibold.text-white.bg-primary.hover:bg-primary-vivid.px-4.py-2.rounded-md
@@ -358,6 +358,8 @@ The pattern is consistent: gather data, render the view, wrap with `html`. No fr
 Importantly, **handlers do not branch on the request type.** There is no "is this a fetch?" check and no separate partial-vs-full code path. A handler renders one thing -- the full page -- and the dispatcher on the client extracts the part it needs. We will see why that works in a moment.
 
 ## Progressive Enhancement: the Dispatcher + Idiomorph
+
+This section builds one mechanism -- the morph dispatcher -- because the view layer needs it now: it is what makes server-rendered navigation feel in-place. It is *not* the whole progressive-enhancement story. Morphing is only the right tool for one kind of update (reconciling server-authored HTML); menus, motion, and local interactions each have a narrower correct mechanism, and choosing among them is the subject of [the progressive-enhancement chapter](17-progressive-enhancement.md), which treats this dispatcher as the top layer of a five-layer stack. Here we just build the layer.
 
 The base layout loads `dispatcher.js` as an ES module. It is the one script responsible for turning ordinary links and forms into smooth, in-place updates -- without any per-element configuration, and without changing how the server responds.
 
