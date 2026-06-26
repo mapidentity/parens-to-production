@@ -18,6 +18,7 @@
     [myapp.i18n :refer [t]]
     [myapp.recipe.core :as recipe]
     [myapp.time :as time]
+    [myapp.web.ratelimit :as ratelimit]
     [myapp.web.views :as views]
     [ring.util.response :as response])
   (:import
@@ -130,26 +131,63 @@
              "Cache-Control" "no-store"}
    :body (t (:locale request) (rand-nth tagline-keys))})
 
+(defn- normalize-email
+  "Canonicalize an email for storage and comparison: trim and lower-case.
+
+  `:user/email` is `:db.unique/identity`, and the admin gate compares
+  lower-cased, so `Foo@x.com` and `foo@x.com` must resolve to one identity or
+  we would split accounts (and risk locking the admin out). Returns nil for
+  anything without a plausible `local@domain` shape."
+  [raw]
+  (when (string? raw)
+    (let [e (str/lower-case (str/trim raw))]
+      (when (re-matches #"[^@\s]+@[^@\s]+\.[^@\s]+" e) e))))
+
+;; Coarse abuse limits for the unauthenticated send path: each sends an email
+;; to an attacker-chosen address, so an unthrottled endpoint is a mail-bombing
+;; / SMTP-abuse vector. Per-email blunts bombing one inbox; per-IP blunts
+;; spraying many addresses from one source. Tune to your sending reputation.
+(def ^:private ml-window-ms
+  (* 15 60 1000))
+(def ^:private ml-per-email
+  3)
+(def ^:private ml-per-ip
+  10)
+
 (defn request-magic-link
   "Handle a magic-link request — send the email + record the nonce, then redirect (PRG).
 
   The nonce is the one-shot key: we record it here, alongside email and
-  request-time, so verify can CAS-stamp the matching analytics entry."
+  request-time, so verify can CAS-stamp the matching analytics entry.
+
+  Always redirects to the same confirmation page regardless of outcome
+  (unknown address, malformed input, or rate-limited), so the endpoint never
+  reveals whether an address is registered or whether a send actually happened."
   [request]
-  (let [email (get-in request [:params :email])
+  (let [raw-email (get-in request [:params :email])
+        email (normalize-email raw-email)
+        ip (or (:remote-addr request) "?")
         locale (:locale request)
-        signing-key (config/get-config :signing-key)
-        base-url (config/get-config :base-url)
-        {:keys [token nonce]} (auth/create-magic-link-token signing-key email)]
-    (email/send-magic-link! locale email token base-url)
-    (analytics/record!
-      [{:magic-link/email email
-        :magic-link/nonce nonce
-        :magic-link/requested-at (time/now)}])
+        ;; Check the per-IP limit even on invalid input, so malformed-email
+        ;; spam still counts against the source.
+        ip-ok? (ratelimit/allow? (str "ml-ip:" ip) ml-per-ip ml-window-ms)
+        send?
+        (and email ip-ok? (ratelimit/allow? (str "ml-email:" email) ml-per-email ml-window-ms))]
+    (when send?
+      (let [signing-key (config/get-config :signing-key)
+            base-url (config/get-config :base-url)
+            {:keys [token nonce]} (auth/create-magic-link-token signing-key email)]
+        (email/send-magic-link! locale email token base-url)
+        (analytics/record!
+          [{:magic-link/email email
+            :magic-link/nonce nonce
+            :magic-link/requested-at (time/now)}])))
     (response/redirect
       (str
         "/auth/sent?email="
-        (java.net.URLEncoder/encode ^String email java.nio.charset.StandardCharsets/UTF_8)))))
+        (java.net.URLEncoder/encode
+          ^String (or email "")
+          java.nio.charset.StandardCharsets/UTF_8)))))
 
 (defn magic-link-sent
   "Show the confirmation page (GET after redirect)."

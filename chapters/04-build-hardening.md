@@ -323,7 +323,7 @@ Run it:
 ./lint
 ```
 
-The time-as-global grep is the script's second job, and it is worth flagging now even though the rule it enforces only makes sense once [the Datomic chapter](07-datomic.md) introduces the `myapp.time` wrapper: direct clock reads like `(Instant/now)` are Java static-method calls, which clj-kondo's `:discouraged-var` linter cannot see, so a plain grep is the enforcement. If you are following along before that chapter exists, the `clj-kondo --lint` line alone is enough; add the grep block when you add `myapp.time`.
+The script's second job -- the time-as-global grep -- enforces a rule that does not exist yet: every clock read must go through a `myapp.time` wrapper introduced in [the Datomic chapter](07-datomic.md). We flag it here only because it lives in the same `lint` script; the *why*, and the wrapper it guards, belong with that chapter, so we defer the rationale there and leave the grep inert until then. The one thing worth noting now is the mechanism: it is a plain grep precisely because direct calls like `(Instant/now)` are Java static methods that clj-kondo's `:discouraged-var` linter cannot see.
 
 ### A Custom Hook for `defn-`
 

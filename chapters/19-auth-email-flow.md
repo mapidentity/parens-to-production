@@ -115,26 +115,47 @@ With token creation (from the previous post) and email sending in place, the han
 ### Requesting a Magic Link (POST /auth/request)
 
 ```clojure
+(defn- normalize-email
+  "Canonicalize for storage and comparison: trim and lower-case.
+  Returns nil for anything without a plausible local@domain shape."
+  [raw]
+  (when (string? raw)
+    (let [e (str/lower-case (str/trim raw))]
+      (when (re-matches #"[^@\s]+@[^@\s]+\.[^@\s]+" e) e))))
+
+(def ^:private ml-window-ms (* 15 60 1000))
+(def ^:private ml-per-email 3)
+(def ^:private ml-per-ip 10)
+
 (defn request-magic-link
-  "Handle a magic-link request -- send the email + record the nonce,
-  then redirect (PRG pattern)."
+  "Send the email + record the nonce, then redirect (PRG). Always lands on
+  the same confirmation page, whatever the outcome."
   [request]
-  (let [email (get-in request [:params :email])
+  (let [email (normalize-email (get-in request [:params :email]))
+        ip (or (:remote-addr request) "?")
         locale (:locale request)
-        signing-key (config/get-config :signing-key)
-        base-url (config/get-config :base-url)
-        {:keys [token nonce]} (auth/create-magic-link-token signing-key email)]
-    (email/send-magic-link! locale email token base-url)
-    (analytics/record!
-      [{:magic-link/email email
-        :magic-link/nonce nonce
-        :magic-link/requested-at (time/now)}])
+        ip-ok? (ratelimit/allow? (str "ml-ip:" ip) ml-per-ip ml-window-ms)
+        send? (and email ip-ok?
+                   (ratelimit/allow? (str "ml-email:" email) ml-per-email ml-window-ms))]
+    (when send?
+      (let [signing-key (config/get-config :signing-key)
+            base-url (config/get-config :base-url)
+            {:keys [token nonce]} (auth/create-magic-link-token signing-key email)]
+        (email/send-magic-link! locale email token base-url)
+        (analytics/record!
+          [{:magic-link/email email
+            :magic-link/nonce nonce
+            :magic-link/requested-at (time/now)}])))
     (response/redirect
       (str "/auth/sent?email="
-           (java.net.URLEncoder/encode ^String email "UTF-8")))))
+           (java.net.URLEncoder/encode ^String (or email "") "UTF-8")))))
 ```
 
-This handler does four things: create a token (and its nonce), send the email, **record the nonce**, and redirect. The redirect is the **Post-Redirect-Get pattern**; the nonce record is what makes the link single-use.
+The happy path does four things: create a token (and its nonce), send the email, **record the nonce**, and redirect. The redirect is the **Post-Redirect-Get pattern**; the nonce record is what makes the link single-use. But two guards sit in front of it, and they matter as much as the happy path.
+
+**Normalize the address once, at the boundary.** `:user/email` is `:db.unique/identity` and the admin gate compares lower-cased, so if `Foo@x.com` and `foo@x.com` reached the database as different strings you would split one person into two accounts -- and could lock an admin out of their own dashboard. We trim and lower-case here, before the address is signed into a token, written to the log, or handed to the SMTP layer, and reject anything without a plausible `local@domain` shape rather than discovering it as a late exception inside `InternetAddress`.
+
+**Rate-limit the send, because every request emails an attacker-chosen address.** An unthrottled endpoint that mails any address on demand is a mail-bombing and SMTP-reputation hazard: a script can flood one inbox, or spray links at thousands of addresses to make your domain look like a spammer. So we cap requests per email (blunting a bombing run on one inbox) and per IP (blunting a spray from one source) over a trailing window. The per-IP check runs even on malformed input, so junk still counts against the source. The limiter (`myapp.web.ratelimit`) is a small in-process fixed-window counter -- which means it is **single-instance**; a load-balanced deployment must move the counter to a shared store (Redis, a DB table) keyed the same way, or each instance enforces only its own slice of the limit. Crucially, a rate-limited or invalid request still redirects to the *same* confirmation page: throttling must not become an oracle that tells an attacker which addresses are real or which requests were dropped.
 
 Recall from [Part 1](18-auth-tokens.md) that `create-magic-link-token` returns `{:token ... :nonce ...}`. The token goes in the email; the nonce we write to a small server-side store keyed by `:magic-link/nonce`, alongside the email and request time. (This store is the same lightweight event log the admin dashboard reads for analytics -- its schema is defined there; here we only need the nonce field.) When the user clicks the link, verification will look this record up and atomically flip it to "consumed." A second click finds it already consumed and is rejected.
 
