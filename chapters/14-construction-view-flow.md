@@ -4,6 +4,22 @@
 
 This chapter answers the targeted questions. **Flow mode** takes one rendered element and traces its value back to the query behind it. The **dossier** is a set of drill-downs for one frame: navigate a recorded value level by level, ask "why is this section empty?", find the read that produced an entity, see the markup a component became, and follow a value through every frame it touched. Every one of these is the same shape — a pure projection over the recording that `read-window` already reads — and each gets its own dev-gated `/dev/__*` endpoint. We keep building the `trace` namespace; the browser overlay that renders all of it is [the next chapter](15-construction-view-overlay.md).
 
+## One gesture, end to end
+
+Before the code, here is the whole chapter as a single moment at the keyboard, so each projection below has a place to land.
+
+The recipe index is on screen: eight cards, and the third one shows a title you think is wrong. You **Alt+click that card**. The overlay sends its `data-myapp-name` (`recipe-card`) and its DOM rank (`2`, zero-based) to `/dev/__flow`, and **flow mode** does four things at once: it resolves the click to *that* card's frame — the third element-producing `recipe-card` call in the recording, not all eight — walks its ancestor path up to the handler, reads the entity id off the card's argument, and scans every recorded Datomic read for the one whose result *contained that id*. The flow card that comes back names the suspects: this card descends from `recipe-index` under the page handler, and its data came from `all-recipes`' `d/q` and one `pull` — green, self-consistent, and, in the stale-title case, **unhelpful**, because nothing in *this* request set the title. So flow does the honest thing and hands you the entity id with a pivot to `d/history` — the write history is where that question actually lives.
+
+That is flow. The **dossier** is what you reach for next, once flow has pointed at a frame:
+
+- The `pull` result looks off, so you open it in the details pane and drill `arg0 → :recipe/ingredients → 2` one level at a time — that is **value navigation** (`/dev/__value`).
+- The card's "forked from" badge is missing, and you want to know whether a `when` swallowed it — **branches** (`/dev/__branches`) lists the conditionals that rendered nothing.
+- You want the producing read for the entity this *frame* received, not the clicked element — **source** (`/dev/__source`), the details-pane twin of flow's eid-match.
+- You want to see the element tree the component actually returned — **hiccup** (`/dev/__hiccup`).
+- You want to watch that one recipe map travel through every frame it touched — **value threading** (`/dev/__value-threads`).
+
+Every item in that list is one small projection over the recording `read-window` already holds, behind one `/dev/__*` endpoint, sharing one envelope. The rest of the chapter builds them in that order, then wires the routes.
+
 ---
 
 ## Flow: from one element to the query behind it

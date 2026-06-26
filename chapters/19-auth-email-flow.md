@@ -155,7 +155,7 @@ The happy path does four things: create a token (and its nonce), send the email,
 
 **Normalize the address once, at the boundary.** `:user/email` is `:db.unique/identity` and the admin gate compares lower-cased, so if `Foo@x.com` and `foo@x.com` reached the database as different strings you would split one person into two accounts -- and could lock an admin out of their own dashboard. We trim and lower-case here, before the address is signed into a token, written to the log, or handed to the SMTP layer, and reject anything without a plausible `local@domain` shape rather than discovering it as a late exception inside `InternetAddress`.
 
-**Rate-limit the send, because every request emails an attacker-chosen address.** An unthrottled endpoint that mails any address on demand is a mail-bombing and SMTP-reputation hazard: a script can flood one inbox, or spray links at thousands of addresses to make your domain look like a spammer. So we cap requests per email (blunting a bombing run on one inbox) and per IP (blunting a spray from one source) over a trailing window. The per-IP check runs even on malformed input, so junk still counts against the source. The limiter (`myapp.web.ratelimit`) is a small in-process fixed-window counter -- which means it is **single-instance**; a load-balanced deployment must move the counter to a shared store (Redis, a DB table) keyed the same way, or each instance enforces only its own slice of the limit. Crucially, a rate-limited or invalid request still redirects to the *same* confirmation page: throttling must not become an oracle that tells an attacker which addresses are real or which requests were dropped.
+**Rate-limit the send, because every request emails an attacker-chosen address.** An unthrottled endpoint that mails any address on demand is a mail-bombing and SMTP-reputation hazard: a script can flood one inbox, or spray links at thousands of addresses to make your domain look like a spammer. So we cap requests per email (blunting a bombing run on one inbox) and per IP (blunting a spray from one source) over a trailing window. The per-IP check runs even on malformed input, so junk still counts against the source. The limiter (`myapp.web.ratelimit`) is a small in-process fixed-window counter -- which means it is **single-instance**, a constraint worth its own short section below. Crucially, a rate-limited or invalid request still redirects to the *same* confirmation page: throttling must not become an oracle that tells an attacker which addresses are real or which requests were dropped.
 
 Recall from [Part 1](18-auth-tokens.md) that `create-magic-link-token` returns `{:token ... :nonce ...}`. The token goes in the email; the nonce we write to a small server-side store keyed by `:magic-link/nonce`, alongside the email and request time. (This store is the same lightweight event log the admin dashboard reads for analytics -- its schema is defined there; here we only need the nonce field.) When the user clicks the link, verification will look this record up and atomically flip it to "consumed." A second click finds it already consumed and is rejected.
 
@@ -168,6 +168,30 @@ Without PRG, refreshing the "check your email" page would resubmit the form and 
 3. Refreshing this page is a harmless GET -- no duplicate emails
 
 (The dispatcher from the views chapter enhances this form submission into an in-place fetch when JavaScript is available, but the server is oblivious to that -- it always renders the same full page and redirects. No `X-Enhanced` header, no content negotiation, no separate code path.)
+
+### Rate Limiting Beyond One Instance
+
+The in-process counter is the right default -- one instance, no external dependency, and rate limiting that works the moment you boot. But the moment you run two app instances behind a load balancer, each keeps its own counts, so the effective limit doubles with every replica. The fix is not to change *what* we limit, only *where the count lives*, and the call sites above already make that separation clean: every check goes through one function with one signature.
+
+```clojure
+(defn allow?
+  "True if KEY is still under LIMIT within the trailing WINDOW-MS, and counts
+   this hit. KEY already carries the dimension: \"ml-ip:1.2.3.4\", \"ml-email:a@b.com\"."
+  [key limit window-ms]
+  ...)
+```
+
+Because the *key* carries the dimension (`ml-ip:…`, `ml-email:…`) and the policy (which dimensions, what limits, what window) lives entirely in the caller, swapping the backing store is a body-only change behind that same signature. A Redis implementation is the canonical one -- a counter per key with an atomic increment and a TTL that *is* the window:
+
+```clojure
+;; INCR returns the new count; on the first hit, stamp the TTL to the window.
+(defn allow? [key limit window-ms]
+  (let [n (car/wcar conn (car/incr key))]
+    (when (= n 1) (car/wcar conn (car/pexpire key window-ms)))
+    (<= n limit)))
+```
+
+A Datomic-backed counter or a Postgres `UPDATE … RETURNING` works the same way; the only requirement is that the increment-and-read is atomic so two simultaneous requests cannot both read "under the limit." The decision the chapter made -- per-email *and* per-IP, fail-closed, same redirect either way -- is independent of all of this. That is the payoff of routing both checks through one `allow?`: the security policy is fixed in the handler, and the store is a deployment detail you change once, in one namespace, the day you add the second instance.
 
 ### The Confirmation Page (GET /auth/sent)
 

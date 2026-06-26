@@ -211,11 +211,11 @@ lhci autorun
 
 ## Hitting 100%
 
-Setting the thresholds is easy. Actually achieving them requires attention to several areas that Lighthouse checks. Here are the fixes that matter for a server-rendered Clojure app.
+Setting the thresholds is easy. The first time you point `lhci autorun` at an untreated server-rendered app, it fails -- and it fails in the same four predictable places every time, because they are exactly the things a from-scratch HTML app forgets. The useful way to learn them is the way the tool teaches them: run it, read the audit it docked you on, understand *why* it checks that, fix it, and run again to watch the number move. We will walk those four failures in roughly the order the report surfaces them, from the cheapest accessibility miss to the one that has to be designed in.
 
-### Meta Tags
+### The missing `lang`, viewport, and description
 
-Every page needs viewport and description meta tags. Without them, Lighthouse docks you on SEO and best practices. In Hiccup, the base layout handles this:
+Run the audit cold and the first things to fall are accessibility, SEO, and best practices, all on small omissions in the document head: no `lang` on `<html>`, no viewport meta, no description. Lighthouse checks these because they are not cosmetic -- `lang` is what tells a screen reader which language to pronounce and a search engine which language to index, the viewport tag is what makes the page render at device width instead of zoomed-out desktop, and the description is what a result snippet is built from. In Hiccup, the base layout fixes all three in one place:
 
 ```clojure
 (defn- base-layout
@@ -235,13 +235,11 @@ Every page needs viewport and description meta tags. Without them, Lighthouse do
       ]]))
 ```
 
-This is the same escaping `h/html` layout from [the Hiccup views chapter](11-hiccup-views.md) -- not `hiccup.page/html5`, which [the asset-pipeline chapter](22-asset-pipeline.md) deliberately dropped because it does not escape string content. The `{:lang (name locale)}` attribute on the `<html>` element is easy to miss but Lighthouse checks for it. It tells screen readers and search engines what language the page is in. The viewport meta tag ensures mobile rendering works correctly. The description meta tag satisfies SEO audits.
-
-Because these live in the shared base layout, every page gets them automatically. You set them once and never worry about a new page missing them.
+This is the same escaping `h/html` layout from [the Hiccup views chapter](11-hiccup-views.md) -- not `hiccup.page/html5`, which [the asset-pipeline chapter](22-asset-pipeline.md) deliberately dropped because it does not escape string content. Because these live in the shared base layout, every page gets them automatically, and a new page can never ship missing them. Re-run, and accessibility and SEO jump -- which surfaces the next failure, this one on performance.
 
 ### Font Display
 
-Custom fonts are a common performance pitfall. If the browser waits for a font to download before rendering text, users see a blank page (or flash of invisible text). The fix is `font-display: swap` in your `@font-face` declaration:
+The performance audit docks you on "Ensure text remains visible during webfont load," and the cause is the custom font: by default the browser blocks text rendering until the font downloads, so the user stares at a blank page (a flash of invisible text). The fix is one line -- `font-display: swap` in the `@font-face` declaration:
 
 ```css
 @font-face {
@@ -259,7 +257,7 @@ Using a variable font (the `VF` in `GeistVF.woff2`) also helps performance. Inst
 
 ### Semantic HTML
 
-Lighthouse's accessibility audits check for proper HTML semantics. A `<div>` soup application will fail. The key elements:
+With the head and the font handled, the accessibility audit's remaining deductions are structural -- and they only show up once you have real pages, because they are about the *shape* of the markup, not a tag in the head. A `<div>`-soup app fails them; Lighthouse wants the landmarks that let assistive technology navigate. The four that matter here:
 
 - Use `<main>` for the primary content area. Lighthouse checks that exactly one `<main>` element exists.
 - Use `<nav>` for navigation sections. This helps screen readers identify and skip navigation.
@@ -291,11 +289,11 @@ And forms use explicit label associations:
          :placeholder (t locale :home/email-placeholder)}]
 ```
 
-These are not difficult changes, but they are easy to forget. Lighthouse in CI catches the omission before it ships.
+These are not difficult changes, but they are easy to forget -- and Lighthouse in CI catches the omission before it ships. Re-run, and accessibility is at 100 but for one last class of failure, which is the only one you cannot retrofit with markup.
 
 ### Color Contrast
 
-Lighthouse's accessibility audit checks that text has sufficient contrast against its background, following the WCAG 2.1 guidelines. This means your color palette needs to be designed with contrast ratios in mind from the start.
+The final accessibility deductions are contrast failures: text that does not stand out enough against its background to clear WCAG 2.1's ratios. This one is different from the others -- there is no tag to add, because the fix is in the palette itself, which means it has to be designed in from the start rather than patched at the end.
 
 In the CSS theme definition:
 
@@ -311,6 +309,8 @@ In the CSS theme definition:
 The minimum ratio for normal text is 4.5:1 (AA standard). For large text it is 3:1. The `text-secondary` color at `#64748b` against a white background gives roughly a 4.6:1 ratio -- just above the threshold. If you had picked a lighter gray, Lighthouse would catch it.
 
 The lesson: pick your grays carefully, and let Lighthouse verify the math. Eyeballing contrast is unreliable.
+
+With those four classes of failure closed -- the head, the font, the landmarks, the palette -- the cold run that started red comes back green across all five URLs. The point of walking them in order is not the list itself but the loop: every score Lighthouse reports traces to a specific audit with a specific reason, and the way you get to 100 is to read the deduction, not to memorize a checklist. Which is exactly why the next step is to make that loop run on every push.
 
 ## How It Fits in CI
 

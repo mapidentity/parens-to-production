@@ -477,6 +477,24 @@ document.dispatchEvent(new CustomEvent('dispatcher:morphed', {
 
 That event is the extension point. The `live-form`, `defer-details`, `server-preview`, and `admin-stats` modules each listen for it (or for native events) and idempotently wire up the elements they care about after every morph.
 
+Concretely, a module loaded once in `<head>` looks like this -- it enhances whatever DOM is present on first load, and re-runs the same enhancement after every morph, guarding against double-wiring with a marker attribute:
+
+```javascript
+// static/js/live-form.js — loaded once; survives every morph.
+function enhance(root = document) {
+  for (const form of root.querySelectorAll('form[data-live]')) {
+    if (form.dataset.enhanced) continue;   // idempotent: never wire twice
+    form.dataset.enhanced = '1';
+    form.addEventListener('input', validate);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => enhance());
+document.addEventListener('dispatcher:morphed', () => enhance());
+```
+
+The shape is the whole point. The module never assumes it owns the lifecycle: it asks "which `form[data-live]` elements exist right now, and which have I not touched?" on both the initial load and after each morph. Idiomorph preserves the nodes it can and replaces the ones it must, so a morph may hand the module brand-new form elements (no `data-enhanced`, so they get wired) or the very same ones it saw before (already marked, so they are skipped). There is no teardown to write, because the element either survives the morph with its listener intact or is replaced wholesale and re-enhanced from scratch. That is why the contract is a single event and an idempotent `enhance` -- not a mount/unmount pair.
+
 ### Why this shape
 
 This is progressive enhancement in the literal sense. The HTML is complete and functional on its own; the dispatcher is a strict speed-up layered on top. There is no client-side router to keep in sync with the server's routes, no template duplicated between server and client, no hydration step, and no handler that has to know whether it is talking to a browser navigation or a `fetch`. Delete `dispatcher.js` and the app still works -- every link navigates, every form posts. Keep it and navigation becomes a partial DOM morph that preserves UI state.

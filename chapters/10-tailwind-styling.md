@@ -74,6 +74,29 @@ A few things to note:
 
 Below `@theme` the file carries plain CSS that does not map cleanly to utilities: a `.legal-content` block for rendering markdown documents (privacy policy, terms) with proper typography, interaction transitions (press feedback, card hover lift, a `details[open]` chevron rotation), focus-visible outlines for keyboard navigation, and the `.diff-add` / `.diff-del` styles used by the recipe version diff.
 
+## Extending the tokens, and the responsive prefixes
+
+Two things you will reach for constantly are worth showing now, because the views chapter uses both without stopping to explain them.
+
+The first is **adding a token**. There is no config file to touch and no plugin to register -- you declare a custom property in `@theme`, and Tailwind generates the matching utilities for you. Add a brand color:
+
+```css
+@theme {
+  --color-brand: #7c3aed;
+  --spacing-gutter: 1.5rem;
+}
+```
+
+and `bg-brand`, `text-brand`, and `border-brand` exist immediately, as do `p-gutter`, `gap-gutter`, and `mt-gutter`. The utility *family* follows from the token's prefix: a `--color-*` token feeds every color utility, a `--spacing-*` token feeds padding, margin, and gap. That is the whole extension model -- name a value once, use it everywhere, and the dead-class problem from the BEM option never appears because the utility only exists while the token does.
+
+The second is **responsive prefixes**. Any utility can be gated behind a breakpoint by prefixing it with `sm:`, `md:`, `lg:`, and so on, and the prefixed form is the same utility wrapped in a `min-width` media query. A grid that stacks on phones and spreads to three columns on wider screens is one element:
+
+```clojure
+[:div.grid.grid-cols-1.md:grid-cols-3.gap-gutter ...]
+```
+
+`grid-cols-1` always applies; `md:grid-cols-3` takes over once the viewport crosses the `md` breakpoint. There is nothing new to learn per breakpoint -- the same vocabulary, conditionally applied -- and you will see these prefixes throughout the Hiccup views that follow.
+
 ## The dev stylesheet
 
 First, generate the stylesheet once so there is something to serve. The standalone CLI takes an input file and an output path:

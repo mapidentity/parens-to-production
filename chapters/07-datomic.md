@@ -239,7 +239,7 @@ The `time/now` value (a `java.time.Instant`) gets transparently converted to a `
 
 ## Query Patterns
 
-Datomic queries use Datalog, a declarative query language. If you have used SQL, the mental model is different but not difficult. Instead of thinking in tables and joins, you think in entity-attribute-value triples.
+Datomic queries use Datalog, a declarative query language. If you have used SQL, the mental model is different but not difficult. Where SQL stores data in tables of rows and columns, Datomic stores it as a single flat set of **entity-attribute-value** facts -- one row per fact, not per record. A user is not a row in a `users` table; it is a handful of facts that share an entity id: `[42 :user/email "alice@example.com"]`, `[42 :user/active? true]`, and so on. A query, then, is not a `SELECT` over tables with `JOIN`s on keys -- it is a set of *patterns* with logic variables (the `?`-prefixed symbols) that Datomic unifies against those facts. A join across "tables" is just two patterns sharing a variable, with no foreign keys to declare. Read the first query below with that in mind and the rest follow.
 
 **Find an entity by attribute:**
 

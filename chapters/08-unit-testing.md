@@ -28,37 +28,14 @@ All shared test infrastructure lives in a single file: `test/myapp/test_helpers.
     [datomic.api :as d]
     [myapp.config :as config]
     [myapp.db.core :as db]
-    [myapp.db.schema :as schema]
-    ;; only needed for the optional analytics fixture below;
-    ;; this namespace arrives in the admin dashboard chapter. Drop this line if your app has no analytics DB.
-    [myapp.analytics.db :as analytics]))
+    [myapp.db.schema :as schema]))
 ```
+
+This `ns` form compiles and runs as-is. If your app later grows a second database -- ours gains an analytics DB in [the admin dashboard chapter](21-admin-dashboard.md) -- you add one require and one fixture at that point; we show both together [below](#a-second-database-the-analytics-fixture) so the pattern lives in one place. Nothing here depends on it.
 
 ### The Database Fixture
 
-The centerpiece is `with-test-db`, which creates a throwaway in-memory Datomic database per test, binds `*conn*`, and stubs `db/get-connection` so application code transparently hits the test DB. We built it in [the Datomic chapter](07-datomic.md#isolated-test-databases) -- a unique `datomic:mem://` URI per test (via `System/nanoTime`, so parallel runs never collide), the full schema transacted, and the database deleted when the test function returns -- so we will not reprint it here. This chapter is about the infrastructure that surrounds it: a parallel fixture for the analytics database, deterministic config, and a request builder.
-
-The same pattern applies to the analytics database, if your app has one. It uses the `analytics` alias from the `:require` above (`myapp.analytics.db`, which we build in [the admin dashboard chapter](21-admin-dashboard.md) -- omit both the require and this fixture until then):
-
-```clojure
-(def ^:dynamic *analytics-conn*
-  "Bound to a fresh analytics Datomic connection per test."
-  nil)
-
-(defn with-test-analytics-db
-  "Fixture: creates a fresh in-memory analytics DB per test.
-   Binds *analytics-conn* and stubs analytics/get-connection and analytics/get-db."
-  [f]
-  (let [uri (str "datomic:mem://myapp-analytics-test-" (System/nanoTime))]
-    (d/create-database uri)
-    (let [conn (d/connect uri)]
-      @(d/transact conn analytics/schema)
-      (binding [*analytics-conn* conn]
-        (with-redefs [analytics/get-connection (fn [] *analytics-conn*)
-                      analytics/get-db (fn [] (d/db *analytics-conn*))]
-          (f)))
-      (d/delete-database uri))))
-```
+The centerpiece is `with-test-db`, which creates a throwaway in-memory Datomic database per test, binds `*conn*`, and stubs `db/get-connection` so application code transparently hits the test DB. We built it in [the Datomic chapter](07-datomic.md#isolated-test-databases) -- a unique `datomic:mem://` URI per test (via `System/nanoTime`, so parallel runs never collide), the full schema transacted, and the database deleted when the test function returns -- so we will not reprint it here. This chapter is about the infrastructure that surrounds it: deterministic config and a request builder, plus -- for apps that grow a second database -- a parallel fixture you can copy when you need it.
 
 ### Deterministic Config
 
@@ -132,6 +109,32 @@ Usage in tests:
 ```
 
 The `cond->` threading macro keeps it clean -- optional keys are only added when provided.
+
+### A Second Database: The Analytics Fixture
+
+You do not need this yet, and you can skip it until you do. When an app grows a second Datomic database, the same fixture pattern scales to it unchanged -- a fresh in-memory instance per test, stubbed at the connection boundary. Ours gains an analytics database in [the admin dashboard chapter](21-admin-dashboard.md); when you reach it, add `[myapp.analytics.db :as analytics]` to the `ns` require above and this fixture beside `with-test-db`:
+
+```clojure
+(def ^:dynamic *analytics-conn*
+  "Bound to a fresh analytics Datomic connection per test."
+  nil)
+
+(defn with-test-analytics-db
+  "Fixture: creates a fresh in-memory analytics DB per test.
+   Binds *analytics-conn* and stubs analytics/get-connection and analytics/get-db."
+  [f]
+  (let [uri (str "datomic:mem://myapp-analytics-test-" (System/nanoTime))]
+    (d/create-database uri)
+    (let [conn (d/connect uri)]
+      @(d/transact conn analytics/schema)
+      (binding [*analytics-conn* conn]
+        (with-redefs [analytics/get-connection (fn [] *analytics-conn*)
+                      analytics/get-db (fn [] (d/db *analytics-conn*))]
+          (f)))
+      (d/delete-database uri))))
+```
+
+It is the same shape as `with-test-db`, pointed at a second URI and a second pair of stubs. That is the whole point: one fixture pattern, however many databases your app keeps.
 
 ## Example Test: Configuration
 
@@ -460,3 +463,40 @@ The infrastructure supports more:
 The investment is small -- one helpers file, two test files, and a couple of aliases in `deps.edn` (the test commands run directly, no wrapper script). But it establishes patterns that scale. Every new feature you add gets tested against this infrastructure, and you find out in seconds whether it works.
 
 Next time you sit down to add a feature, you write the test first (or at least alongside), and you have everything you need to run it.
+
+## The Foundation So Far
+
+This chapter closes the book's first movement. Six chapters in, before a single feature exists, you have built the scaffold every later chapter stands on -- and it is worth pausing to see it whole, because from here the book turns from *infrastructure* to *the application itself*.
+
+Here is what is running when you start the app in development:
+
+```
+devcontainer (Ch. 3)
+├── Caddy ──────── TLS termination, routes / to the app, /styles.css to static
+├── Mailpit ────── catches outbound mail (used by auth, later)
+└── app process (clj -M:dev:repl)
+    ├── http-kit server ........ Ring + reitit routing          (Ch. 5)
+    ├── nREPL :7888 ............ your editor connects here       (Ch. 5)
+    ├── file watcher + WS ...... save a file → browser reloads   (Ch. 6)
+    └── Datomic Peer (in-mem) .. schema transacted on boot       (Ch. 7)
+```
+
+And here is the sequence that gets you there, each step the subject of a chapter:
+
+1. **Open the repo in the devcontainer** ([Ch. 3](03-devcontainer.md)) -- the same Docker image, JDK, Node, Caddy, Mailpit, and TLS certificates on every machine. "Works on mine" becomes "works on ours."
+2. **The build refuses to compile sloppy code** ([Ch. 4](04-build-hardening.md)) -- reflection and boxed-math warnings, formatting, and lint are gates, not suggestions, from the first commit.
+3. **`clj -M:dev:repl` starts the server** ([Ch. 5](05-web-server.md)) -- http-kit serving a reitit route tree, configured by Aero profiles, with a `curl`-able health endpoint.
+4. **The browser stays in sync as you edit** ([Ch. 6](06-live-reload.md)) -- a file watcher reloads the one changed file and pushes a refresh down a WebSocket.
+5. **The database is live and time-aware** ([Ch. 7](07-datomic.md)) -- a Datomic schema, the `java.time` bridge, and a fresh in-memory database for every test.
+6. **A test harness surrounds all of it** (this chapter) -- per-test databases, deterministic config, a request builder, and coverage that can only climb.
+
+The checklist, then -- everything below is true before we render our first real page:
+
+- [x] Reproducible environment, identical for every developer and for CI
+- [x] Strict compilation, formatting, and lint enforced as build gates
+- [x] A running web server with data-driven routing and profile-based config
+- [x] A tight feedback loop: save a file, see the result in the browser
+- [x] A time-aware database with isolated, instant test instances
+- [x] Test infrastructure that every feature from here inherits for free
+
+What is *not* here yet is the application: no views, no styling, no authentication, no real domain. That is the rest of the book. The next movement puts content on the screen -- internationalization, Tailwind, and the server-rendered Hiccup views that the live-reload loop above was built to make a pleasure to write.

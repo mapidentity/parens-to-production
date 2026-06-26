@@ -575,7 +575,20 @@ The feature is structurally absent, not merely disabled.
 ## Trade-offs & limitations, in one place
 
 - **Per-instance precision has a floor.** Distinct call sites are distinguishable; instances of a *single* looped call are not (they share a call site) — and highlighting all of them is the correct semantics, not a defect.
-- **Definition vs. call site is an intent, resolved by position.** A cursor in a component's body means "show me my output" (component/element); a cursor on a call means "show me what this produces" (call site). The breadcrumb's λ/() makes the same choice clickable in the forward direction. Navigating to *the specific call site that produced one clicked instance* is the one thing that needs the call-site tag we added — and it now works.
+- **Definition vs. call site is an intent, resolved by position.** A cursor in a component's body means "show me my output" (component/element); a cursor on a call means "show me what this produces" (call site). The breadcrumb's λ/() makes the same choice clickable in the forward direction. Navigating to *the specific call site that produced one clicked instance* is the one thing that needs the call-site tag we added — and it now works. Concretely, with a dashboard rendering four `stat-card`s, the cursor's position picks the intent in the reverse direction:
+
+  ```clojure
+  (defn stat-card [label n]        ; ← cursor here lights up ALL four cards (the component, every instance)
+    [:div.rounded-lg.p-4            ; ← cursor here lights up just this element, across all four
+     [:dt label]
+     [:dd n]])
+
+  ;; ...in the dashboard view:
+  (stat-card "Total Users" users)  ; ← cursor here lights up only THIS card — one instance, via the call-site tag
+  (stat-card "Active" active)
+  ```
+
+  Three positions, three answers — the definition (all instances), one element within it (that element in all instances), and one call (exactly one rendered card). The looped case is the floor noted above: a single `(for [r recipes] (recipe-card r))` is one call site, so a cursor on it lights up the whole family, not iteration 3.
 - **Source rewriting is conservative.** Call-site wrapping refuses threading/`quote` contexts and reserved names; it loses precision in component-via-threading composition (rare in views) to guarantee it never corrupts code.
 - **Editor coupling.** Navigation pushes to a connected Joyride agent (exact window, exact range, works in remote containers); with no agent connected, the browser reports "no editor connected" rather than guessing. Both directions need the agent — an earlier `code -g` fallback for the forward direction was dropped because landing it in the right window required a fragile newest-IPC-socket sniff.
 - **The dev WebSocket is unauthenticated.** Anything that can reach `localhost:3000/dev/ws` can ask to open a (src-confined) file or push a cursor. That is acceptable for a dev-only, loopback service; don't expose the dev server.

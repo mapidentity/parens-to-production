@@ -10,8 +10,8 @@ In this post we will build a running web server with routing, configuration, and
 Here is what we are using and why:
 
 - **Ring** -- The HTTP abstraction. Requests and responses are plain Clojure maps. Middleware are functions that wrap handlers. This is the foundation that nearly every Clojure web library builds on.
-- **http-kit** -- A fast, lightweight HTTP server with WebSocket support. It implements the Ring spec, starts in milliseconds, and stays out of your way.
-- **Reitit** -- Data-driven routing from Metosin. Routes are vectors, not macros. You can inspect, transform, and test your route tree as data.
+- **http-kit** -- A fast, lightweight HTTP server with WebSocket support. The usual alternatives are Jetty (via `ring-jetty-adapter`) and Undertow (via Aleph or `luminus`); both are excellent and battle-tested. We pick http-kit for two concrete reasons: it is a single, self-contained dependency with no servlet container to configure, and its WebSocket support is built in rather than bolted on -- which matters immediately, because the very next chapter pushes live-reload events to the browser over a WebSocket on this same server. It implements the Ring spec, starts in milliseconds, and stays out of your way.
+- **Reitit** -- Data-driven routing from Metosin. The long-standing alternative is Compojure, which expresses routes as macros (`(GET "/foo" [] ...)`); Reitit expresses them as plain vectors instead. That difference is the reason we choose it: a route tree that is *data* can be inspected, transformed, and tested without being executed -- the testing chapter walks the whole tree as a value to assert every route resolves, which a macro-based router cannot offer.
 - **Aero** -- Configuration as EDN with profile support (`:dev`, `:prod`). Environment variables, defaults, and profile switching without a framework.
 
 ## deps.edn: Your Project File
