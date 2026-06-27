@@ -1,7 +1,7 @@
 # Building a Clojure/Datomic SaaS from Scratch
 
 A hands-on, chapter-by-chapter guide to building a production-grade SaaS
-application in Clojure and Datomic — from a reproducible development
+application in Clojure and Datomic -- from a reproducible development
 environment all the way to automated CI/CD deployment.
 
 Each chapter is self-contained but builds on the last. Use the sidebar to

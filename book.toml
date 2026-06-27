@@ -5,6 +5,7 @@ language = "en"
 src = "chapters"
 
 [output.html]
+smart-punctuation = true
 default-theme = "navy"
 preferred-dark-theme = "navy"
 git-repository-url = ""
