@@ -24,11 +24,11 @@ Replace `tag-hiccup` with "open a span / run / close a span," thread a dynamic `
 
 You could push harder — instrument more, propagate context across threads, capture argument values without pinning them — but at that point you are rebuilding an omniscient debugger by hand. Someone already built one, at the compiler level, and it sees *every* sub-expression.
 
-> **Decision — adopt the recording, build the correlation.** The right division of labour is: let **ClojureStorm** record the execution (it is unbeatable at that, and goes deeper than any var-wrapping we'd write); keep the *correlation to the rendered DOM* ours, because nobody else has our welded coordinate. We adopt the engine and build the part that is genuinely new. The seam between the two is a string — `"ns/fn"` — not a shared mechanism.
+> **Decision — adopt the recording, build the correlation.** The right division of labor is: let **ClojureStorm** record the execution (it is unbeatable at that, and goes deeper than any var-wrapping we'd write); keep the *correlation to the rendered DOM* ours, because nobody else has our welded coordinate. We adopt the engine and build the part that is genuinely new. The seam between the two is a string — `"ns/fn"` — not a shared mechanism.
 
 ## ClojureStorm as a dev-only compiler
 
-[FlowStorm](https://www.flow-storm.org/) is a time-travel debugger for Clojure. Its companion, **ClojureStorm**, is a drop-in build of the Clojure compiler that emits instrumentation into every namespace it compiles, recording each sub-expression's value as your program runs. You opt in by *swapping the compiler*, which sounds drastic until you realise it is exactly the dev/prod split we already use everywhere else — a `:dev`-only dependency. Here is the whole alias in `deps.edn`:
+[FlowStorm](https://www.flow-storm.org/) is a time-travel debugger for Clojure. Its companion, **ClojureStorm**, is a drop-in build of the Clojure compiler that emits instrumentation into every namespace it compiles, recording each sub-expression's value as your program runs. You opt in by *swapping the compiler*, which sounds drastic until you realize it is exactly the dev/prod split we already use everywhere else — a `:dev`-only dependency. Here is the whole alias in `deps.edn`:
 
 ```clojure
 ;; ClojureStorm: a DEV-ONLY compiler swap that records execution for the
@@ -122,7 +122,7 @@ A couple of one-liners get us oriented on the current thread:
 (defn- timeline-len [tid] (if-let [tl (ia/get-timeline tid)] (count tl) 0))
 ```
 
-Reading one request is reading a **slice** of one thread's timeline. We realise the slice once, aligned back to absolute indices, and index the fn-calls by their identity. This `read-window` is the workhorse every projection starts from — in this chapter and the next:
+Reading one request is reading a **slice** of one thread's timeline. We realize the slice once, aligned back to absolute indices, and index the fn-calls by their identity. This `read-window` is the workhorse every projection starts from — in this chapter and the next:
 
 ```clojure
 (defn- read-window [tid start end]
@@ -187,7 +187,7 @@ Where do `start` and `end` come from? A Ring middleware, placed outermost, recor
       (trace-request handler req))))
 ```
 
-Two helpers it leans on — recognise an HTML response, and weld the trace id onto its `<html>` so the browser can find it:
+Two helpers it leans on — recognize an HTML response, and weld the trace id onto its `<html>` so the browser can find it:
 
 ```clojure
 (defn- html? [resp]
@@ -279,9 +279,9 @@ Every projection emits **ValueRefs**: small JSON maps describing a recorded valu
     (catch Throwable _ {:kind "opaque" :type (try (tname v) (catch Throwable _ "?"))})))
 ```
 
-Three details earn their keep. A db becomes `{:kind "db" :basis-t …}` — never `(count)`ed or printed. A `counted?` collection reports its size, but a bare `seq?` is labelled `(lazy)` *without* realizing it (forcing a recorded lazy seq could run side effects or blow up). And `safe-eid` notices when a map is a Datomic entity (`:db/id` present), stamping `:eid` — the hook the flow drill-down will match on next chapter. Everything is wrapped in `try` because we are summarizing *arbitrary recorded values*, some of which throw on `count`/`print`/`compare`.
+Three details earn their keep. A db becomes `{:kind "db" :basis-t …}` — never `(count)`ed or printed. A `counted?` collection reports its size, but a bare `seq?` is labeled `(lazy)` *without* realizing it (forcing a recorded lazy seq could run side effects or blow up). And `safe-eid` notices when a map is a Datomic entity (`:db/id` present), stamping `:eid` — the hook the flow drill-down will match on next chapter. Everything is wrapped in `try` because we are summarizing *arbitrary recorded values*, some of which throw on `count`/`print`/`compare`.
 
-The bounded printer and a datalog-friendly form printer round out the helpers:
+The bounded printer and a Datalog-friendly form printer round out the helpers:
 
 ```clojure
 (defn- tname ^String [v] (.getName (class v)))
@@ -361,7 +361,7 @@ But a raw `(d/q '[...] db)` is still an **expression** inside an instrumented fu
        (sort-by :call-idx)))
 ```
 
-This *unifies* the two cases instead of special-casing them. The `d/pull` inside `pull*` and the raw `d/q` in `all-recipes` are both just `d/*` expressions; each becomes a `db-op` attached to the function it ran in. And because we have the sub-form, we have **the real datalog as data** — not "a query happened" but the query itself.
+This *unifies* the two cases instead of special-casing them. The `d/pull` inside `pull*` and the raw `d/q` in `all-recipes` are both just `d/*` expressions; each becomes a `db-op` attached to the function it ran in. And because we have the sub-form, we have **the real Datalog as data** — not "a query happened" but the query itself.
 
 The basis-t is the other half of a useful db-op. We want the t the read actually saw — and for a time-travel read that is *not* the live basis-t. `db-t` extracts the meaningful point of a db value, and `nearest-db-basis` walks up the call tree to find the db a frame was handed:
 
@@ -395,7 +395,7 @@ The basis-t is the other half of a useful db-op. We want the t the read actually
      :result (summarize (:result e))}))
 ```
 
-So a `version-history` frame handed an `as-of` db passes that db down to its `pull`, and `nearest-db-basis` picks up the historical t automatically — each query is labelled with the point it actually read at:
+So a `version-history` frame handed an `as-of` db passes that db down to its `pull`, and `nearest-db-basis` picks up the historical t automatically — each query is labeled with the point it actually read at:
 
 ```
 recipe-by-id     (d/entid db [:recipe/id id])                                         @t1031
@@ -491,7 +491,7 @@ mw (if-let [wt (when (System/getProperty "clojure.storm.instrumentEnable")
 
 ## What you now have
 
-With one dev alias, the `trace` namespace, and one route, a request under `clojure -M:dev:storm:repl` now records itself, and `GET /dev/__trace/:id` returns the whole construction as JSON: the middleware-to-handler-to-domain-to-view call tree, each frame's recorded args and return summarized as ValueRefs, every Datomic read as real datalog at its basis-t — including the raw `d/as-of`/`d/history` time-travel reads a wrapper allowlist would miss — plus an N+1 signal, both lexical and temporal parentings, and the throw site if the request 500'd.
+With one dev alias, the `trace` namespace, and one route, a request under `clojure -M:dev:storm:repl` now records itself, and `GET /dev/__trace/:id` returns the whole construction as JSON: the middleware-to-handler-to-domain-to-view call tree, each frame's recorded args and return summarized as ValueRefs, every Datomic read as real Datalog at its basis-t — including the raw `d/as-of`/`d/history` time-travel reads a wrapper allowlist would miss — plus an N+1 signal, both lexical and temporal parentings, and the throw site if the request 500'd.
 
 ```
 wrap-locale › … › recipes-index

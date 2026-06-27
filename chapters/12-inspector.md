@@ -81,11 +81,11 @@ Put the facts together:
 
 There is no separate index to keep in sync and no fragile matching of DOM nodes back to source. The position *is* part of the value.
 
-### Recognising an element, and stamping the file onto it
+### Recognizing an element, and stamping the file onto it
 
 tools.reader gives `:line`/`:column` but not which *file* a form came from, and a page mixes elements from many namespaces. So as we load each file we stamp the file path onto every element literal.
 
-First, recognise an element literal — not every vector is Hiccup (Datomic pull patterns `[:db/id …]`, `let` bindings, tagged tuples). We tag only vectors whose head is an unnamespaced HTML/SVG tag keyword:
+First, recognize an element literal — not every vector is Hiccup (Datomic pull patterns `[:db/id …]`, `let` bindings, tagged tuples). We tag only vectors whose head is an unnamespaced HTML/SVG tag keyword:
 
 ```clojure
 (ns myapp.web.inspector
@@ -265,7 +265,7 @@ Now the two cases resolve correctly, and they are *the same mechanism*:
 - **A single call in a loop** (`(for [r recipes] (recipe-card r))`): one source site, so all its instances share one `data-myapp-callsite` — and lighting up all of them is *correct*. One place in the code, many renders.
 
 > **Trade-offs — call-site tagging.**
-> - **Per-instance precision has a floor.** A looped call can't distinguish iteration 3 from iteration 5 — they share a call site. That is the honest limit of "one source location → N renders," and the behaviour (highlight the whole family) is the right answer, not a bug.
+> - **Per-instance precision has a floor.** A looped call can't distinguish iteration 3 from iteration 5 — they share a call site. That is the honest limit of "one source location → N renders," and the behavior (highlight the whole family) is the right answer, not a bug.
 > - **Rewriting source is delicate.** We only wrap unqualified calls to the file's own fns, and we refuse to descend into threading/`quote` forms (where wrapping would change semantics). Reserved names (`recur`, `let`, …) are excluded so we can never move a call out of tail position. The conservative guard loses call-site precision for components composed *through* a threading macro — which view code essentially never does — in exchange for never corrupting code.
 > - **It is metadata-preserving by construction.** Every rebuilt collection re-attaches `(meta form)`; the wrapper inherits the call's reader span. If you get this wrong you silently break the element layer, so test that `data-myapp-src` still appears after wrapping.
 
@@ -454,7 +454,7 @@ On the server, the same `/dev/ws` handler now tags each client's role (browser b
           (notify-highlight! resolved))))))                  ;; broadcast to browsers
 ```
 
-The editor agent piggybacks on Joyride over this WebSocket relay, and making it survive a REPL/server restart on its own took real care, because the VS Code extension host is a Node (undici) runtime with a few non-obvious socket behaviours: it fires `close` for a dropped link but only `error` for a failed connect (so both must schedule a reconnect), and calling `.close()` from inside an `error`/`close` handler re-fires the event synchronously and wedges the host. The reconnect logic that handles this — current-socket guarding, dedup, backoff — lives in `dev/inspector_load.clj` and `src/myapp/web/inspector.js`; read the exact code there rather than reconstructing it from prose. The browser side needs none of it: Chromium fires the events reliably and `.close()` is async, so the overlay reconnects on `close`/`error` with no heartbeat. (Two things we tried and removed, in case you reach for them: a per-highlight sequence number is pointless on an already-ordered socket and stalls when a hot-reload resets the counter; and a browser-side ping/pong heartbeat is redundant once the events prove reliable.)
+The editor agent piggybacks on Joyride over this WebSocket relay, and making it survive a REPL/server restart on its own took real care, because the VS Code extension host is a Node (undici) runtime with a few non-obvious socket behaviors: it fires `close` for a dropped link but only `error` for a failed connect (so both must schedule a reconnect), and calling `.close()` from inside an `error`/`close` handler re-fires the event synchronously and wedges the host. The reconnect logic that handles this — current-socket guarding, dedup, backoff — lives in `dev/inspector_load.clj` and `src/myapp/web/inspector.js`; read the exact code there rather than reconstructing it from prose. The browser side needs none of it: Chromium fires the events reliably and `.close()` is async, so the overlay reconnects on `close`/`error` with no heartbeat. (Two things we tried and removed, in case you reach for them: a per-highlight sequence number is pointless on an already-ordered socket and stalls when a hot-reload resets the counter; and a browser-side ping/pong heartbeat is redundant once the events prove reliable.)
 
 ### The browser highlighter
 

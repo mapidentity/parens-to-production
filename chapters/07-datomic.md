@@ -364,7 +364,7 @@ Using it in a test namespace is one line:
         (is (instance? Instant created))))))
 ```
 
-These tests verify the full roundtrip: write with `java.time.Instant`, read back with `java.time.Instant`, with Datomic storing `java.util.Date` internally. The test suite never touches `java.util.Date` -- the bridge is invisible.
+These tests verify the full round trip: write with `java.time.Instant`, read back with `java.time.Instant`, with Datomic storing `java.util.Date` internally. The test suite never touches `java.util.Date` -- the bridge is invisible.
 
 Each test gets its own database, runs in milliseconds, and cleans up after itself. No Docker containers, no test database provisioning, no cleanup scripts.
 

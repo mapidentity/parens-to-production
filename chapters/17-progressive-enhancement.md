@@ -13,7 +13,7 @@ We call the mapping the *progressive-enhancement stack*, and it has five layers,
 | 0 | Server-rendered HTML | Works with no JS at all -- SEO, the no-JS baseline, the source of truth |
 | 1 | CSS / HTML platform primitives | Ephemeral UI state: menus, modals, disclosure, enter/leave motion |
 | 2 | View Transitions | Animate any DOM change -- cross-fade, shared-element FLIP |
-| 3 | JS islands (the controller registry) | Local behaviour CSS can't express -- pointer dragging, polling |
+| 3 | JS islands (the controller registry) | Local behavior CSS can't express -- pointer dragging, polling |
 | 4 | Morph | Reconcile server-authored updates non-destructively |
 
 The crucial property is the ordering. Every feature is built first at Layer 0, and each higher layer is *added on top* as an enhancement that a capable browser opportunistically takes. Disable JavaScript and Layer 0 still works. Disable the View Transitions API and the same update applies instantly. The layers are not alternatives you pick between; they are sediment.
@@ -46,7 +46,7 @@ Everything starts as plain server-rendered HTML with real links and real forms. 
    [:button {:type "submit" :name "dir" :value "down" :aria-label (t locale :dashboard/move-down)} "▼"]])
 ```
 
-With JavaScript off, clicking ▲ posts `id` and `dir=up`, the server moves the recipe one slot and redirects back to the dashboard (the Post/Redirect/Get pattern), and the page reloads in the new order. It is not glamorous, but it *works* -- it is keyboard-accessible, it is screen-reader-labelled, and it needs nothing from the client. Everything we add above this layer is gravy on a meal that is already complete.
+With JavaScript off, clicking ▲ posts `id` and `dir=up`, the server moves the recipe one slot and redirects back to the dashboard (the Post/Redirect/Get pattern), and the page reloads in the new order. It is not glamorous, but it *works* -- it is keyboard-accessible, it is screen-reader-labeled, and it needs nothing from the client. Everything we add above this layer is gravy on a meal that is already complete.
 
 The canonical state behind it is a single new attribute and two pure mutations. Order is a `:recipe/position` long, assigned on create and rewritten on reorder:
 
@@ -113,7 +113,7 @@ The popover's open/close animation -- including the transition *out of* `display
 }
 ```
 
-Destructive actions get a native `<dialog>` confirm. The dialog element is Layer 1; the small amount of glue that shows it before a submit is the first taste of Layer 3 -- a *controller*, which the next section formalises. Notice it still degrades: with JavaScript off, the delete form simply submits, which is the Layer 0 behaviour.
+Destructive actions get a native `<dialog>` confirm. The dialog element is Layer 1; the small amount of glue that shows it before a submit is the first taste of Layer 3 -- a *controller*, which the next section formalizes. Notice it still degrades: with JavaScript off, the delete form simply submits, which is the Layer 0 behavior.
 
 `:has()` earns its place too. The dashboard's drag-reorder feel -- siblings gliding aside, the dragged row lifting and tilting, the rest receding -- is expressed almost entirely in CSS, with JavaScript reaching in only to set a single custom property:
 
@@ -173,9 +173,9 @@ When the list re-renders in a new order, the browser matches each old name to it
 
 ## Layer 3: islands, and the registry that runs them
 
-Some behaviour genuinely needs JavaScript: pointer math for dragging, a polling timer, a dialog shown before a submit. The mistake is to let each of these grow its own ad-hoc lifecycle -- find my elements on load, find them *again* after every morph, guard against double-wiring, tear down on the way out. That logic is identical for every behaviour, and re-implementing it per module is how you get four subtly different versions of the same bug.
+Some behavior genuinely needs JavaScript: pointer math for dragging, a polling timer, a dialog shown before a submit. The mistake is to let each of these grow its own ad-hoc lifecycle -- find my elements on load, find them *again* after every morph, guard against double-wiring, tear down on the way out. That logic is identical for every behavior, and re-implementing it per module is how you get four subtly different versions of the same bug.
 
-So Layer 3 is a single small **controller registry** that owns the lifecycle, and behaviours that declare only `connect`/`disconnect`:
+So Layer 3 is a single small **controller registry** that owns the lifecycle, and behaviors that declare only `connect`/`disconnect`:
 
 ```javascript
 export function register(name, controller) {
@@ -203,7 +203,7 @@ document.addEventListener('DOMContentLoaded', scan);
 document.addEventListener('dispatcher:morphed', scan);
 ```
 
-`scan` runs on first load and on the `dispatcher:morphed` event the morph layer already fires. It connects elements that match and have not been connected, and disconnects those that no longer match -- whether because they left the DOM or because their marker was removed. The whole island layer hangs on that one event, and every behaviour becomes a few lines.
+`scan` runs on first load and on the `dispatcher:morphed` event the morph layer already fires. It connects elements that match and have not been connected, and disconnects those that no longer match -- whether because they left the DOM or because their marker was removed. The whole island layer hangs on that one event, and every behavior becomes a few lines.
 
 > **The unified thing is the lifecycle, not the attribute.** A controller defaults to matching `data-controller="name"`, but it can override `selector` to keep an established marker of its own. The four enhancers in this codebase -- live-preview forms, deferred `<details>`, out-of-form previews, and the admin stat poller -- were each migrated onto the registry without changing the HTML they match. What was duplicated was never the attribute; it was the find-on-load-and-after-morph dance, and that now lives in exactly one place.
 
