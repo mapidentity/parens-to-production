@@ -193,7 +193,13 @@ substance; these are calibration and polish. Priority order:
       (literal `[42 :user/email …]` facts shown), but the *first query* wasn't
       bridged to it and `:in $ ?email` went unexplained; added a paragraph reading
       the `:where` pattern positionally against the fact shape and explaining
-      `:in`/`$`. (c) ch. 12 keystone promotion still open.
+      `:in`/`$`. (c) DONE — the insight was already well-built (a section titled
+      "The insight…", two stacked facts, a synthesis blockquote, the "position *is*
+      part of the value" punchline), but it built claim-last, so a reader waded
+      through both facts not knowing the destination. Changed the section's lead
+      line to state the keystone as a thesis up front ("a Hiccup element's source
+      position can ride on the runtime value itself — no separate index"), so Facts
+      one/two now read as proof of a stated claim and it bookends with the punchline.
 - [ ] **"When not to use this" notes** for the inspector (ch. 12) and construction
       view (ch. 15). Keep them positive (the parity + ownership thesis stands), but
       a candid ROI caveat makes the showpieces *more* credible. Reconcile with the

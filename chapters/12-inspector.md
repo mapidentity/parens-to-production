@@ -49,7 +49,7 @@ The element coordinate is the hard, interesting one — it did not exist for Hic
 
 ### The insight: `tools.reader` keeps your line numbers, and so does the compiler
 
-Two facts, stacked, make element-level mapping possible.
+The keystone is this: a Hiccup element's source position can ride on the runtime value itself — no separate index, no matching DOM nodes back to source after the fact. That rests on two facts, stacked.
 
 **Fact one:** `clojure.tools.reader` — a pure-Clojure reader maintained by core — *does* attach `:line`/`:column`/`:end-line`/`:end-column` to every nested form, vectors included, at every depth:
 
