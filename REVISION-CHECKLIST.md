@@ -155,4 +155,69 @@ Per chapter:
       (locale is the only negotiated header). Not redundant. (Original checklist
       said "ch. 9" — that was a mis-attribution; the Accept-*Language* header in
       ch. 9 is a separate, legitimately-recurring topic.)
+
+---
+
+## Second pass — publisher's developmental review (2026-06-27)
+
+A fresh read against the question "would an O'Reilly/Manning editor sign and ship
+this?" Verdict: yes, with margin-level refinements. The three blockers above are
+substance; these are calibration and polish. Priority order:
+
+- [x] **Fix the chapter-count claim.** Root `README.md` said "20 chapters"; the
+      book has 25 (the 06b/11b splits + the chapters added since). Corrected to 25.
+- [x] **Code-fence audit — RESOLVED, no change needed.** Audited every fenced
+      block: 389 openers, of which only 12 are bare. All 12 are intentionally
+      non-code — directory trees (ch. 3, 22), ASCII diagrams (ch. 5 middleware
+      pyramid, ch. 8 runtime tree, ch. 11 layout tree, ch. 13/15 trace icicles),
+      and notation (ch. 12 breadcrumb, ch. 18 token structure, ch. 9 raw header).
+      The book never uses a `text` label, so the bare fences are internally
+      consistent with each other. The 377 labeled openers all carry a real
+      language. Nothing to fix; do **not** mechanically label the diagrams.
+- [x] **Audience contract (intro).** Added a "How hard this gets, and how to read
+      the hard parts" section to ch. 1 (before the closing line). Names the three
+      difficulty spikes by chapter — `java.nio` interop (ch. 6), Datalog's EAV
+      facts (ch. 7), and the ClojureStorm construction-view cluster (12/13/15) —
+      and gives the reader two handholds (run the repo in place; the hard chapters
+      are built to be read twice). Kept positive, not apologetic, per the
+      `construction-view-not-a-luxury` steer: "none of it is filler... where a
+      chapter gets hard it is because the problem is."
+- [ ] **Scaffold three steep drops.** (a) Java NIO `WatchService` in ch. 6 — a
+      minimal example before the full watcher (note: partly addressed by the
+      Blocker-3 NIO bullets; confirm it's enough). (b) One literal
+      `[entity attr value]` fact in ch. 7 before the first Datalog query.
+      (c) Promote the "compiler welds metadata onto the value" insight earlier in
+      ch. 12 — it currently arrives as "Fact two" but it is the keystone.
+      Status: (a) partly done via the Blocker-3 NIO bullets; a shape-first skeleton
+      is optional. (b) DONE — the abstract EAV prose (line 205) was already strong
+      (literal `[42 :user/email …]` facts shown), but the *first query* wasn't
+      bridged to it and `:in $ ?email` went unexplained; added a paragraph reading
+      the `:where` pattern positionally against the fact shape and explaining
+      `:in`/`$`. (c) ch. 12 keystone promotion still open.
+- [ ] **"When not to use this" notes** for the inspector (ch. 12) and construction
+      view (ch. 15). Keep them positive (the parity + ownership thesis stands), but
+      a candid ROI caveat makes the showpieces *more* credible. Reconcile with the
+      `construction-view-not-a-luxury` steer: this is the honest "here's when it
+      pays off" note, not the apologetic "luxury, skip it" blockquote we removed.
+- [x] **Flag the single-instance rate-limiter (ch. 19) — DONE, smaller than the
+      review implied.** The chapter was already strong: a dedicated `### Rate
+      limiting beyond one instance` section, the per-replica failure mode named, a
+      real Redis `allow?` implementation, and Postgres/Datomic alternatives — the
+      "needs code to cement it" critique was overstated. The only soft spot was
+      framing (read as optional scaling polish). Sharpened the consequence
+      sentence: the limit "silently multiplies by the number of replicas... a
+      horizontally-scaled deploy on the in-process counter has no working rate
+      limit," making the shared store "a prerequisite for going multi-instance,
+      not a later optimization."
+- [ ] **Reconcile book-vs-repo divergences.** Where the prose shows one shape and
+      the repo another (e.g. ch. 19 inline session checks vs. the repo's
+      middleware), add a one-line "the repo factors this into X — see <path>".
+- [ ] **Decide canonical medium for numbering.** The 06b / 11b / missing-14 scheme
+      reads fine online; a print production editor would want a clean 1..N renumber.
+      Pick online-canonical (keep as-is) or print-canonical (renumber) before any
+      print/PDF build — don't let both diverge.
+
+Not changing (consistent with the book's thesis, flagged so a later pass doesn't
+"fix" them): no end-of-chapter exercises or summaries, the high density, and the
+opinionated voice. These are the book's identity, not defects.
 </content>

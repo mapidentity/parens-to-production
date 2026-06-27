@@ -215,6 +215,8 @@ Datomic queries use Datalog, a declarative query language. If you have used SQL,
      "alice@example.com")
 ```
 
+Read the `:where` clause against the fact shape above: `[?e :user/email ?email]` is `[entity :user/email value]` with logic variables in the entity and value slots. It matches every stored fact whose attribute is `:user/email`, binding `?e` to the entity id and `?email` to the value -- and because `:in` already binds `?email` to the address you pass (alongside `$`, the database itself), the pattern is pinned to that one user, so `?e` comes back as their entity id.
+
 The `.` after `?e` in the `:find` clause is a scalar binding -- it returns the single value directly instead of wrapping it in a set of tuples. Without it, you would get `#{[12345]}` instead of `12345`.
 
 **Pull entity data:**

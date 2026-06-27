@@ -168,7 +168,7 @@ Without PRG, refreshing the "check your email" page would resubmit the form and 
 
 ### Rate limiting beyond one instance
 
-The in-process counter is the right default -- one instance, no external dependency, and rate limiting that works the moment you boot. But the moment you run two app instances behind a load balancer, each keeps its own counts, so the effective limit doubles with every replica. The fix is not to change *what* we limit, only *where the count lives*, and the call sites above already make that separation clean: every check goes through one function with one signature.
+The in-process counter is the right default -- one instance, no external dependency, and rate limiting that works the moment you boot. But the moment you run two app instances behind a load balancer, each keeps its own counts, so the effective limit silently multiplies by the number of replicas -- nothing errors, the throttle you configured just quietly becomes that many times looser. That makes a shared store a prerequisite for going multi-instance, not a later optimization: a horizontally-scaled deploy on the in-process counter has no working rate limit. The fix is not to change *what* we limit, only *where the count lives*, and the call sites above already make that separation clean: every check goes through one function with one signature.
 
 ```clojure
 (defn allow?
