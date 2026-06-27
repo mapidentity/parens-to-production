@@ -233,13 +233,16 @@ substance; these are calibration and polish. Priority order:
 - [ ] **Reconcile book-vs-repo divergences.** Where the prose shows one shape and
       the repo another (e.g. ch. 19 inline session checks vs. the repo's
       middleware), add a one-line "the repo factors this into X — see <path>".
-- [~] **Decide canonical medium for numbering — DEFERRED to a pre-print task; keep
-      as-is for now.** The book ships as an online mdBook on GitHub Pages, where the
-      06b / 11b / missing-14 scheme reads fine (mdBook renders the SUMMARY order, not
-      the filename numbers). A clean 1..N renumber only earns its cost — touching 25
-      files + SUMMARY + every cross-ref, with real link-breakage risk — if/when a
-      print or PDF edition is on the table. Recommendation: stay online-canonical now;
-      renumber as a single mechanical pass the day a print build is committed to.
+- [x] **Renumber chapters to sequential 01–25 — DONE (2026-06-27).** The 06b /
+      11b / missing-14 scheme read fine online (mdBook numbers by SUMMARY position,
+      not filename) but the author's *numeric prose refs used filename numbers*, so
+      several were latently wrong against the displayed numbers (e.g. "(Ch. 7)" for
+      Datomic, which displayed as 8). Renamed all 19 affected files with `git mv`,
+      rewrote every inter-chapter link target, and fixed the numeric text refs
+      (ch.9 diagram, the construction-view cluster's 14/15/16 cross-links, the
+      email-flow "(ch. 20)"). Verified: 114 links resolve, SUMMARY is 01..25,
+      filename = displayed = referenced number, build clean. NB: chapter-number
+      references *elsewhere in this checklist* predate the renumber.
 
 Not changing (consistent with the book's thesis, flagged so a later pass doesn't
 "fix" them): no end-of-chapter exercises or summaries, the high density, and the

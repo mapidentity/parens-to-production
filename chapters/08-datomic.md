@@ -188,7 +188,7 @@ With the conversion functions in place, we wrap Datomic's core API to apply them
 
 The naming convention -- `transact*`, `pull*`, `q*` -- signals that these are enhanced versions of the originals. The rest of the application uses these wrappers exclusively and never touches `java.util.Date`.
 
-Notice that `transact*` returns a future (just like `d/transact`). You deref it with `@` when you need to wait for the transaction to complete. The `(time/now)` it carries is the clock wrapper from [the previous chapter](06b-time-clock.md) -- the single source of "now" whose output is the `java.time.Instant` the bridge below converts:
+Notice that `transact*` returns a future (just like `d/transact`). You deref it with `@` when you need to wait for the transaction to complete. The `(time/now)` it carries is the clock wrapper from [the previous chapter](07-time-clock.md) -- the single source of "now" whose output is the `java.time.Instant` the bridge below converts:
 
 ```clojure
 @(db/transact* conn

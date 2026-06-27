@@ -28,11 +28,11 @@ All shared test infrastructure lives in a single file: `test/myapp/test_helpers.
     [myapp.db.schema :as schema]))
 ```
 
-This `ns` form compiles and runs as-is. A second database -- ours gains an analytics DB in [the admin dashboard chapter](21-admin-dashboard.md) -- takes one more require and one more fixture, shown together [below](#a-second-database-the-analytics-fixture).
+This `ns` form compiles and runs as-is. A second database -- ours gains an analytics DB in [the admin dashboard chapter](22-admin-dashboard.md) -- takes one more require and one more fixture, shown together [below](#a-second-database-the-analytics-fixture).
 
 ### The database fixture
 
-The centerpiece is `with-test-db`, which creates a throwaway in-memory Datomic database per test, binds `*conn*`, and stubs `db/get-connection` so application code transparently hits the test DB. We built it in [the Datomic chapter](07-datomic.md#isolated-test-databases) -- a unique `datomic:mem://` URI per test (via `System/nanoTime`, so parallel runs never collide), the full schema transacted, and the database deleted when the test function returns -- so we will not reprint it here. This chapter is about the infrastructure that surrounds it: deterministic config and a request builder, plus -- for apps that grow a second database -- a parallel fixture you can copy when you need it.
+The centerpiece is `with-test-db`, which creates a throwaway in-memory Datomic database per test, binds `*conn*`, and stubs `db/get-connection` so application code transparently hits the test DB. We built it in [the Datomic chapter](08-datomic.md#isolated-test-databases) -- a unique `datomic:mem://` URI per test (via `System/nanoTime`, so parallel runs never collide), the full schema transacted, and the database deleted when the test function returns -- so we will not reprint it here. This chapter is about the infrastructure that surrounds it: deterministic config and a request builder, plus -- for apps that grow a second database -- a parallel fixture you can copy when you need it.
 
 ### Deterministic config
 
@@ -109,7 +109,7 @@ The `cond->` threading macro keeps it clean -- optional keys are only added when
 
 ### A second database: the analytics fixture
 
-When an app grows a second Datomic database, the same fixture pattern scales to it unchanged -- a fresh in-memory instance per test, stubbed at the connection boundary. For the analytics database of [the admin dashboard chapter](21-admin-dashboard.md), add `[myapp.analytics.db :as analytics]` to the `ns` require above and this fixture beside `with-test-db`:
+When an app grows a second Datomic database, the same fixture pattern scales to it unchanged -- a fresh in-memory instance per test, stubbed at the connection boundary. For the analytics database of [the admin dashboard chapter](22-admin-dashboard.md), add `[myapp.analytics.db :as analytics]` to the `ns` require above and this fixture beside `with-test-db`:
 
 ```clojure
 (def ^:dynamic *analytics-conn*
@@ -300,7 +300,7 @@ The coverage configuration lives in the `:coverage` alias in `deps.edn`:
 ```clojure
 :coverage {:extra-paths ["test"]
            :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}
-                        ;; in-memory SMTP for the email-flow tests (ch. 16)
+                        ;; in-memory SMTP for the email-flow tests (ch. 20)
                         com.icegreen/greenmail {:mvn/version "2.1.8"}}
            :main-opts ["-m" "cloverage.coverage"
                        "--src-ns-path" "src"
@@ -338,7 +338,7 @@ For running tests without coverage (faster feedback during development), there i
 :test {:extra-paths ["test"]
        :extra-deps {io.github.cognitect-labs/test-runner
                     {:git/tag "v0.5.1" :git/sha "dfb30dd"}
-                    ;; in-memory SMTP for the email-flow tests (ch. 16)
+                    ;; in-memory SMTP for the email-flow tests (ch. 20)
                     com.icegreen/greenmail {:mvn/version "2.1.8"}}
        :main-opts ["-m" "cognitect.test-runner"]
        :exec-fn cognitect.test-runner.api/test}
@@ -471,7 +471,7 @@ devcontainer (Ch. 3)
     ├── http-kit server ........ Ring + reitit routing          (Ch. 5)
     ├── nREPL :7888 ............ your editor connects here       (Ch. 5)
     ├── file watcher + WS ...... save a file → browser reloads   (Ch. 6)
-    └── Datomic Peer (in-mem) .. schema transacted on boot       (Ch. 7)
+    └── Datomic Peer (in-mem) .. schema transacted on boot       (Ch. 8)
 ```
 
 That diagram is the running system; the checklist is what it guarantees -- everything below is true before we render our first real page:

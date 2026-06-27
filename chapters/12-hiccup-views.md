@@ -4,7 +4,7 @@
 
 *A single recipe page, assembled entirely on the server from the Hiccup views and layouts this chapter builds.*
 
-In the previous chapters we set up our Ring server and routing with Reitit, a live-reload workflow, a Datomic schema, internationalization, and Tailwind styling. But we glossed over how pages actually get rendered. In this chapter we build the entire server-side view layer: HTML generation with Hiccup, a layout system that shares structure across pages, navigation components, the output-escaping that is our primary defense against cross-site scripting, and Markdown rendering. The progressive-enhancement layer that makes navigation feel instant -- the client dispatcher -- is involved enough to earn [its own chapter](11b-morph-dispatcher.md) next; here we build the views it enhances. (The login and session machinery the layouts hint at -- magic-link authentication -- comes later, in the authentication chapters; here we just render the views it will plug into.)
+In the previous chapters we set up our Ring server and routing with Reitit, a live-reload workflow, a Datomic schema, internationalization, and Tailwind styling. But we glossed over how pages actually get rendered. In this chapter we build the entire server-side view layer: HTML generation with Hiccup, a layout system that shares structure across pages, navigation components, the output-escaping that is our primary defense against cross-site scripting, and Markdown rendering. The progressive-enhancement layer that makes navigation feel instant -- the client dispatcher -- is involved enough to earn [its own chapter](13-morph-dispatcher.md) next; here we build the views it enhances. (The login and session machinery the layouts hint at -- magic-link authentication -- comes later, in the authentication chapters; here we just render the views it will plug into.)
 
 ## Why server-rendered HTML
 
@@ -123,14 +123,14 @@ The base layout is the HTML5 shell that every page shares. It is private -- page
 
 Several things in that shell carry weight worth drawing out:
 
-- **`locale` is threaded everywhere.** Every layout takes it as the first argument, and all user-facing text goes through `(t locale :key)` for i18n. i18n has [its own chapter](09-i18n.md); the view layer is ready for it from day one.
+- **`locale` is threaded everywhere.** Every layout takes it as the first argument, and all user-facing text goes through `(t locale :key)` for i18n. i18n has [its own chapter](10-i18n.md); the view layer is ready for it from day one.
 - **The whole document is built by `h/html`, the *escaping* renderer.** This matters enough that it gets its own section below. The doctype is the one structural literal we want emitted as-is, so it goes through `(h/raw "<!DOCTYPE html>")`.
 - **Assets resolve through `(assets/asset "...")`.** The stylesheet, the module scripts, and the import map all come from the asset system: in production each URL is content-hashed and carries an integrity (SRI) attribute; in development the same calls return stable, unhashed URLs. The asset pipeline is its own topic -- here, the view layer just asks for a logical name and gets back a URL.
-- **`(script-tag "js/dispatcher.js" {:type "module"})`** loads the dispatcher, the script that powers progressive enhancement ([its own chapter](11b-morph-dispatcher.md), next). It is a normal ES module, served from the classpath through the asset pipeline -- not inlined.
+- **`(script-tag "js/dispatcher.js" {:type "module"})`** loads the dispatcher, the script that powers progressive enhancement ([its own chapter](13-morph-dispatcher.md), next). It is a normal ES module, served from the classpath through the asset pipeline -- not inlined.
 - **`(toast-script)`** inlines a small toast helper. The `defn-asset` macro and inline scripts are covered later in this chapter.
 - **`(tag-root body)`** wraps the page body for the development source inspector. In production it is the identity function; the body is unchanged.
-- **The final body block is dev-only.** `(when (requiring-resolve 'dev-reload/websocket-handler) (list (dev-reload-script) (inspector-script) (trace-overlay-script)))` emits three small scripts -- the live-reload client ([live reload](06-live-reload.md)), the source inspector ([the inspector](12-inspector.md)), and the construction-view overlay ([the construction view](13-construction-view.md)) -- and nothing else. This is the single place those overlays mount, so as you build each of those chapters you add its script to this list. The `requiring-resolve` check returns `nil` when the dev namespace is not on the classpath, so the whole block is *structurally absent* in production; the `defn-asset` declarations behind `dev-reload-script`/`inspector-script`/`trace-overlay-script` arrive with [the asset pipeline](22-asset-pipeline.md). (If you are following along before those chapters exist, drop the names you have not built yet -- the block renders nothing until the dev namespace is present anyway.)
-- **The `page-enter` keyframes** give each freshly rendered `<main>` a subtle entrance; it pairs with the DOM-morphing reload in [the morph-reload chapter](16-morph-reload.md).
+- **The final body block is dev-only.** `(when (requiring-resolve 'dev-reload/websocket-handler) (list (dev-reload-script) (inspector-script) (trace-overlay-script)))` emits three small scripts -- the live-reload client ([live reload](06-live-reload.md)), the source inspector ([the inspector](14-inspector.md)), and the construction-view overlay ([the construction view](15-construction-view.md)) -- and nothing else. This is the single place those overlays mount, so as you build each of those chapters you add its script to this list. The `requiring-resolve` check returns `nil` when the dev namespace is not on the classpath, so the whole block is *structurally absent* in production; the `defn-asset` declarations behind `dev-reload-script`/`inspector-script`/`trace-overlay-script` arrive with [the asset pipeline](23-asset-pipeline.md). (If you are following along before those chapters exist, drop the names you have not built yet -- the block renders nothing until the dev namespace is present anyway.)
+- **The `page-enter` keyframes** give each freshly rendered `<main>` a subtle entrance; it pairs with the DOM-morphing reload in [the morph-reload chapter](17-morph-reload.md).
 - **`body` uses `& body` (rest args)** so callers can pass multiple elements naturally without wrapping them in a container.
 
 ### Public layout
@@ -359,7 +359,7 @@ Handlers then read what they need off the request and render:
 
 The pattern is consistent: gather data, render the view, wrap with `html`. No framework magic. The `str` inside `html` realizes the Hiccup output as an HTML string for the response body.
 
-Importantly, **handlers do not branch on the request type.** There is no "is this a fetch?" check and no separate partial-vs-full code path. A handler renders one thing -- the full page -- and the dispatcher on the client extracts the part it needs. That client dispatcher -- the script that turns these full-page responses into in-place `<main>` morphs, and the reason `data-layout` rides on every `<main>` -- is involved enough to be its own chapter, [The Morph Dispatcher](11b-morph-dispatcher.md), which comes next. The rest of *this* chapter finishes the server side of the view layer.
+Importantly, **handlers do not branch on the request type.** There is no "is this a fetch?" check and no separate partial-vs-full code path. A handler renders one thing -- the full page -- and the dispatcher on the client extracts the part it needs. That client dispatcher -- the script that turns these full-page responses into in-place `<main>` morphs, and the reason `data-layout` rides on every `<main>` -- is involved enough to be its own chapter, [The Morph Dispatcher](13-morph-dispatcher.md), which comes next. The rest of *this* chapter finishes the server side of the view layer.
 
 ## Output encoding: escaping is the primary XSS defense
 
@@ -389,7 +389,7 @@ There is nothing to remember and nothing to opt into. Safe is the default; you h
 Some content we *do* want emitted verbatim, and only those places use `h/raw`:
 
 - **The doctype.** `(h/raw "<!DOCTYPE html>")` -- a fixed literal we control.
-- **The import map and inline scripts/styles.** These are our own bytes, and (as the [asset pipeline chapter](22-asset-pipeline.md) explains) they must be emitted exactly so the Content-Security-Policy hash matches what the browser sees: `[:script {:type "importmap"} (h/raw (assets/importmap-json))]`.
+- **The import map and inline scripts/styles.** These are our own bytes, and (as the [asset pipeline chapter](23-asset-pipeline.md) explains) they must be emitted exactly so the Content-Security-Policy hash matches what the browser sees: `[:script {:type "importmap"} (h/raw (assets/importmap-json))]`.
 - **Markdown-rendered HTML.** Recipe descriptions and legal documents are authored in Markdown and rendered to HTML by CommonMark; that HTML is inserted with `h/raw`:
 
   ```clojure
@@ -401,7 +401,7 @@ Some content we *do* want emitted verbatim, and only those places use `h/raw`:
 
 Each `h/raw` is a deliberate, auditable decision. The rule of thumb: grep for `h/raw`, and every hit should be either a literal you wrote or output from a renderer that sanitizes its input. The doctype and inline assets are bytes we control; the markdown renderer is trusted *because* it neutralizes the HTML a user might smuggle in. Everything else flows through `h/html` and is escaped.
 
-A correctly-escaped output layer is the primary defense here. (The app also ships a strict, hash-based Content-Security-Policy with no `'unsafe-inline'` for scripts, which would *additionally* block an injected inline script -- but that is defense-in-depth sitting behind escaping, and it is the subject of its own chapter ([the asset pipeline chapter](22-asset-pipeline.md)). The escaping is what makes the XSS not happen in the first place.)
+A correctly-escaped output layer is the primary defense here. (The app also ships a strict, hash-based Content-Security-Policy with no `'unsafe-inline'` for scripts, which would *additionally* block an injected inline script -- but that is defense-in-depth sitting behind escaping, and it is the subject of its own chapter ([the asset pipeline chapter](23-asset-pipeline.md)). The escaping is what makes the XSS not happen in the first place.)
 
 ## CommonMark for Markdown content
 
@@ -480,7 +480,7 @@ A few small scripts -- like the toast helper -- are best inlined directly into t
 Two things connect this back to earlier sections:
 
 - **The content is wrapped in `h2/raw`.** This macro lives in the `myapp.web.assets` namespace, which aliases `hiccup2.core` as `h2` (the views namespace happens to alias it as `h` -- same library, different local nickname). Because the body is syntax-quoted, `` `(h2/raw ~expr) `` expands to the fully-qualified `hiccup2.core/raw`, so the generated function works no matter how the *calling* namespace aliases Hiccup. An inline script must be emitted byte-for-byte; escaping it would corrupt the JavaScript. Because we control the file, raw output is the correct call here -- and because the bytes are emitted exactly, the strict CSP can authorize the script by hashing those same bytes.
-- **Script assets register their path** (`register-inline-script!`) so the CSP can compute and allow their hash. The CSP machinery itself is covered in the [asset pipeline chapter](22-asset-pipeline.md); the takeaway here is that inlining a script is a one-liner and it stays compatible with a no-`'unsafe-inline'` policy.
+- **Script assets register their path** (`register-inline-script!`) so the CSP can compute and allow their hash. The CSP machinery itself is covered in the [asset pipeline chapter](23-asset-pipeline.md); the takeaway here is that inlining a script is a one-liner and it stays compatible with a no-`'unsafe-inline'` policy.
 
 In development the file is re-read on every render so you can edit the script and refresh; in production it is read once at load and baked into the function. Usage is a single form at the top of the views namespace:
 
@@ -519,7 +519,7 @@ The pieces that touch the view layer:
 
 - **`wrap-locale`** detects the user's locale from the session or the `Accept-Language` header and assocs `:locale` onto the request. Every view function receives this. (This is the *only* request header the server negotiates on -- there is no enhanced/partial negotiation.)
 - **`wrap-no-cache-authenticated`** sets `Cache-Control: no-store` on authenticated responses, preventing the browser's back-forward cache from showing stale pages after logout.
-- **`wrap-csp`** attaches the strict Content-Security-Policy header to every `text/html` response (the defense-in-depth backstop behind output escaping). Its construction lives in `myapp.web.assets` and gets its own chapter ([the asset pipeline chapter](22-asset-pipeline.md)).
+- **`wrap-csp`** attaches the strict Content-Security-Policy header to every `text/html` response (the defense-in-depth backstop behind output escaping). Its construction lives in `myapp.web.assets` and gets its own chapter ([the asset pipeline chapter](23-asset-pipeline.md)).
 
 Static assets are served from `assets/static-root` -- the source `static/` tree in development, the built and content-hashed tree in production. In development a small `wrap-dev-no-store` keeps the browser from caching stable, unhashed dev URLs.
 
@@ -527,4 +527,4 @@ Static assets are served from `assets/static-root` -- the source `static/` tree 
 
 The server-side view layer is complete. HTML is generated with Hiccup 2's escaping renderer -- composable Clojure data, auto-escaped so user content is safe by default, with raw output pared back to a handful of explicit, auditable opt-ins. Three composing layouts (`base-layout`, `public-layout`, `app-layout`) put every page's content inside a single `<main data-layout>`; one state-aware top bar adapts to signed-in versus anonymous with active-tab highlighting in pure CSS; and CommonMark turns Markdown content into sanitized HTML, keeping content in Markdown and presentation in CSS. There is no virtual DOM, no client-side state store, no hydration, and no separate API -- the server renders complete HTML and the browser shows it.
 
-That `<main data-layout>` seam is also the setup for what comes next. Because every handler renders a whole page and never branches on how it was called, a small client script can fetch any page and morph just its `<main>` into place without the server knowing anything about it -- which is the next chapter, [The Morph Dispatcher](11b-morph-dispatcher.md). After that the book sharpens the development experience -- a source inspector and morph-based hot reload -- and later puts this view layer under end-to-end test, driving a real browser with Playwright to verify the full request, render, and morph loop, including the no-JavaScript fallback path.
+That `<main data-layout>` seam is also the setup for what comes next. Because every handler renders a whole page and never branches on how it was called, a small client script can fetch any page and morph just its `<main>` into place without the server knowing anything about it -- which is the next chapter, [The Morph Dispatcher](13-morph-dispatcher.md). After that the book sharpens the development experience -- a source inspector and morph-based hot reload -- and later puts this view layer under end-to-end test, driving a real browser with Playwright to verify the full request, render, and morph loop, including the no-JavaScript fallback path.

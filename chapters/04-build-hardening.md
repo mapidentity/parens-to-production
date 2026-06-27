@@ -19,7 +19,7 @@ That is it. The `:ns-default build` tells `clojure -T:build` to look for functio
 
 ## The build namespace
 
-Here is the build-hardening portion of `build.clj` -- the strict-compile gate and the uberjar task. The same file later grows a second half (content-hashing, SRI, the `assets`/`verify-assets` tasks, with two extra requires: `clojure.java.io` and `clojure.java.shell`) in [the asset pipeline chapter](22-asset-pipeline.md):
+Here is the build-hardening portion of `build.clj` -- the strict-compile gate and the uberjar task. The same file later grows a second half (content-hashing, SRI, the `assets`/`verify-assets` tasks, with two extra requires: `clojure.java.io` and `clojure.java.shell`) in [the asset pipeline chapter](23-asset-pipeline.md):
 
 ```clojure
 (ns build
@@ -320,7 +320,7 @@ Run it:
 ./lint
 ```
 
-The script's second job -- the time-as-global grep -- enforces a rule that [the clock chapter](06b-time-clock.md) introduces: every clock read must go through a `myapp.time` wrapper. It lives here because it lives in the same `lint` script. The mechanism is a plain grep precisely because direct calls like `(Instant/now)` are Java static methods that clj-kondo's `:discouraged-var` linter cannot see.
+The script's second job -- the time-as-global grep -- enforces a rule that [the clock chapter](07-time-clock.md) introduces: every clock read must go through a `myapp.time` wrapper. It lives here because it lives in the same `lint` script. The mechanism is a plain grep precisely because direct calls like `(Instant/now)` are Java static methods that clj-kondo's `:discouraged-var` linter cannot see.
 
 ### A custom hook for `defn-`
 

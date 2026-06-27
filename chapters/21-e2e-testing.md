@@ -160,7 +160,7 @@ The app handler is assembled the same way as production, but using the extended 
 
 The middleware stack is real. The session handling is real. The cookie store is real (just with a deterministic key). This is important: the E2E server must exercise the same middleware chain as production, or you are not testing what you think you are testing. The only differences should be external integrations (email, databases) and the addition of test control endpoints.
 
-We keep `:same-site :lax` to match production -- the magic-link flow is a cross-context GET, and `:strict` would block the cookie on that navigation (more on this in [the email login-flow chapter](19-auth-email-flow.md)). We do drop `:secure`, because the e2e server runs over plain HTTP on `localhost`; a `:secure` cookie would never be sent. Those are the only deliberate cookie differences.
+We keep `:same-site :lax` to match production -- the magic-link flow is a cross-context GET, and `:strict` would block the cookie on that navigation (more on this in [the email login-flow chapter](20-auth-email-flow.md)). We do drop `:secure`, because the e2e server runs over plain HTTP on `localhost`; a `:secure` cookie would never be sent. Those are the only deliberate cookie differences.
 
 ### The start function
 
@@ -396,7 +396,7 @@ There is no wrapper script to write -- running the suite is one command from the
 npx playwright test
 ```
 
-Playwright reads the config, starts the Clojure server (via the `webServer` block), waits for `/health` to return 200, runs every spec in `e2e/`, and tears everything down. You do not need to start the server manually (though you can, during development, thanks to `reuseExistingServer`). This is exactly the command [the CI/CD chapter](24-ci-cd.md) runs in the pipeline.
+Playwright reads the config, starts the Clojure server (via the `webServer` block), waits for `/health` to return 200, runs every spec in `e2e/`, and tears everything down. You do not need to start the server manually (though you can, during development, thanks to `reuseExistingServer`). This is exactly the command [the CI/CD chapter](25-ci-cd.md) runs in the pipeline.
 
 The companion repo ships two spec files -- `e2e/auth.spec.js` (the magic-link login, logout, and route-protection flows built above) and `e2e/recipes.spec.js` (the recipe browse/fork/version flows) -- and `npx playwright test` runs both.
 

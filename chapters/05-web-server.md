@@ -123,7 +123,7 @@ Before we write routes, we need configuration. Aero reads an EDN file and suppor
 
 The `#profile` reader tag selects a value based on the active profile. In dev, the server binds to `0.0.0.0` (all interfaces); in prod, to `127.0.0.1` (localhost only, behind a reverse proxy). The `#env` tag reads from environment variables.
 
-`:base-url` and `:smtp` are placeholders for now -- we use them later for magic-link emails ([the email login-flow chapter](19-auth-email-flow.md)). They live in config from the start so every environment has them, and so the config test we write in [the testing chapter](08-unit-testing.md) can assert their presence.
+`:base-url` and `:smtp` are placeholders for now -- we use them later for magic-link emails ([the email login-flow chapter](20-auth-email-flow.md)). They live in config from the start so every environment has them, and so the config test we write in [the testing chapter](09-unit-testing.md) can assert their presence.
 
 Now the configuration namespace:
 
@@ -238,7 +238,7 @@ A *handler* is a plain function from a Ring request map to a Ring response map. 
    :body "<!doctype html><h1>MyApp</h1>"})
 ```
 
-`json-response` builds a plain Ring response map: set the content type, serialize the data to JSON, done. The `json` alias is `clojure.data.json` (the `org.clojure/data.json` dependency from our `deps.edn`); `write-str` turns a Clojure value into a JSON string, and we pass a string body straight through unchanged. `home` returns a stub HTML page for now -- the [Hiccup views chapter](11-hiccup-views.md) replaces its body with a real server-rendered view, and the [auth](18-auth-tokens.md) and dashboard chapters add the handlers the fuller route tree calls.
+`json-response` builds a plain Ring response map: set the content type, serialize the data to JSON, done. The `json` alias is `clojure.data.json` (the `org.clojure/data.json` dependency from our `deps.edn`); `write-str` turns a Clojure value into a JSON string, and we pass a string body straight through unchanged. `home` returns a stub HTML page for now -- the [Hiccup views chapter](12-hiccup-views.md) replaces its body with a real server-rendered view, and the [auth](19-auth-tokens.md) and dashboard chapters add the handlers the fuller route tree calls.
 
 ### The middleware stack
 
@@ -278,7 +278,7 @@ Two structural choices worth noting:
 - **`app*` is a `delay`**, just like our config. This prevents the middleware stack from being built at compile time (which would try to read config, which might not be available yet). It's built once on the first request.
 - **`app` is a plain function** that derefs the delay. The server receives `#'routes/app` (a var reference), which means you can redefine `app` at the REPL and the server picks up changes without restarting.
 
-Later chapters insert more middleware here -- locale negotiation ([i18n](09-i18n.md)), a no-cache guard for authenticated pages, the current-user/auth/terms/admin gates ([auth](18-auth-tokens.md), [admin](21-admin-dashboard.md)), and a strict Content-Security-Policy ([asset pipeline](22-asset-pipeline.md)) -- and `myapp.config` learns to resolve more keys (a `:signing-key` for magic-link HMAC, `:database-uri`, an `:admin-email`) the same way it resolves `:session-key` here.
+Later chapters insert more middleware here -- locale negotiation ([i18n](10-i18n.md)), a no-cache guard for authenticated pages, the current-user/auth/terms/admin gates ([auth](19-auth-tokens.md), [admin](22-admin-dashboard.md)), and a strict Content-Security-Policy ([asset pipeline](23-asset-pipeline.md)) -- and `myapp.config` learns to resolve more keys (a `:signing-key` for magic-link HMAC, `:database-uri`, an `:admin-email`) the same way it resolves `:session-key` here.
 
 Putting the pieces together, here is the whole path a request takes through the parts this chapter built. Each middleware is a layer the request passes *inward* through on the way to a handler, and the response passes back *outward* through on the way to the browser -- which is exactly why order matters, and why the outermost layer is listed first:
 
@@ -368,7 +368,7 @@ Several important patterns here:
 
 **`(:gen-class)`.** This tells the Clojure compiler to generate a Java class with a static `main` method, which is what `java -jar` expects when running the uberjar in production.
 
-**`start-server!` will gain startup steps.** Right now it only boots http-kit. As later chapters add a database and a content-hashed asset pipeline, this function grows a few lines at the front -- creating the Datomic database ([Datomic chapter](07-datomic.md)) and loading the asset manifest ([asset pipeline](22-asset-pipeline.md)) before the server accepts traffic. Likewise, `dev/user.clj`'s `start!` is rewired to go through the hot-reload entry point once [live reload](06-live-reload.md) exists.
+**`start-server!` will gain startup steps.** Right now it only boots http-kit. As later chapters add a database and a content-hashed asset pipeline, this function grows a few lines at the front -- creating the Datomic database ([Datomic chapter](08-datomic.md)) and loading the asset manifest ([asset pipeline](23-asset-pipeline.md)) before the server accepts traffic. Likewise, `dev/user.clj`'s `start!` is rewired to go through the hot-reload entry point once [live reload](06-live-reload.md) exists.
 
 ## REPL-driven development
 

@@ -466,4 +466,4 @@ What the chapter has produced is a self-contained token primitive. `sign-token` 
 
 The whole thing is about 60 lines of Clojure with zero external dependencies beyond `clojure.data.json` and Datomic; the crypto comes from the JDK. That is the payoff of declining the JWT spec's generality -- a format simple enough to explain in one sentence and audit in five minutes.
 
-What we do not have yet: HTTP routes, email sending, sessions, the server-side recording and one-shot consumption of the nonce, and the actual magic link flow that ties it all together. That is [Part 2](19-auth-email-flow.md).
+What we do not have yet: HTTP routes, email sending, sessions, the server-side recording and one-shot consumption of the nonce, and the actual magic link flow that ties it all together. That is [Part 2](20-auth-email-flow.md).
