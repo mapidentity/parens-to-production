@@ -1,6 +1,7 @@
 # Summary
 
 [Introduction](README.md)
+[Preface](preface.md)
 
 - [What We Are Building, and Why](01-primer.md)
 - [The Frontend's Many Roads, and Why We Take the Server](02-positioning.md)
