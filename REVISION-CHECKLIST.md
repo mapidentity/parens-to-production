@@ -188,8 +188,12 @@ substance; these are calibration and polish. Priority order:
       `[entity attr value]` fact in ch. 7 before the first Datalog query.
       (c) Promote the "compiler welds metadata onto the value" insight earlier in
       ch. 12 — it currently arrives as "Fact two" but it is the keystone.
-      Status: (a) partly done via the Blocker-3 NIO bullets; a shape-first skeleton
-      is optional. (b) DONE — the abstract EAV prose (line 205) was already strong
+      Status: (a) RESOLVED — the Blocker-3 NIO bullets (ch. 6, "the first three are
+      the `java.nio.file` interop a reader new to it is most likely to stall on")
+      already demarcate the incidental difficulty as plumbing, the prose states the
+      watcher's shape up front, and the new ch. 1 contract warns of the NIO spike. A
+      shape-first pseudocode skeleton would be the didactic padding the book avoids;
+      not adding it. (b) DONE — the abstract EAV prose (line 205) was already strong
       (literal `[42 :user/email …]` facts shown), but the *first query* wasn't
       bridged to it and `:in $ ?email` went unexplained; added a paragraph reading
       the `:where` pattern positionally against the fact shape and explaining
@@ -200,11 +204,22 @@ substance; these are calibration and polish. Priority order:
       line to state the keystone as a thesis up front ("a Hiccup element's source
       position can ride on the runtime value itself — no separate index"), so Facts
       one/two now read as proof of a stated claim and it bookends with the punchline.
-- [ ] **"When not to use this" notes** for the inspector (ch. 12) and construction
-      view (ch. 15). Keep them positive (the parity + ownership thesis stands), but
-      a candid ROI caveat makes the showpieces *more* credible. Reconcile with the
-      `construction-view-not-a-luxury` steer: this is the honest "here's when it
-      pays off" note, not the apologetic "luxury, skip it" blockquote we removed.
+- [x] **"When not to use this" notes — RESOLVED, already present.** Both chapters
+      already carry the honest pay-off/cost treatment the earlier
+      `construction-view-not-a-luxury` work added: ch. 12 line 12 ("earns its keep
+      in proportion to how much view code you have…") + a startup-cost note (543);
+      ch. 15 line 7 is a whole "What this investment buys" blockquote naming the
+      cheap alternative ("a `println` and a REPL… often enough") and exactly when
+      the tool wins, + a first-hit-cost note (521). Adding an explicit "skip this
+      if…" section would re-introduce the apologetic register the steer removed.
+      No change.
+- [x] **Book-vs-repo divergences — RESOLVED, already handled.** The case the review
+      flagged (ch. 19 inline session checks vs. the repo's middleware) is already a
+      thorough callout at line 413 ("Handler-gated here, middleware-gated in the
+      repo"), ending "prefer [the middleware] if you have built it; the inline form
+      here is the minimal equivalent." "the repo" is referenced across ~10 chapters,
+      so the pattern is book-wide. No change. (A full book↔repo diff is out of scope
+      for a polish pass.)
 - [x] **Flag the single-instance rate-limiter (ch. 19) — DONE, smaller than the
       review implied.** The chapter was already strong: a dedicated `### Rate
       limiting beyond one instance` section, the per-replica failure mode named, a
@@ -218,10 +233,13 @@ substance; these are calibration and polish. Priority order:
 - [ ] **Reconcile book-vs-repo divergences.** Where the prose shows one shape and
       the repo another (e.g. ch. 19 inline session checks vs. the repo's
       middleware), add a one-line "the repo factors this into X — see <path>".
-- [ ] **Decide canonical medium for numbering.** The 06b / 11b / missing-14 scheme
-      reads fine online; a print production editor would want a clean 1..N renumber.
-      Pick online-canonical (keep as-is) or print-canonical (renumber) before any
-      print/PDF build — don't let both diverge.
+- [~] **Decide canonical medium for numbering — DEFERRED to a pre-print task; keep
+      as-is for now.** The book ships as an online mdBook on GitHub Pages, where the
+      06b / 11b / missing-14 scheme reads fine (mdBook renders the SUMMARY order, not
+      the filename numbers). A clean 1..N renumber only earns its cost — touching 25
+      files + SUMMARY + every cross-ref, with real link-breakage risk — if/when a
+      print or PDF edition is on the table. Recommendation: stay online-canonical now;
+      renumber as a single mechanical pass the day a print build is committed to.
 
 Not changing (consistent with the book's thesis, flagged so a later pass doesn't
 "fix" them): no end-of-chapter exercises or summaries, the high density, and the
