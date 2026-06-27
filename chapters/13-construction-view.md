@@ -162,7 +162,7 @@ The shape it returns is the vocabulary for everything that follows: `:calls` map
 Where do `start` and `end` come from? A Ring middleware, placed outermost, records the thread's timeline length before and after the handler. This is the one piece on the request hot path, so it does as little as possible -- it does **not** build the tree; it stores a four-field descriptor and returns:
 
 ```clojure
-(defn- trace-request [handler req]
+(defn- record-page [handler req]
   (let [tid (thread-id) start (timeline-len tid) t0 (System/nanoTime)]
     (enable-recording!)        ; record ONLY for this render...
     (try
@@ -188,7 +188,7 @@ Where do `start` and `end` come from? A Ring middleware, placed outermost, recor
   (fn [req]
     (if (str/starts-with? (str (:uri req)) "/dev/")
       (handler req)
-      (trace-request handler req))))
+      (record-page handler req))))
 ```
 
 Two helpers it leans on -- recognize an HTML response, and weld the trace id onto its `<html>` so the browser can find it:

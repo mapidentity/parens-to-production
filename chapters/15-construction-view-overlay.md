@@ -354,7 +354,7 @@ Every projection above is reached through a route that shares one shape: resolve
 ["/dev/__trace-clear"       ,,, ]  ; (no params)                    → clear-recordings!
 ```
 
-> **Deliberately not built -- timing/profiling.** Instrumentation can't measure wall-clock honestly (the recorder's own overhead dominates), so the `ms` we show is the request total from `trace-request`, not per-frame timing. For real profiling, reach for a sampling profiler. The construction view answers *structure and data*, not *time*.
+> **Deliberately not built -- timing/profiling.** Instrumentation can't measure wall-clock honestly (the recorder's own overhead dominates), so the `ms` we show is the request total from `record-page`, not per-frame timing. For real profiling, reach for a sampling profiler. The construction view answers *structure and data*, not *time*.
 
 > **Trade-off -- the endpoints are unauthenticated, and return real recorded values.** Anything that can reach `/dev/__flow` or `/dev/__value` gets the actual recording -- argument and result previews that can include user emails and recipe content. That is acceptable for a dev-only, loopback service -- the same posture as `/dev/ws` from the inspector chapter, and prod-absent through the same `requiring-resolve` gate. Don't expose the dev server.
 
@@ -453,7 +453,7 @@ When `flow` returned `:ambiguous`, the card says so -- "N instances, couldn't re
 
 ## Region-scoped traces for morphed updates
 
-The page is not always one request. After an idiomorph `<main>` swap -- or a dev hot-reload, which uses the same `morphReload` path -- that region was built by a *different* request with its own trace. This is why `trace-request` stamps `X-Myapp-Trace` on every HTML response: the dispatcher reads it, tags the morphed region with `data-myapp-trace-id`, and emits it on the `dispatcher:morphed` event. The overlay keeps a `traces` map keyed by id and switches the active trace when a region morphs in:
+The page is not always one request. After an idiomorph `<main>` swap -- or a dev hot-reload, which uses the same `morphReload` path -- that region was built by a *different* request with its own trace. This is why `record-page` stamps `X-Myapp-Trace` on every HTML response: the dispatcher reads it, tags the morphed region with `data-myapp-trace-id`, and emits it on the `dispatcher:morphed` event. The overlay keeps a `traces` map keyed by id and switches the active trace when a region morphs in:
 
 ```javascript
 function ensureTrace(id, cb) {                       // fetch a trace into the cache once
