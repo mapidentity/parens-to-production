@@ -6,6 +6,10 @@ This is a book about building a real web application -- a multi-tenant SaaS -- i
 
 The running example is a recipe versioning site -- think "Git for recipes." Anyone can browse recipes; a signed-in user can fork one, tweak its ingredients and steps, and publish their own version. The app shows the diff between any two versions, the lineage of a recipe -- "this carbonara descends from four earlier versions" -- and a point-in-time view of how a recipe looked at any moment in its history.
 
+![The recipe index: server-rendered cards, each showing its author and, where it is a fork, the version it descends from.](images/app-recipes-index.png)
+
+*The finished application's recipe index -- every card, badge, and fork lineage rendered on the server.*
+
 The domain was chosen on purpose rather than for novelty, because two of its properties make it an honest test of the stack. The first is that it is *history-shaped*: versions, forks, diffs, and "as of last Tuesday" are not features bolted onto the product, they *are* the product. That makes it a natural fit for Datomic, a database that treats time as a first-class dimension and never overwrites the past, so that edit history falls out of `d/history` and point-in-time reads out of `d/as-of` rather than out of a hand-rolled audit table. The second is that it is *content-heavy and read-mostly*: recipes are mostly text, mostly read, and they benefit from being indexable and fast to first paint -- which is precisely the workload server-side rendering is best at, and precisely the case where reaching for a single-page-app framework would be the wrong instinct.
 
 Your own domain will differ -- invoicing, scheduling, analytics -- but the spine carries over directly: a server that renders HTML, a database that remembers everything, passwordless authentication, internationalization, a hardened asset pipeline, and audited deployment.

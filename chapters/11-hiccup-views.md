@@ -1,5 +1,9 @@
 # Server-Rendered HTML with Hiccup: Views, Layouts, and Escaping
 
+![A server-rendered recipe page -- title, author, ingredients, method, version history, and the forks section.](images/app-recipe-detail.png)
+
+*A single recipe page, assembled entirely on the server from the Hiccup views and layouts this chapter builds.*
+
 In the previous chapters we set up our Ring server and routing with Reitit, a live-reload workflow, a Datomic schema, internationalization, and Tailwind styling. But we glossed over how pages actually get rendered. In this chapter we build the entire server-side view layer: HTML generation with Hiccup, a layout system that shares structure across pages, navigation components, the output-escaping that is our primary defense against cross-site scripting, and Markdown rendering. The progressive-enhancement layer that makes navigation feel instant -- the client dispatcher -- is involved enough to earn [its own chapter](11b-morph-dispatcher.md) next; here we build the views it enhances. (The login and session machinery the layouts hint at -- magic-link authentication -- comes later, in the authentication chapters; here we just render the views it will plug into.)
 
 ## Why server-rendered HTML
