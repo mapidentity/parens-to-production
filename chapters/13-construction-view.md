@@ -418,7 +418,7 @@ Think of it as **two passes layered into one `let`**. The first pass is the plai
 
 Three tricks earn their place:
 
-- **Folding dispatch artifacts.** A multi-arity arity-default (`(f a b)` → `(f a b nil)`) or a tail self-call records as two frames with the *same name* returning the *same element*. Left in, they duplicate the node and double-count the per-instance index -- which is what makes "the third `recipe-card`" resolvable, so the bug is silent but fatal to the DOM join. `folded?` spots the pattern (nearest non-noise ancestor shares the name) and collapses the pair.
+- **Folding dispatch artifacts.** An arity-default in a multi-arity fn (`(f a b)` → `(f a b nil)`) or a tail self-call records as two frames with the *same name* returning the *same element*. Left in, they duplicate the node and double-count the per-instance index -- which is what makes "the third `recipe-card`" resolvable, so the bug is silent but fatal to the DOM join. `folded?` spots the pattern (nearest non-noise ancestor shares the name) and collapses the pair.
 
 - **Call-site recovery.** FlowStorm records where a function is *defined*, but a `:fn-call` carries no coordinate for where it was *invoked* -- and the construction view wants the call site, not just the home. The recovery is structural: a call expression's value is logged in the *caller's* frame as an `:expr` that fires right after the (inspector-wrapped) callee returns, so the first expr in the caller with an index past the callee's `:ret-idx` is the `(callee …)` literal, and its `:coord` resolves to source. The definition site, by contrast, comes free from the form registry -- so even DOM-less frames (middleware, handlers, db fns) stay navigable.
 
