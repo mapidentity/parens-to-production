@@ -1,15 +1,12 @@
-# Building an Admin Dashboard: Datomic Queries, Live Stats, and CSS Animations
+# The Admin Dashboard: Locking Down a Privileged Surface
 
+An admin dashboard is a tempting target. It reads across every user, exposes operational internals, and -- unlike the rest of the app -- has no legitimate audience but you. So the load-bearing question is not "what does it show" but "who is allowed to see it, and what happens to everyone else." Get the authorization wrong and you have built a single page that leaks the whole tenancy.
 
----
+This chapter sits in the book's hardening arc, and its real subject is that gate: a `wrap-admin` middleware that restricts the route group to one admin email, the JSON-vs-HTML decision that keeps an expired session from being mis-parsed as data, and the case-insensitive comparison that keeps the gate from locking out the one person it exists to admit. The dashboard it protects -- Datomic queries across two databases, a stat grid, live polling -- is conventional once the gate is right. There is a small presentational nicety at the end (CSS-animated counters) that is polish, not hardening, and is flagged as such.
 
-You do not need an admin dashboard on day one. But the moment you have even a handful of users, you need visibility into what is happening in your application. How many people signed up? Are magic links getting verified? Is the JVM healthy? Without a dashboard, you are flying blind -- SSHing into a server and running ad-hoc REPL queries every time you want a number.
+## The access control layer
 
-This chapter builds a complete admin dashboard: a middleware layer that restricts access to a single admin email, Datomic queries across two databases, a stat grid component with live polling, and CSS-driven animated counters. No JavaScript frameworks, no charting libraries, no build step for the frontend. Just server-rendered HTML, a handful of Datomic queries, and about 30 lines of vanilla JS.
-
-## The Access Control Layer
-
-Admin routes need to be locked down. Not just "requires authentication" but "requires a specific email address." This is a solo-operator SaaS -- there is exactly one admin. The middleware is straightforward:
+Admin routes need to be locked down -- not "requires authentication" but "requires a specific email address." This is a solo-operator SaaS, so there is exactly one admin, which makes the rule simple to state and the failure modes the only interesting part. Three things have to be true at once: an unauthenticated request must not see the page, an authenticated non-admin must not see it, and -- the trap -- the admin must not be excluded by an accident of casing. The middleware encodes all three:
 
 ```clojure
 (ns myapp.web.routes
@@ -41,9 +38,9 @@ Admin routes need to be locked down. Not just "requires authentication" but "req
         :else (handler request)))))
 ```
 
-The admin comparison is **case-insensitive** -- email addresses are not case-sensitive in their local part for any provider you will meet in practice, so `Admin@example.com` and `admin@example.com` must resolve to the same person, or you lock the admin out of their own dashboard. (This needs `[clojure.string :as str]` in the namespace.)
+The comparison is **case-insensitive**, and that is a deliberate hardening choice, not a stylistic one. A naive `(= user-email admin-email)` is the kind of check that passes every test and then locks you out in production the first time a session carries `Admin@example.com` while config holds `admin@example.com`. Email local parts are case-insensitive in practice for every provider you will meet, so the only correct behavior is to fold both sides to lower case before comparing -- otherwise the gate is one stray capital letter away from excluding the one person it exists to admit. (This needs `[clojure.string :as str]` in the namespace.)
 
-> **How the repo factors this.** The version above reads the email straight from the session and runs on its own, which keeps this chapter self-contained. In the companion repo, `wrap-admin` is the bottom layer of the middleware stack described in [the login-flow chapter](19-auth-email-flow.md) (under "Handler-gated here, middleware-gated in the repo"): `wrap-auth` puts `:user-email`/`:user-eid` on the request and `wrap-terms-accepted` enforces the terms gate, so `wrap-admin` just reads `(:user-email request)` rather than digging into the session itself. Same check, composed into that stack instead of re-deriving the user. If you have built the auth chapters' middleware, prefer that structure; the standalone form here is the minimal thing that works on its own.
+> **How the repo factors this.** The version above reads the email straight from the session, which keeps this chapter self-contained. In the companion repo, `wrap-admin` is the bottom layer of the middleware stack from [the login-flow chapter](19-auth-email-flow.md): `wrap-auth` has already put `:user-email` on the request and `wrap-terms-accepted` has enforced the terms gate, so `wrap-admin` just reads `(:user-email request)` instead of re-deriving the user. Same check, composed into that stack. If you have built the auth chapters' middleware, prefer that structure; the standalone form here is the minimal thing that works on its own.
 
 Three branches, each with two sub-branches for HTML vs JSON responses:
 
@@ -51,7 +48,7 @@ Three branches, each with two sub-branches for HTML vs JSON responses:
 2. **Authenticated but not the admin** -- redirect to the regular dashboard (or 403 for JSON).
 3. **Is the admin** -- pass through to the handler.
 
-The `json?` check uses reitit route data. This matters because the dashboard has both an HTML page and a JSON polling endpoint. You do not want the polling endpoint to return a 302 redirect with an HTML body when the session expires -- the JavaScript `fetch` call would silently follow the redirect and try to parse the login page as JSON.
+The branching on `json?` is the second load-bearing decision here, and it exists because the same authorization rule has to serve two consumers with incompatible failure expectations. The dashboard is an HTML page; the live-polling endpoint is JSON. A browser navigation wants a redirect to a login page when the session lapses; a `fetch` does not. If the JSON endpoint answered an expired session with a 302 to an HTML login page, the `fetch` would silently follow the redirect and hand the polling script a chunk of HTML to parse as JSON -- a confusing client-side error standing in for a clean 401. So the middleware reads `:json?` from the reitit route data and chooses the representation to match the caller: a redirect for the page, a status-coded JSON error for the API.
 
 The admin email is stored in config, not hardcoded. In routes, `wrap-admin` is applied to the entire `/admin` route group:
 
@@ -65,7 +62,7 @@ The admin email is stored in config, not hardcoded. In routes, `wrap-admin` is a
 
 The `:json? true` metadata on the `/stats` route tells `wrap-admin` to return JSON error responses. The HTML dashboard route inherits the middleware but uses the default HTML behavior.
 
-## The Analytics Database
+## The analytics database
 
 One design decision worth explaining: analytics data lives in a separate Datomic database from operational data. Same transactor, same underlying PostgreSQL storage -- zero new infrastructure. But logically separated so you can delete and recreate the analytics database without touching user data.
 
@@ -149,9 +146,9 @@ Recording events needs one small utility -- Datomic uses `java.util.Date` but th
        (mapv (fn [m] (into {} (map (fn [[k v]] [k (convert-instant v)])) m)) tx-data))))
 ```
 
-The `record!` function walks each map in the transaction data, converting any `Instant` values to `Date`. This lets the rest of the codebase work with `java.time` while Datomic gets the `java.util.Date` it expects.
+It walks each map in the transaction data, converting any `Instant` to `Date` -- so the rest of the codebase works in `java.time` while Datomic gets the `java.util.Date` it expects.
 
-## Admin Queries
+## Admin queries
 
 The admin dashboard needs data from both databases: user information from the operational database and magic link analytics from the analytics database. The query layer lives in its own namespace:
 
@@ -168,7 +165,7 @@ The admin dashboard needs data from both databases: user information from the op
 (set! *warn-on-reflection* true)
 ```
 
-### Counting Users
+### Counting users
 
 The simplest query -- total registered users:
 
@@ -186,7 +183,9 @@ The simplest query -- total registered users:
 
 The `.` after `(count ?e)` is Datomic's scalar return syntax -- it returns a single value instead of a set of tuples. The `or` with `0` handles the empty-database case, where `d/q` returns `nil`.
 
-### Listing All Users
+One caveat to carry forward, because this number sits next to "Terms Accepted" in the grid: `total-users` counts user entities that *exist*, and a user entity is created at email verification -- so it is a superset of the people who passed the terms gate, and will read higher than "Terms Accepted" whenever someone verified but never accepted the terms.
+
+### Listing all users
 
 For the users table, we need more detail:
 
@@ -214,7 +213,7 @@ A few things to note here:
 - The sort uses `#(compare %2 %1)` for reverse chronological order -- newest first.
 - Dates are converted from `java.util.Date` (Datomic) to `java.time.Instant` (the rest of the app).
 
-### Recent Magic Links with Time-to-Click
+### Recent magic links with time-to-click
 
 This query is more interesting. It joins the request and verification timestamps, computes the time between them, and returns the 50 most recent:
 
@@ -241,11 +240,9 @@ This query is more interesting. It joins the request and verification timestamps
                      ttc (assoc :time-to-click ttc))))))))
 ```
 
-Time-to-click is a genuinely useful metric. If users take 10 minutes to click a magic link, there might be a deliverability problem. If they click in 3 seconds, the flow is working. The `Duration/between` computation is only done when both timestamps exist -- unverified links get `nil`.
+Time-to-click is a genuinely useful metric: ten minutes between request and click suggests a deliverability problem, three seconds means the flow is working. `Duration/between` runs only when both timestamps exist -- unverified links get `nil` -- and `cond->` adds `:verified-at` and `:time-to-click` only when present, so the result maps stay free of nil entries.
 
-The `cond->` threading macro conditionally adds `:verified-at` and `:time-to-click` only when they have values. This avoids polluting the result maps with nil entries.
-
-### Signup Funnel Stats
+### Signup funnel stats
 
 The funnel query spans both databases:
 
@@ -276,9 +273,9 @@ The funnel query spans both databases:
      :terms-accepted terms-accepted}))
 ```
 
-Three counts, two databases. Links sent and verified come from the analytics database. Terms accepted comes from the operational database. Together they show the full funnel: how many people requested a magic link, how many clicked it, and how many accepted terms and actually signed up.
+Three counts, two databases: links sent and verified from the analytics database, terms accepted from the operational one. Together they trace the full funnel -- requested, clicked, accepted. (Note again that this last count, not `total-users`, is the one that means "completed signup.")
 
-### The Polling Endpoint
+### The polling endpoint
 
 The JSON endpoint for live polling bundles everything into a flat map with numeric values:
 
@@ -299,9 +296,9 @@ The JSON endpoint for live polling bundles everything into a flat map with numer
      :jvm-max-mb (mb (.maxMemory runtime))}))
 ```
 
-This function returns `long` values (not formatted strings) because the JavaScript frontend needs numbers for comparison and animation. The JVM memory figures are pure Java interop -- no Datomic involved -- read straight off `Runtime`: used is total minus free, and `max` is the ceiling the JVM is allowed to claim. Note the `^long` type hint on the `mb` helper: without it, the division would trigger a boxed-math warning -- exactly the kind of thing the strict compilation setup from [the strict-compilation chapter](04-build-hardening.md) catches. The key names match the `data-stat` attributes in the HTML, which is how the polling script knows which element to update.
+It returns `long` values, not formatted strings, because the frontend compares numbers across polls. The JVM figures are pure Java interop read straight off `Runtime` -- used is total minus free, `max` is the ceiling the JVM may claim -- with a `^long` hint on `mb` so the division does not trip the boxed-math warning the [strict-compilation chapter](04-build-hardening.md) turns on. The key names match the `data-stat` attributes in the HTML, which is how the polling script knows which element to update.
 
-## The Handler Layer
+## The handler layer
 
 The handler orchestrates queries and renders the view:
 
@@ -340,9 +337,9 @@ The handler orchestrates queries and renders the view:
 
 Two handlers, one route group. The dashboard handler fetches everything and renders HTML. The stats handler returns JSON for the polling script. Both are protected by `wrap-admin` at the route level, so the handlers themselves do not need to check authorization.
 
-Notice that the dashboard handler calls `d/db` to get a point-in-time snapshot. This is important -- all queries within a single request see the same database state, even if transactions happen concurrently. This is one of Datomic's strengths: you never get inconsistent reads within a request.
+Notice that the dashboard handler calls `d/db` once to get a point-in-time snapshot, so every query in the request sees the same database state even under concurrent writes -- no inconsistent reads within a request.
 
-## The Stat Grid Component
+## The stat grid component
 
 The view layer renders a grid of stat cards using Hiccup:
 
@@ -373,7 +370,7 @@ Each stat card has three data attributes that make live polling work:
 - `data-value` -- the current numeric value (used to detect changes).
 - `style="--stat-value:N"` -- a CSS custom property that drives the animated counter.
 
-The card does not render the number as text content. Instead, the value is set via the `--stat-value` CSS custom property, and CSS renders it using `counter()`. This is what enables the smooth animated transitions on update.
+The card does not render the number as text content; the value rides on the `--stat-value` custom property and CSS renders it with `counter()`, which is what lets the value animate on update (covered below).
 
 The dashboard view assembles eight cards into a 4-column, 2-row grid:
 
@@ -423,9 +420,7 @@ The dashboard view assembles eight cards into a 4-column, 2-row grid:
        (live-stats-style)])))
 ```
 
-The `gap-px` and `bg-border` classes create a shared-border effect: the grid container has the border color as its background, and each card has a solid surface background. The 1px gap between cards reveals the container's border-colored background, creating the appearance of shared borders without any actual border elements. This is a nice Tailwind pattern.
-
-The verification rate ("83%") appears as a trending indicator on the "Verified" card, giving at-a-glance conversion info. JVM stats show percentages too -- used as a percentage of total, and total as a percentage of max.
+The `gap-px` and `bg-border` classes create a shared-border effect: the container's border-colored background shows through a 1px gap between solid-surface cards, so the cards appear to share borders without any border elements. The verification rate ("83%") rides on the "Verified" card as a trending indicator; the JVM cards show used-as-percent-of-total and total-as-percent-of-max the same way.
 
 The `live-stats-style` function inlines the dashboard's animated-counter CSS at the bottom of the page, loaded from a classpath resource with the `defn-asset` macro that reads the file once in production and re-reads on every call in development (for hot-reload):
 
@@ -435,9 +430,11 @@ The `live-stats-style` function inlines the dashboard's animated-counter CSS at 
 
 The polling **JavaScript**, by contrast, is *not* inlined. It is an ordinary ES module, `static/js/admin-stats.js`, loaded once from the base layout's `<head>` alongside the other module scripts (`(script-tag "js/admin-stats.js" {:type "module"})`, from [the Hiccup views chapter](11-hiccup-views.md)). That is a deliberate split: an inline `<script>` in the page body would be forbidden by the strict Content-Security-Policy we add in [the asset pipeline chapter](22-asset-pipeline.md) -- `<main>` carries no inline scripts -- whereas a hashed-and-served module passes cleanly. The script runs on every page but no-ops unless it finds the dashboard's stat elements, so loading it globally costs nothing elsewhere. Inline CSS is fine under the policy; inline behavior is not.
 
-## CSS Animated Counters
+## A note on the animated counters
 
-The CSS is where things get interesting. Modern CSS has a feature called `@property` that lets you define custom properties with types. When combined with CSS counters and transitions, you get animated number counting with no JavaScript animation code:
+One presentational detail, kept short on purpose: the stat numbers tween to their new values instead of snapping. This is polish, not hardening -- the dashboard's correctness and its authorization gate are the chapter's real subject, and a reader auditing this for security can skip the rest of this section. It earns its place only because it costs no JavaScript animation code at all.
+
+The mechanism is `@property`. Declaring a custom property with an `<integer>` type makes it animatable; a CSS counter reads that property, and a `::after` pseudo-element renders the counter as text. A transition on the property does the interpolation:
 
 ```css
 @property --stat-value {
@@ -447,74 +444,16 @@ The CSS is where things get interesting. Modern CSS has a feature called `@prope
 }
 
 [data-stat] {
-  --stat-value: 0;
   counter-reset: stat var(--stat-value);
-  transition: --stat-value 600ms cubic-bezier(0.33, 1, 0.68, 1),
-              color 400ms;
+  transition: --stat-value 600ms cubic-bezier(0.33, 1, 0.68, 1), color 400ms;
 }
 
-[data-stat]::after {
-  content: counter(stat);
-}
+[data-stat]::after { content: counter(stat); }
 ```
 
-Here is how it works:
+When the poller sets `--stat-value` from 5 to 8, the browser interpolates through 6 and 7 and the counter follows. The type declaration is what makes this work -- an untyped custom property is just a string and cannot be interpolated. The JVM cards append `" MB"` to their `::after` content; a `.changed-up` / `.changed-down` class added on update flips the color and fades a directional arrow in via a keyframe. None of it touches the data path.
 
-1. `@property` declares `--stat-value` as an integer type. This is critical -- CSS can only animate between values it understands. A raw custom property is just a string and cannot be interpolated. Declaring it as `<integer>` tells the browser it is a number.
-2. `counter-reset: stat var(--stat-value)` sets a CSS counter named `stat` to the value of the custom property.
-3. The `::after` pseudo-element renders `counter(stat)` as the visible text.
-4. The `transition` property animates changes to `--stat-value` over 600ms with an ease-out curve.
-
-When JavaScript updates `--stat-value` from 5 to 8, the browser interpolates through 6 and 7, updating the counter display at each frame. The result is a smooth counting animation with zero JavaScript animation logic.
-
-JVM stat cards append " MB" to their counter display:
-
-```css
-[data-stat="jvm-used-mb"]::after {
-  content: counter(stat) " MB";
-}
-
-[data-stat="jvm-free-mb"]::after { content: counter(stat) " MB"; }
-[data-stat="jvm-total-mb"]::after { content: counter(stat) " MB"; }
-[data-stat="jvm-max-mb"]::after { content: counter(stat) " MB"; }
-```
-
-### Change Direction Indicators
-
-When a value changes, a small arrow appears briefly to show the direction:
-
-```css
-[data-stat].changed-up { color: #16a34a; }
-[data-stat].changed-down { color: #dc2626; }
-
-[data-stat]::before {
-  font-size: 0.6em;
-  margin-right: 0.15em;
-  opacity: 0;
-}
-
-[data-stat].changed-up::before {
-  content: "\2191";
-  color: #16a34a;
-  animation: fade-arrow 3s forwards;
-}
-
-[data-stat].changed-down::before {
-  content: "\2193";
-  color: #dc2626;
-  animation: fade-arrow 3s forwards;
-}
-
-@keyframes fade-arrow {
-  0% { opacity: 1; }
-  60% { opacity: 1; }
-  100% { opacity: 0; }
-}
-```
-
-An upward arrow in green for increases, a downward arrow in red for decreases. The arrow fades out after 3 seconds. The `forwards` fill mode keeps the arrow hidden after the animation completes. The number itself also briefly changes color to match.
-
-## Live Polling with Vanilla JavaScript
+## Live polling with vanilla JavaScript
 
 The polling script -- `static/js/admin-stats.js`, the module the base layout loads -- is intentionally simple. No framework, no build step, no dependencies:
 
@@ -550,21 +489,13 @@ The polling script -- `static/js/admin-stats.js`, the module the base layout loa
 })();
 ```
 
-Every 20 seconds, it fetches `/admin/stats` and compares each value against the current `data-value` attribute. When a value changes:
+Every 20 seconds it fetches `/admin/stats` and compares each value against the current `data-value`. On a change it updates `--stat-value` (which triggers the tween), writes the new `data-value` as the next baseline, and briefly applies a `changed-up`/`changed-down` class for the directional arrow. The `void el.offsetWidth` between removing and re-adding that class forces a synchronous reflow so the arrow animation restarts rather than no-opping -- a standard CSS-restart trick, called out only so the line is not mistaken for dead code.
 
-1. Update the `--stat-value` CSS custom property (triggers the counter animation).
-2. Update `data-value` so the next poll has a correct baseline.
-3. Remove any existing direction class, then force a reflow with `void el.offsetWidth` (this restarts the CSS animation).
-4. Add the appropriate direction class (`changed-up` or `changed-down`).
-5. Schedule removal of the direction class after 3 seconds.
+The `credentials: 'same-origin'` option is the part that matters for this chapter's spine: it ensures the session cookie rides along with the `fetch`, which is exactly what `wrap-admin` reads to authorize the polling endpoint. Without it the poll would arrive unauthenticated and earn the 401 the JSON branch exists to produce.
 
-The `void el.offsetWidth` trick is worth explaining. If an element already has the `changed-up` class and the value increases again, simply removing and re-adding the class would not restart the animation -- the browser would not see a state change. Reading `offsetWidth` forces a synchronous layout recalculation between the remove and add, which the browser treats as a genuine state transition.
+The empty `.catch(function() {})` swallows network errors on purpose: if the server is briefly unreachable the dashboard keeps showing the last known values, and the next poll in 20 seconds picks up where it left off. No toast, no retry backoff, no complexity.
 
-The `credentials: 'same-origin'` option ensures cookies are sent with the request, which is necessary for the session-based authentication that `wrap-admin` checks.
-
-The empty `.catch(function() {})` silently swallows network errors. This is intentional -- if the server is briefly unreachable, the dashboard just keeps showing the last known values. No error toast, no retry backoff, no complexity. The next poll in 20 seconds will pick up where things left off.
-
-## The Data Tables
+## The data tables
 
 Below the stat grid, the dashboard renders two data tables. Here is the users table:
 
@@ -662,9 +593,9 @@ The date formatting uses `java.time.format.DateTimeFormatter` configured for the
         :else (format "%dh %dm" (quot secs 3600) (quot (rem secs 3600) 60))))))
 ```
 
-The duration formatter is simple but covers the useful range: seconds for short durations, minutes and seconds for medium ones, hours and minutes for long ones. A magic link that takes "2h 15m" to be clicked is a strong signal that something is landing in spam.
+The duration formatter covers the useful range -- seconds, then minutes and seconds, then hours and minutes. A link that takes "2h 15m" to be clicked is a strong signal that mail is landing in spam.
 
-## How It All Fits Together
+## How it all fits together
 
 The data flow is:
 
@@ -672,23 +603,18 @@ The data flow is:
 2. The handler queries both databases (operational for users, analytics for magic links).
 3. Hiccup renders the stat grid with `data-stat` attributes and `--stat-value` CSS properties.
 4. The browser renders the page, CSS counter shows the initial values.
-5. Every 20 seconds, JavaScript polls `/admin/stats` for fresh numbers.
-6. When a value changes, JavaScript updates the CSS custom property.
-7. The browser animates the counter from the old value to the new value over 600ms.
-8. A directional arrow briefly appears and fades out.
+5. Every 20 seconds, JavaScript polls `/admin/stats` for fresh numbers and updates the CSS custom property on any card whose value changed; the counter tweens to the new figure.
 
-No WebSockets, no server-sent events, no client-side state management. The page is server-rendered, the polling is a simple `setInterval` with `fetch`, and the animations are pure CSS. The total JavaScript is about 30 lines.
+No WebSockets, no server-sent events, no client-side state management. The page is server-rendered, the polling is a simple `setInterval` with `fetch`, and the presentation is pure CSS.
 
-## What You Now Have
+## What you now have
 
 After implementing this, you have:
 
-- **Access-controlled admin routes** using a `wrap-admin` middleware that checks a single admin email from config, with proper JSON error responses for API endpoints.
+- **A locked-down admin surface**: a `wrap-admin` middleware gating the whole `/admin` route group on a single, case-insensitively-matched admin email from config, choosing redirects for page requests and status-coded JSON errors for the polling endpoint.
 - **A separate analytics database** that can be independently created, queried, or destroyed without touching operational data.
-- **Datomic queries across two databases** for user stats, signup funnel metrics, and magic link analytics including time-to-click.
+- **Datomic queries across two databases** for user stats, signup funnel metrics, and magic link analytics including time-to-click -- with the `total-users`/`terms-accepted` distinction made explicit rather than left as a trap.
 - **JVM memory monitoring** with used/free/total/max stats and percentage indicators.
-- **A stat grid with live polling** that updates every 20 seconds without a page reload.
-- **CSS animated counters** using `@property`, CSS `counter()`, and transitions -- no JavaScript animation code.
-- **Directional change indicators** (arrows and color changes) that show whether a stat went up or down.
+- **A stat grid with live polling** that updates every 20 seconds without a page reload, and a CSS-only counter animation layered on top as presentational polish.
 
-The entire feature is about 250 lines of Clojure and 70 lines of CSS/JavaScript. It gives you real-time visibility into your application with minimal complexity. No monitoring service to pay for, no dashboard framework to learn, no JavaScript build pipeline to maintain. Just your server, your database, and the browser's built-in capabilities.
+The authorization is the part that has to be right; everything downstream of it is conventional query-and-render. No monitoring service to pay for, no dashboard framework to learn, no JavaScript build pipeline to maintain -- just your server, your database, and a gate you can audit in one screen.

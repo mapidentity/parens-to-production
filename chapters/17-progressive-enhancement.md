@@ -18,7 +18,7 @@ We call the mapping the *progressive-enhancement stack*, and it has five layers,
 
 The crucial property is the ordering. Every feature is built first at Layer 0, and each higher layer is *added on top* as an enhancement that a capable browser opportunistically takes. Disable JavaScript and Layer 0 still works. Disable the View Transitions API and the same update applies instantly. The layers are not alternatives you pick between; they are sediment.
 
-This chapter assumes the server-rendered Hiccup views and the client dispatcher's `fetchAndMorph` from [the Hiccup views chapter](11-hiccup-views.md) and [the morph chapter](16-morph-reload.md), the strict no-nonce CSP from [the asset pipeline chapter](22-asset-pipeline.md), and the Datomic model from [the Datomic chapter](07-datomic.md). The running example is a feature we add along the way: a drag-to-reorder dashboard for a user's own recipes.
+This chapter assumes the server-rendered Hiccup views from [the Hiccup views chapter](11-hiccup-views.md), the client dispatcher's `fetchAndMorph` from [the morph-dispatcher chapter](11b-morph-dispatcher.md), the strict no-nonce CSP from [the asset pipeline chapter](22-asset-pipeline.md), and the Datomic model from [the Datomic chapter](07-datomic.md). The running example is a feature we add along the way: a drag-to-reorder dashboard for a user's own recipes.
 
 ## Two kinds of state
 
@@ -138,7 +138,7 @@ The badge, a sibling link, lifts above that overlay with `position: relative; z-
 
 Every one of these features is progressive: where a browser lacks `@starting-style` the menu still opens, just without the fade; where it lacks anchor positioning the popover still appears in the top layer.
 
-## Layer 2: View Transitions, where motion lives
+## Layer 2: view transitions, where motion lives
 
 Animation is the job morph is worst at, because morph mutates the DOM in place and gives you no before/after to interpolate. The View Transitions API inverts that: you hand the browser a function that mutates the DOM, and it snapshots the page before and after and animates the difference.
 

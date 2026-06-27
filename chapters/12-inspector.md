@@ -1,6 +1,5 @@
 # A Bidirectional Source Inspector for Server-Rendered Hiccup: From Element to Code and Back
 
-
 In [the live-reload chapter](06-live-reload.md) we closed the gap between saving a file and seeing it in the browser. This chapter closes two more, in both directions:
 
 - **Element → code.** You spot a misaligned badge in the admin dashboard; hold a key, hover it, and your editor opens the exact `.clj` line that produced it.
@@ -10,9 +9,9 @@ Front-end frameworks have had the first half for years (React/Vue/Svelte inspect
 
 It reuses two things from [the live-reload chapter](06-live-reload.md) — the file watcher and the `dev-reload` WebSocket — and hooks into the `base-layout` from [the Hiccup views chapter](11-hiccup-views.md). Everything here is dev-only and **structurally absent** from production builds, the same as the rest of our dev infrastructure. If you read strictly in order, the Hiccup views chapter's layout sections are the relevant background.
 
----
+> **Why build this on a server-rendered app?** Because it keeps a workflow Clojure programmers refuse to give up. The REPL habit is to stay in live contact with the running system — evaluate, inspect the value, navigate the data, redefine, look again — and the browser is normally where that contact ends: the server ships HTML across the wire, and the rendered page is a dead artifact with no thread back to the process that built it. The inspector reopens that thread at the border, and it runs both ways. Element → code makes the page interrogable — hover a pixel and your editor opens the line that produced it — the way the REPL makes a namespace interrogable. Code → element closes the other half: put your cursor on a view function and the element it rendered lights up in the live page, folding the editor into the loop exactly as REPL evaluation already does, so editor, running process, and rendered page stop being three windows you alt-tab between and become one connected surface. A React or Vue developer takes element-to-source inspection for granted because it ships with the framework, and the instinct is that server-rendered Hiccup means doing without. It does not, *because we own the rendering path and can instrument it ourselves*. That is the lesson of this chapter and the construction-view chapters that follow: choosing SSR costs you neither the interactive, REPL-driven development Clojure is built on nor a toolbox an SPA would have — you extend that workflow across the browser boundary instead of surrendering it there. The tool earns its keep in proportion to how much view code you have and how often you hunt *which* function produced a given pixel; the idea behind it is bigger still, and the next section starts with it — welding source locations onto plain Clojure data with `tools.reader`.
 
-## Part I — Element → code
+## Part I — element → code
 
 ### Why this is hard for Hiccup specifically
 
@@ -66,7 +65,7 @@ Two facts, stacked, make element-level mapping possible.
 
 The **end** positions matter later (the reverse direction does span-containment), and they are present too. Where the default reader gave `nil`, tools.reader gives every `[…]` its own coordinates.
 
-**Fact two — the one that makes it all work:** the Clojure compiler *preserves* a vector literal's metadata onto the runtime value, and does so even for vectors built in a loop:
+**Fact two:** the Clojure compiler *preserves* a vector literal's metadata onto the runtime value, and does so even for vectors built in a loop:
 
 ```clojure
 (def render (eval '(fn [xs] (mapv (fn [x] ^{:line 9} [:li x]) xs))))
@@ -218,7 +217,7 @@ The source tags exist only because the loader applied them, so any re-definition
 
 ### Call-site tagging: telling instances apart
 
-Here is the subtlety the three-coordinate table hinted at. Consider a dashboard that calls one component eight times:
+This is the distinction the three-coordinate table flagged. Consider a dashboard that calls one component eight times:
 
 ```clojure
 [:dl
@@ -260,7 +259,7 @@ The fix is to tag each rendered instance with its **invocation site**. During th
     ,,, ))   ; map/set/else preserve metadata the same way
 ```
 
-Now the two cases resolve correctly, and — this is the nice part — they are *the same mechanism*:
+Now the two cases resolve correctly, and they are *the same mechanism*:
 
 - **Distinct call sites** (the eight `stat-card`s): each gets a different `data-myapp-callsite`, so a cursor on one call lights up exactly one card.
 - **A single call in a loop** (`(for [r recipes] (recipe-card r))`): one source site, so all its instances share one `data-myapp-callsite` — and lighting up all of them is *correct*. One place in the code, many renders.
@@ -373,9 +372,7 @@ A browser can't open your editor; the server can. In the live-reload chapter the
 
 How the editor actually opens the file is Part II. `push-open!` writes an `{type "open" ...}` message to every connected editor over the same `/dev/ws` socket and returns the delivery count; `handle-open!` uses that count to report success or "no editor connected" back to the browser. There is no shell-out — opening always goes through a live editor agent.
 
----
-
-## Part II — Code → element
+## Part II — code → element
 
 The forward direction tags the DOM with source coordinates. The reverse direction is the dual: take an editor cursor and find the DOM. It needs three pieces — an **index** (so the server can map a cursor to coordinates), an **editor agent** (so the editor can report the cursor), and a **highlighter** in the browser.
 
@@ -490,8 +487,6 @@ The **component frame** has one wrinkle worth its own note. A component that ret
 
 > **Trade-off — root-less components.** Keying the component frame on a `data-myapp-name` root is precise per instance but misses string-returning layouts and fragments. Span-membership covers them at the cost of a single bounding box instead of crisp per-instance frames. We use the root when present and the span otherwise; the two together cover every component shape.
 
----
-
 ## Surfacing a failed reload
 
 One more dev affordance, reusing the same relay. When you save a file with a syntax error, the hot-reload hook can't load it: the edit doesn't take, and — crucially — the browser is *not* told to reload, so it keeps showing the old page. That's a quiet trap. The page looks fine, so you assume your change applied when it didn't; the only sign is a stack trace in the server terminal.
@@ -513,8 +508,6 @@ else if (data.type === 'reload-error') showStaleWarning(data.file, data.error);
 
 The wording is deliberately soft. We know a reload *failed*; we don't know the current page actually renders the broken file — it could be an unrelated source reload — so "may be" is the honest claim. There's no explicit clear path: the next *successful* reload navigates the page (a full `location.reload()`), which removes the banner along with everything else, and the `×` dismisses it in the meantime. Dev-only, like the rest — the message originates only from the dev file-watcher, and the script ships only in the dev-gated asset block.
 
----
-
 ## Keeping production clean
 
 Trace every piece and confirm it disappears in prod:
@@ -526,8 +519,6 @@ Trace every piece and confirm it disappears in prod:
 - The editor agent is a Joyride script in `.joyride/`; it does nothing without the Joyride extension and a running dev server.
 
 The feature is structurally absent, not merely disabled.
-
----
 
 ## Trade-offs & limitations, in one place
 
@@ -551,7 +542,7 @@ The feature is structurally absent, not merely disabled.
 - **The dev WebSocket is unauthenticated.** Anything that can reach `localhost:3000/dev/ws` can ask to open a (src-confined) file or push a cursor. That is acceptable for a dev-only, loopback service; don't expose the dev server.
 - **A small dev startup cost.** Reading views through tools.reader, wrapping calls, instrumenting vars, and indexing is more work than a plain `load` — paid once per view file at startup/reload, and never in production.
 
-## Design Decisions Worth Noting
+## Design decisions worth noting
 
 - **The metadata rides on the value — there is no index to keep in sync (forward).** The location travels welded to the Hiccup vector from read time, through `eval`, through every `for` and helper, onto the page. A `for`-row maps to its template line; an `if`-branch maps to the branch taken.
 - **The loader instruments; the views stay plain.** Auto-instrumenting every fn in a `views.clj` (safe because `tag-hiccup` no-ops on non-elements) gets the component layer with zero source ceremony: views need no per-function annotation.
@@ -559,7 +550,7 @@ The feature is structurally absent, not merely disabled.
 - **DOM-as-truth precedence (reverse).** The server proposes coordinates; the browser highlights whatever actually rendered, so conditionals, loops, and not-taken branches all behave correctly without the server predicting anything.
 - **A resource check for `dev?`.** Detecting dev with `requiring-resolve` of the hot-reload namespace can close a circular load during the app's own startup, throw, get swallowed, and silently freeze `dev?` to false. `(io/resource "hot_reload.clj")` answers the same question without loading anything.
 
-## What You Now Have
+## What you now have
 
 Building on the live-reload chapter's watcher and dev WebSocket, with one namespace (`myapp.web.inspector`), one dev loader (`inspector-load`), one inlined script (`inspector.js`), one Joyride script (`workspace_activate.cljs`), and a relay in `dev-reload`, you get a **bidirectional** inspector:
 
@@ -568,4 +559,4 @@ Building on the live-reload chapter's watcher and dev WebSocket, with one namesp
 - `for`-rows resolve to their template; conditionals to the branch taken; clicks to the selection, not the pointer.
 - Zero production footprint — no attributes, no script, no server code, all structurally excluded.
 
-The whole thing rests on one trick that the front-end world never needed: Hiccup is plain data with no source information, so you manufacture it — and `clojure.tools.reader` plus the Clojure compiler will, between them, carry a line number from your file to a running vector if you simply stop throwing it away. Everything else — call sites, the reverse direction, the editor bridge — is built on that single welded coordinate.
+The whole thing rests on one move the front-end world never had to make: Hiccup is plain data with no source information, so you manufacture it — and `clojure.tools.reader` plus the Clojure compiler will, between them, carry a line number from your file to a running vector if you simply stop throwing it away. Everything else — call sites, the reverse direction, the editor bridge — is built on that single welded coordinate.

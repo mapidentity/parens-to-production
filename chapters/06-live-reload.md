@@ -29,11 +29,11 @@ All of the dev tooling lives in a `dev/` directory that is on the classpath *onl
                     cider/cider-nrepl {:mvn/version "0.58.0"}}}}
 ```
 
-Two of those deps look out of place this early. `tools.reader` is not used by the watcher at all -- it is here for the source inspector's loader a few chapters on ([the inspector](12-inspector.md)), which reads view files form-by-form; we list it now so the `:dev` alias does not churn later. `tools.namespace` is the full-refresh library from option (b) above: we do not build the reload loop on it, but it stays available for the occasional manual `refresh` at the REPL. Neither ships in production.
+Two of those deps serve later code. `tools.reader` is not used by the watcher -- it feeds the source inspector's loader ([the inspector](12-inspector.md)), which reads view files form-by-form. `tools.namespace` is the full-refresh library from option (b) above: the reload loop does not use it, but it stays available for the occasional manual `refresh` at the REPL. Neither ships in production.
 
 Because `dev/` is an extra path, the namespaces in it -- `hot-reload`, `dev-reload`, `user` -- exist on the classpath when you develop with the `:dev` alias and do not exist at all in a production build. This is not a convention or a runtime flag; it is a structural fact about what code is present. We will lean on it twice: the WebSocket route and the browser-side script both check, at runtime, whether the dev namespace can be resolved, and both become inert when it cannot. `requiring-resolve` returning nil in production is the same guarantee viewed from the calling side.
 
-## The File Watcher
+## The file watcher
 
 The core of the system is built on Java NIO's `WatchService`. It monitors the `src/` tree and reacts when a file is modified.
 
@@ -150,9 +150,12 @@ The `WatchService` works at the directory level: you register directories, not i
     (log/info "File watcher started" {:watch-path "src"})))
 ```
 
-The details worth calling out:
+The details worth calling out -- the first three are the `java.nio.file` interop a reader new to it is most likely to stall on:
 
-- **We register both `ENTRY_MODIFY` and `ENTRY_CREATE`.** When you create a new directory under `src/` -- a new namespace package -- the watch loop sees the create event, notices it is a directory, and registers it too. You never have to restart the watcher to pick up newly added namespaces.
+- **Registering the tree means walking it first.** A `WatchService` watches *directories*, not whole trees, so before the loop can run we enumerate every subdirectory under `src/` and `.register` each one. `Files/find` does the walk; its filter argument is a Java `BiPredicate` of `(path, attrs)`, which Clojure has no literal for, so we `reify` one and keep only entries whose `BasicFileAttributes` report `isDirectory`.
+- **The empty `(make-array …)` calls pass "no varargs" across interop.** `Files/find` and `Files/isDirectory` both end in a Java varargs parameter (`FileVisitOption…`, `LinkOption…`). Clojure does not splat into Java varargs, so the way to pass *none* is to hand over a zero-length array of exactly that element type -- `(make-array java.nio.file.FileVisitOption 0)`. It reads oddly the first time; it is just the standard shim for an empty varargs tail.
+- **An event carries a name, not a path.** A `WatchEvent`'s `.context` is the changed entry *relative to the directory the key was registered on*, so we recover the absolute path by taking the key's `.watchable` (that directory) and `.resolve`-ing the context against it. If the new entry is itself a directory, the loop `.register`s it on the spot -- which is what lets a brand-new namespace package be watched without a restart.
+- **We register both `ENTRY_MODIFY` and `ENTRY_CREATE`.** Modify is the everyday save; create is what fires when a new file or directory appears, so the watcher reacts to additions, not just edits.
 - **The poll thread is a daemon thread.** It dies when the JVM exits, so a forgotten watcher never keeps the process alive.
 - **`.take` is blocking.** The thread sleeps until there is an event, consuming zero CPU while idle.
 - **`ClosedWatchServiceException` is caught silently.** This is the normal shutdown path: when we close the WatchService, the blocking `.take` throws this exception, the loop exits, and the thread ends.
@@ -173,7 +176,7 @@ Stopping the watcher is the mirror image:
 
 Closing the WatchService makes the daemon thread's blocking `.take` throw the `ClosedWatchServiceException` we catch, so the thread unwinds on its own. Clean and simple.
 
-## WebSocket Browser Refresh
+## WebSocket browser refresh
 
 The watcher knows *that* a file changed. The browser needs to be *told*. That is the job of the `dev-reload` namespace: it holds the set of connected browser sockets and broadcasts messages to them.
 
@@ -294,7 +297,7 @@ The same guard governs whether the browser even loads the dev script. The base l
 
 In production the guard yields nil and no dev `<script>` appears in the rendered HTML. The entire client side of this system is structurally absent from a production page.
 
-## The Client Side
+## The client side
 
 The browser-side script (`src/myapp/web/dev-reload.js`) is small: open the WebSocket, and on a `reload` message reload the page. The one nicety is that it stashes your scroll position before reloading and restores it after, so a full reload keeps your place rather than snapping you to the top.
 
@@ -324,7 +327,7 @@ ws.onerror = function (error) { console.log('WebSocket error:', error); };
 
 The scroll stash goes into `sessionStorage` -- it has to survive the page navigation that `reload()` causes, so an in-memory variable would not do. On the next page load we read it back, scroll to it, and clear it. The full reload is correct and total: the whole page comes back fresh, just where you left it vertically.
 
-## The REPL Entry Point
+## The REPL entry point
 
 The last piece ties it together into a single command. `user.clj` loads when you start a REPL and exposes a `start!`:
 
@@ -367,13 +370,7 @@ And `hot-reload/start` brings up the server and the watcher:
 
 Open a REPL, type `(start!)`, and the whole loop is live: the server is up, the watcher is watching `src/`, and any connected browser tab will reload when you save.
 
-## Design Decisions Worth Noting
-
-**`load-file` instead of `tools.namespace`.** We load exactly the one file that changed rather than running `clojure.tools.namespace.repl/refresh`. The tools.namespace approach scans the whole source tree and reloads in dependency order, which is powerful but slow and occasionally surprising -- it can wipe `defonce` state. For a server-rendered app where you edit one handler or view at a time, loading just that file is faster and more predictable, and it never resets the state we deliberately hold in `defonce`.
-
-**`requiring-resolve` for dev/prod separation.** `(requiring-resolve 'dev-reload/websocket-handler)` is a runtime classpath check that returns nil when the namespace is absent. This is more reliable than an environment variable or a config flag because it is *structurally impossible* to accidentally enable dev reload in production -- the code simply is not on the classpath. The route uses it to decide whether to serve the socket; the layout uses it to decide whether to emit the script. One mechanism, applied on both sides.
-
-## Where This Goes Next
+## Where this goes next
 
 What we have is correct and useful: save a file, the browser reloads, you keep your scroll position. But a full reload is a blunt instrument. It throws away *all* page state -- focus, in-progress form input, open `<details>` -- and rebuilds the page from scratch even when the edit was a one-line markup tweak. That is fine for now, when every edit is a `.clj` file and the only response we have is "reload the page."
 

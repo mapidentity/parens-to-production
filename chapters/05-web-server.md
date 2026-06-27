@@ -1,11 +1,10 @@
 # Your First Clojure Web Server: Ring, http-kit, and Reitit
 
-
 You have Clojure installed and a project skeleton. Now you need to serve HTTP requests. In most ecosystems this means picking a framework -- Rails, Django, Express -- and letting it dictate your project structure. Clojure takes a different approach. You compose small, focused libraries into your own stack. This gives you exactly what you need and nothing you don't.
 
 In this chapter we will build a running web server with routing, configuration, and a clean development workflow. By the end you will have a `curl`-able health endpoint and a REPL you can use to start, stop, and inspect your server without leaving your editor.
 
-## The Stack
+## The stack
 
 Here is what we are using and why:
 
@@ -14,7 +13,7 @@ Here is what we are using and why:
 - **Reitit** -- Data-driven routing from Metosin. The long-standing alternative is Compojure, which expresses routes as macros (`(GET "/foo" [] ...)`); Reitit expresses them as plain vectors instead. That difference is the reason we choose it: a route tree that is *data* can be inspected, transformed, and tested without being executed -- the testing chapter walks the whole tree as a value to assert every route resolves, which a macro-based router cannot offer.
 - **Aero** -- Configuration as EDN with profile support (`:dev`, `:prod`). Environment variables, defaults, and profile switching without a framework.
 
-## deps.edn: Your Project File
+## deps.edn: your project file
 
 Clojure projects use `deps.edn` to declare dependencies and paths. Here is the relevant subset for our web server:
 
@@ -66,7 +65,7 @@ clj -M:dev:repl
 
 This gives you a running nREPL server that your editor (Emacs/CIDER, VS Code/Calva, IntelliJ/Cursive) can connect to.
 
-## Ring: Requests and Responses as Maps
+## Ring: requests and responses as maps
 
 Ring is not a framework. It is a specification. An HTTP request is a Clojure map:
 
@@ -198,7 +197,7 @@ Reitit represents routes as data -- nested vectors that describe your URL tree. 
 
 This requires `myapp.web.handler`, which we create in the next section.
 
-### The Route Tree
+### The route tree
 
 ```clojure
 (def routes
@@ -214,7 +213,7 @@ We start with just two routes, because they are the two we can actually serve to
 
 The `/health` endpoint is defined inline since it's trivial: return `{"status":"ok"}` with a 200. This is the endpoint your load balancer or monitoring tool will poll. The other route points at `myapp.web.handler`, which we create next.
 
-### The Handler Namespace
+### The handler namespace
 
 A *handler* is a plain function from a Ring request map to a Ring response map. We keep them in their own namespace, `myapp.web.handler`, so routing stays a pure description of the URL tree and the request-handling logic lives apart from it. At this point the namespace is tiny -- it grows into the orchestration layer for auth, the recipe domain, and the views as those arrive:
 
@@ -241,7 +240,7 @@ A *handler* is a plain function from a Ring request map to a Ring response map. 
 
 `json-response` builds a plain Ring response map: set the content type, serialize the data to JSON, done. The `json` alias is `clojure.data.json` (the `org.clojure/data.json` dependency from our `deps.edn`); `write-str` turns a Clojure value into a JSON string, and we pass a string body straight through unchanged. `home` returns a stub HTML page for now -- the [Hiccup views chapter](11-hiccup-views.md) replaces its body with a real server-rendered view, and the [auth](18-auth-tokens.md) and dashboard chapters add the handlers the fuller route tree calls.
 
-### The Middleware Stack
+### The middleware stack
 
 Middleware wraps around the entire application. Order matters -- the first middleware listed is the outermost layer:
 
@@ -279,7 +278,7 @@ Two structural choices worth noting:
 - **`app*` is a `delay`**, just like our config. This prevents the middleware stack from being built at compile time (which would try to read config, which might not be available yet). It's built once on the first request.
 - **`app` is a plain function** that derefs the delay. The server receives `#'routes/app` (a var reference), which means you can redefine `app` at the REPL and the server picks up changes without restarting.
 
-This three-entry stack is the foundation, not the whole. Later chapters insert more middleware here -- locale negotiation ([i18n](09-i18n.md)), a no-cache guard for authenticated pages, the current-user/auth/terms/admin gates ([auth](18-auth-tokens.md), [admin](21-admin-dashboard.md)), and a strict Content-Security-Policy ([asset pipeline](22-asset-pipeline.md)) -- and `myapp.config` learns to resolve more keys (a `:signing-key` for magic-link HMAC, `:database-uri`, an `:admin-email`) the same way it resolves `:session-key` here. The mechanism does not change; the stack and the config just get longer.
+Later chapters insert more middleware here -- locale negotiation ([i18n](09-i18n.md)), a no-cache guard for authenticated pages, the current-user/auth/terms/admin gates ([auth](18-auth-tokens.md), [admin](21-admin-dashboard.md)), and a strict Content-Security-Policy ([asset pipeline](22-asset-pipeline.md)) -- and `myapp.config` learns to resolve more keys (a `:signing-key` for magic-link HMAC, `:database-uri`, an `:admin-email`) the same way it resolves `:session-key` here.
 
 Putting the pieces together, here is the whole path a request takes through the parts this chapter built. Each middleware is a layer the request passes *inward* through on the way to a handler, and the response passes back *outward* through on the way to the browser -- which is exactly why order matters, and why the outermost layer is listed first:
 
@@ -310,7 +309,7 @@ Putting the pieces together, here is the whole path a request takes through the 
 
 The request is a plain map going down; the response is a plain map coming back up; every layer is just a function that can look at or alter either one. That is the entire Ring model, and the rest of the book only ever adds layers to this onion -- it never changes its shape.
 
-## The Entry Point
+## The entry point
 
 The `myapp.core` namespace ties everything together:
 
@@ -369,9 +368,9 @@ Several important patterns here:
 
 **`(:gen-class)`.** This tells the Clojure compiler to generate a Java class with a static `main` method, which is what `java -jar` expects when running the uberjar in production.
 
-**`start-server!` will gain startup steps.** Right now it only boots http-kit. As later chapters add a database and a content-hashed asset pipeline, this function grows a few lines at the front -- creating the Datomic database ([Datomic chapter](07-datomic.md)) and loading the asset manifest ([asset pipeline](22-asset-pipeline.md)) before the server accepts traffic. Likewise, `dev/user.clj`'s `start!` is rewired to go through the hot-reload entry point once [live reload](06-live-reload.md) exists. The skeleton here is deliberately the minimum that runs.
+**`start-server!` will gain startup steps.** Right now it only boots http-kit. As later chapters add a database and a content-hashed asset pipeline, this function grows a few lines at the front -- creating the Datomic database ([Datomic chapter](07-datomic.md)) and loading the asset manifest ([asset pipeline](22-asset-pipeline.md)) before the server accepts traffic. Likewise, `dev/user.clj`'s `start!` is rewired to go through the hot-reload entry point once [live reload](06-live-reload.md) exists.
 
-## REPL-Driven Development
+## REPL-driven development
 
 The `dev/user.clj` file is automatically loaded when you start a REPL with the `:dev` alias (because `dev` is on the classpath, and Clojure looks for a `user` namespace on startup). This is where you put development shortcuts:
 
@@ -427,7 +426,7 @@ This is profoundly different from the edit-compile-restart cycle. You keep the s
 
 No browser, no curl, no HTTP overhead. Just call the function with data and inspect the result.
 
-## Try It
+## Try it
 
 Start the REPL and server:
 
@@ -458,7 +457,7 @@ Stop it:
 ;; Server stopped
 ```
 
-## What You Now Have
+## What you now have
 
 You have a running Clojure web server with:
 
@@ -469,6 +468,6 @@ You have a running Clojure web server with:
 - **A clean entry point** in `myapp.core` with start/stop/restart lifecycle
 - **A REPL workflow** where code changes take effect immediately without restarting
 
-This is a foundation you can build on. The pieces are independent and composable. When you need authentication, you add middleware. When you need more routes, you extend the route vector. When you need a database, you add it to your startup sequence. Nothing forces you into a structure you don't want.
+The pieces are independent and composable -- the through-line of the whole chapter -- so the stack grows by addition rather than rework: nothing here forces a structure you would later have to undo.
 
 Next, we sharpen the development loop with live reload so changes show up in the browser the instant you save. Soon after, a test suite -- covering config loading, routing, and the middleware stack -- lets us keep refactoring this foundation without fear of breaking it.

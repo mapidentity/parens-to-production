@@ -2,7 +2,7 @@
 
 You are about to build the view layer in Hiccup -- vectors of tags and attributes that render to HTML. Those views need to look like something. Before we get into markup, we need a styling system: a way to give every page a consistent look without inventing a parallel vocabulary of class names and a sprawl of CSS files that drift out of sync with the markup they style.
 
-This chapter sets that up. It is deliberately small and self-contained. All it needs is a running web server and the project's `static/` directory. The production story for styles -- content-hashing the stylesheet, immutable caching, the Content-Security-Policy -- belongs to the asset pipeline chapter much later in the book; here we just get Tailwind producing a stylesheet your views can use as you write them.
+This chapter sets that up. It is deliberately small and self-contained. All it needs is a running web server and the project's `static/` directory. The production story for styles -- content-hashing the stylesheet, immutable caching, the Content-Security-Policy -- belongs to the asset pipeline chapter; here Tailwind produces a stylesheet your views can use as you write them.
 
 ## Why Tailwind in a server-rendered Clojure app
 
@@ -27,9 +27,7 @@ Here is the top of `input.css`:
 ```css
 @import "tailwindcss" source("./src");
 
-/* The dev-only source inspector uses its own injected `.fy-insp-*` styles, never
-   Tailwind utilities. Excluding it keeps a false-positive `resize` token (from its
-   `addEventListener('resize', ...)`) out of the production bundle -- zero prod footprint. */
+/* Keep the dev-only inspector's JS out of Tailwind's content scan (see note below). */
 @source not "./src/myapp/web/inspector.js";
 
 @view-transition {
@@ -72,7 +70,26 @@ A few things to note:
 
 **`@theme` block** -- Design tokens as CSS custom properties. Once declared, you use them directly in utilities: `bg-primary`, `text-text-secondary`, `border-border`. The naming is deliberately semantic -- `surface`, `chrome`, `accent` -- rather than color scales like `indigo-600`. A focused app has a small, fixed palette; you do not need eleven shades of every color.
 
-Below `@theme` the file carries plain CSS that does not map cleanly to utilities: a `.legal-content` block for rendering markdown documents (privacy policy, terms) with proper typography, interaction transitions (press feedback, card hover lift, a `details[open]` chevron rotation), focus-visible outlines for keyboard navigation, and the `.diff-add` / `.diff-del` styles used by the recipe version diff.
+Below `@theme` the file carries plain CSS that does not map cleanly to utilities: a `.legal-content` block for rendering markdown documents (privacy policy, terms) with proper typography, interaction transitions (press feedback, card hover lift, a `details[open]` chevron rotation), focus-visible outlines for keyboard navigation, and the `.diff-add` / `.diff-del` styles used by the recipe version diff. It is worth seeing a slice of it, because "Tailwind for everything" is not the claim -- the claim is Tailwind for the *utility-shaped* styling, and a small amount of hand-written CSS for the rest:
+
+```css
+/* Press feedback and hover lift -- one rule each, applied by selector rather
+   than repeated on every clickable element and card in the markup. */
+button, a, [role="button"] { transition: transform 100ms ease-out, color 150ms ease-out; }
+button:active, a:active, [role="button"]:active { transform: scale(0.97); }
+
+/* Visible focus rings for keyboard navigation, keyed to the theme token. */
+button:focus-visible, a:focus-visible, input:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Recipe version diff -- semantic classes the diff renderer emits. */
+.diff-add { background-color: #ecfdf5; color: var(--color-positive); }
+.diff-del { background-color: #fff1f2; color: var(--color-negative); text-decoration: line-through; }
+```
+
+Each of these earns its place outside the utility system for a concrete reason. The press/focus rules are *cross-cutting*: they apply to every button and link on the site, so a selector states them once where a utility class would repeat the same string on hundreds of elements (and silently miss the next one). The `.diff-add`/`.diff-del` classes are *semantic*: the diff renderer emits `class="diff-add"` from the server, and a name that says what the row *is* outlives whatever colors we paint it. And note both still reach into the `@theme` tokens -- `var(--color-primary)`, `var(--color-positive)` -- so even the hand-written CSS shares one palette with the utilities. The token block is the source of truth; the utilities and the plain CSS are two ways of spending it.
 
 ## Extending the tokens, and the responsive prefixes
 
@@ -111,7 +128,7 @@ That scans `./src`, finds the utility classes you have used, and writes a single
 [:link {:rel "stylesheet" :href "/styles.css"}]
 ```
 
-That plain `/styles.css` is all dev needs. (When the asset pipeline arrives near the end of the book, this href is swapped for `(assets/asset "styles.css")`, which returns `/styles.css` unchanged in dev but a content-hashed URL in production -- the rendered dev output is identical, so do not reach for it yet.) That is the entire dev styling loop: edit a view, regenerate `static/styles.css`, the browser picks up the new CSS.
+That plain `/styles.css` is all dev needs. (The asset pipeline chapter swaps this href for `(assets/asset "styles.css")`, which returns `/styles.css` unchanged in dev but a content-hashed URL in production.) That is the entire dev styling loop: edit a view, regenerate `static/styles.css`, the browser picks up the new CSS.
 
 To confirm it works, start the server, open any page, and check that the font and colors apply -- or just `grep` the output for a token you used (`grep bg-primary static/styles.css`) to see Tailwind emitted it.
 
@@ -119,6 +136,6 @@ To confirm it works, start the server, open any page, and check that the font an
 
 What keeps the regeneration loop fast and automatic in development -- a long-lived `tailwindcss --watch` process and the file watcher that swaps the stylesheet in the browser -- is part of the hot-reload story, and it is covered in the hot-reload chapters, not here. What turns this same `static/styles.css` into a content-hashed, immutably cached production asset is the asset pipeline chapter, near the end of the book. For now the picture is simple: Tailwind writes one stylesheet, the layout links it, and your views can use utility classes immediately.
 
-## What You Now Have
+## What you now have
 
 The app has a styling system with no JavaScript runtime dependency: the standalone Tailwind v4 CLI as a build tool, semantic design tokens declared in CSS, a variable font with `font-display: swap`, and a single stylesheet served at a stable URL in development. Every view you write from here on can reach for utility classes -- `mt-4`, `flex`, `bg-primary`, `text-text-secondary` -- co-located with the Hiccup markup they style, with no separate CSS file to keep in sync. That is enough to start building views.

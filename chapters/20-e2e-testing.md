@@ -1,11 +1,10 @@
 # E2E Testing a Clojure Web App with Playwright
 
+Unit tests prove your functions work. E2E tests prove your application works. There is a gap between the two that no amount of unit coverage can bridge: the gap where middleware ordering matters, where sessions expire, where a redirect chain lands somewhere unexpected, where the browser does not behave the way your mental model predicted. Closing that gap is what this chapter is for, and closing it honestly means running the real thing: a dedicated Clojure test server, its external services stubbed, driven through an actual browser by Playwright.
 
-Unit tests prove your functions work. E2E tests prove your application works. There is a gap between the two that no amount of unit coverage can bridge: the gap where middleware ordering matters, where sessions expire, where a redirect chain lands somewhere unexpected, where the browser does not behave the way your mental model predicted. This chapter covers how to set up proper end-to-end testing for a Clojure web app using Playwright, with a dedicated test server, stubbed services, and test-only endpoints for controlling state.
+The shape we are after is a self-contained suite that spins up a fresh server backed by in-memory databases, captures emails instead of sending them, and exercises the auth flow end to end -- the same path a user walks, with nothing mocked between the click and the database.
 
-By the end, you will have a self-contained E2E test suite that spins up a fresh Clojure server with in-memory databases, captures emails instead of sending them, and exercises your auth flow through a real browser.
-
-## The Architecture
+## The architecture
 
 The E2E setup has four pieces:
 
@@ -16,7 +15,7 @@ The E2E setup has four pieces:
 
 This architecture keeps E2E concerns completely separate from your production code. The test server never ships. The test endpoints never exist outside of the test process. Your production server is not modified or compromised in any way.
 
-## The E2E Server
+## The E2E server
 
 The heart of the setup is a dedicated server entry point. It looks like your production server, but with deliberate differences: in-memory databases, stubbed email sending, and extra routes for test control.
 
@@ -43,7 +42,7 @@ The heart of the setup is a dedicated server entry point. It looks like your pro
     [ring.middleware.session.cookie :as cookie]))
 ```
 
-### Capturing Emails Instead of Sending Them
+### Capturing emails instead of sending them
 
 The first problem is email. Your auth flow sends magic links via SMTP. In tests, you do not have an SMTP server, and even if you did, you would not want tests depending on network I/O. The solution is simple: an atom that collects emails, and a stubbed function that writes to it instead of sending.
 
@@ -55,7 +54,7 @@ The first problem is email. Your auth flow sends magic links via SMTP. In tests,
 
 The stub replaces the real `send-magic-link!` function at server startup (more on that below). Each call appends a map with the recipient and the magic link URL to the atom. From Playwright's perspective, the auth flow works identically -- the user enters their email, the server "sends" a magic link -- except the link ends up in memory instead of an inbox.
 
-### Test-Only Endpoints
+### Test-only endpoints
 
 Now Playwright needs a way to retrieve those captured emails. We add two endpoints that only exist in the E2E server:
 
@@ -100,7 +99,7 @@ The `/test/emails` endpoint supports a `?to=` query parameter for filtering by r
 
 This pattern generalizes. Any external service your app depends on -- payment processing, SMS, webhooks -- can be stubbed the same way: replace the side-effecting function, capture the calls in an atom, expose them via a test endpoint.
 
-### Deterministic Configuration
+### Deterministic configuration
 
 The E2E server uses hardcoded configuration instead of reading from environment variables:
 
@@ -122,14 +121,14 @@ The E2E server uses hardcoded configuration instead of reading from environment 
           :from "test@myapp.lan"}})
 ```
 
-A few things to note:
+Four choices in that block are deliberate:
 
 - **Port 9876** is fixed. The Playwright config needs to know where to find the server.
 - **In-memory Datomic** (`datomic:mem://`) means every test run starts fresh. No leftover data from previous runs, no database cleanup scripts.
 - **Deterministic keys** for session signing and token verification. These come from your test helpers module and are fixed byte arrays, not random. This means sessions and tokens behave identically across test runs.
 - **SMTP config points nowhere real.** The email function is stubbed, so these values are never used, but they are present to keep the config shape consistent.
 
-### Building the Ring Handler
+### Building the Ring handler
 
 The app handler is assembled the same way as production, but using the extended route table:
 
@@ -163,7 +162,7 @@ The middleware stack is real. The session handling is real. The cookie store is 
 
 We keep `:same-site :lax` to match production -- the magic-link flow is a cross-context GET, and `:strict` would block the cookie on that navigation (more on this in [the email login-flow chapter](19-auth-email-flow.md)). We do drop `:secure`, because the e2e server runs over plain HTTP on `localhost`; a `:secure` cookie would never be sent. Those are the only deliberate cookie differences.
 
-### The Start Function
+### The start function
 
 Everything comes together in `start!`:
 
@@ -211,7 +210,7 @@ The sequence matters:
 
 The `alter-var-root` approach deserves a note. It is a blunt instrument -- it globally replaces the function. For E2E testing, this is exactly what you want. The test server is a separate process. There is no risk of affecting production code. And it means the stubbing works everywhere the function is called, without needing to thread a mock through the call stack.
 
-## Playwright Configuration
+## Playwright configuration
 
 With the server in place, Playwright needs to know how to start it and where to find it:
 
@@ -262,9 +261,9 @@ The `clojure -X:test` invocation uses Clojure's exec-fn mechanism. The `:test` a
 
 The Chrome launch options (`--no-sandbox`, `--disable-dev-shm-usage`) are for CI environments where Chrome runs as root or in containers with limited shared memory.
 
-## The Auth Flow Spec
+## The auth flow spec
 
-Now for the actual tests. Here is the complete auth spec that exercises the passwordless magic link flow:
+With the harness in place, the tests themselves are almost anticlimactic -- which is exactly the sign the harness is right. Here is the complete auth spec exercising the passwordless magic-link flow:
 
 ```javascript
 // e2e/auth.spec.js
@@ -289,7 +288,7 @@ function uniqueEmail() {
 
 Two helper functions set the stage. `getMagicLink` calls our test-only `/test/emails` endpoint to retrieve the magic link that was "sent" to a given address. `uniqueEmail` generates a timestamp-based email so each test gets its own user, even when tests run in parallel.
 
-### Shared Registration Flow
+### Shared registration flow
 
 Since multiple tests need a registered user, the registration flow is extracted into a helper:
 
@@ -314,7 +313,7 @@ async function registerUser(page, request, email) {
 
 This walks through the entire registration: enter email, get the magic link from the test endpoint, visit it, accept terms, land on the dashboard. Any test that needs a logged-in user calls this first.
 
-### Test Isolation
+### Test isolation
 
 Each test starts with a clean email inbox:
 
@@ -326,40 +325,19 @@ test.beforeEach(async ({ request }) => {
 
 This calls our `DELETE /test/emails` endpoint to clear the atom. Combined with unique email addresses per test, this ensures complete isolation between tests.
 
-### Test: New User Registration
+### Test: new user registration
+
+Registration *is* the path `registerUser` already walks and asserts -- the "Check your email" page, the `/terms/welcome` redirect a new account hits, then `/dashboard` once the terms are accepted -- so the test is that one call, with a fresh email:
 
 ```javascript
 test('new user registration', async ({ page, request }) => {
-  const email = uniqueEmail();
-
-  // Enter email on home page
-  await page.goto('/');
-  await page.fill('input[name="email"]', email);
-  await page.getByRole('button', { name: 'Sign in' }).click();
-
-  // Should see "check your email" content
-  await expect(
-    page.getByRole('heading', { name: 'Check your email' })
-  ).toBeVisible();
-
-  // Get magic link from captured emails and visit it
-  const magicLink = await getMagicLink(request, email);
-  await page.goto(magicLink);
-
-  // New user -> redirected to terms acceptance
-  await expect(page).toHaveURL(/\/terms\/welcome/);
-
-  // Accept terms
-  await page.getByRole('button', { name: 'I agree to the terms' }).click();
-
-  // Should reach dashboard
-  await expect(page).toHaveURL(/\/dashboard/);
+  await registerUser(page, request, uniqueEmail());
 });
 ```
 
-This test verifies the full new-user flow from landing page to dashboard. It exercises: form submission, server-side email "sending," token verification, terms acceptance, session creation, and the final redirect.
+The helper's inline `expect`s are the assertions: the test fails if the confirmation page never shows, if a new user is not sent to `/terms/welcome`, or if accepting terms does not land on `/dashboard`. Behind that single call it exercises form submission, server-side email "sending," token verification, terms acceptance, session creation, and the final redirect -- which is why the remaining tests reuse the helper rather than re-walking the same steps.
 
-### Test: Returning User Skips Terms
+### Test: returning user skips terms
 
 ```javascript
 test('returning user login skips terms', async ({ page, request }) => {
@@ -389,7 +367,7 @@ test('returning user login skips terms', async ({ page, request }) => {
 
 This tests a critical branching point: returning users who have already accepted terms should land directly on the dashboard. The test registers a user, logs out, logs back in, and verifies the terms page is skipped. This is the kind of stateful behavior that is nearly impossible to unit test meaningfully -- you need the full session lifecycle.
 
-### Test: Logout Prevents Dashboard Access
+### Test: logout prevents dashboard access
 
 ```javascript
 test('logout prevents dashboard access', async ({ page, request }) => {
@@ -410,7 +388,7 @@ test('logout prevents dashboard access', async ({ page, request }) => {
 
 A security test: after logout, navigating directly to `/dashboard` should redirect to the home page (the login form). This verifies that session destruction actually works, not just that the UI hides the button.
 
-## Running the Suite
+## Running the suite
 
 There is no wrapper script to write -- running the suite is one command from the project root, where `playwright.config.js` lives:
 
@@ -422,7 +400,9 @@ Playwright reads the config, starts the Clojure server (via the `webServer` bloc
 
 The companion repo ships two spec files -- `e2e/auth.spec.js` (the magic-link login, logout, and route-protection flows built above) and `e2e/recipes.spec.js` (the recipe browse/fork/version flows) -- and `npx playwright test` runs both.
 
-## Design Decisions Worth Noting
+## Why the harness is shaped this way
+
+Four choices in the setup are worth defending directly, because the obvious alternative to each is tempting and wrong.
 
 **Why a separate server process instead of starting the server in-test?** Playwright expects to manage a server lifecycle via `webServer`. This is cleaner than trying to boot a JVM from within a Node.js test runner. It also means the Clojure server is a real process with real resource management, not something awkwardly embedded.
 
@@ -432,16 +412,8 @@ The companion repo ships two spec files -- `e2e/auth.spec.js` (the magic-link lo
 
 **Why test-only HTTP endpoints instead of reading the atom directly?** The tests run in a Node.js process. The server runs in a JVM process. They communicate over HTTP. The test endpoints are the bridge between these two worlds.
 
-## What You Now Have
+## Where this leaves us
 
-After following this setup, you have:
+The harness, not the specs, is the deliverable. A dedicated E2E server boots the full stack against in-memory databases with its external services stubbed; test-only endpoints let the browser inspect server-side state without a line of that machinery reaching production; a single `webServer` block hands Playwright the whole lifecycle; and one command runs it all. The specs that ride on top -- registration, login, logout, route protection -- are the cheap part once that scaffolding exists.
 
-- A **dedicated E2E server** that boots your full application stack with in-memory databases and stubbed external services
-- **Test-only endpoints** for inspecting server-side state from your browser tests, without modifying production code
-- A **Playwright configuration** that manages the server lifecycle automatically
-- **Auth flow specs** that exercise registration, login, logout, and access control through a real browser
-- A **one-command test runner** that handles everything end-to-end
-
-The pattern extends naturally. Each new feature that needs E2E coverage gets a new spec file in `e2e/`. If the feature involves an external service, you stub it in the E2E server and add a test endpoint if needed. The infrastructure is in place -- you just write tests.
-
-Unit tests tell you your functions are correct. E2E tests tell you your application works. You need both.
+And it extends without ceremony. A new feature needing coverage gets a new spec file; a new external dependency gets stubbed, and if a test needs to observe its effects, a test endpoint. The infrastructure is the investment, and it is already paid for -- the same bargain unit testing offers one layer down, which is why a serious application wants both rather than choosing between them.

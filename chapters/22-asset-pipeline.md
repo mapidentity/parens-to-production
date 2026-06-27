@@ -581,7 +581,7 @@ These guarantees are pinned by regression tests in `test/myapp/web/security_test
         (finally (reset! a saved))))))
 ```
 
-## What You Now Have
+## What you now have
 
 After this setup, the project has:
 

@@ -2,7 +2,9 @@
 
 The [recording chapter](13-construction-view.md) made `GET /dev/__trace/:id` return a page's whole construction as JSON — every frame, every Datomic read. That answers *how was this page built?* in the large. This chapter does two things. First it defines the **targeted projections** over that same recording: **flow mode**, which takes one rendered element and traces its value back to the query behind it, and the **dossier**, a set of drill-downs for a single frame (navigate a recorded value, ask "why is this section empty?", find the read that produced an entity, see the markup a component became, thread a value through every frame it touched). Then it builds the in-page tool that renders all of it — `src/myapp/web/trace-overlay.js`. All of it is data you can `curl`, and we build the overlay the way you'd actually grow it: **get the call tree on screen first**, then make a selected frame open a rich details pane, then add an icicle overview, and finally layer on the projections (flow mode, the dossier), cross-region traces, and the polish. Each step is usable before the next exists.
 
-Here is the finished tool in one session, so the code below has a picture to attach to. You load the recipe index under the `:storm` alias and press `Alt+Shift+I`. A panel docks to the right, showing the call tree for the request that built the page: middleware narrowing to the page handler, the handler to `all-recipes`, `all-recipes` to the eight `recipe-card` frames. You hover `recipe-card`; the third instance on the page lights up under your cursor, and the others dim. You click that frame and the details pane fills — its `recipe` argument and Hiccup return (both navigable level by level), the `pull` and `d/q` that fed it shown with full datalog, a *transforms* badge reading `db→map→hiccup`, and the conditionals in its body that rendered nothing. You Alt+click the entity id in the args; a flow card pins the read that produced it and offers a `d/history` link for the write you actually need. Toggle the icicle and the same tree becomes a flame-graph overview of the whole request; toggle temporal-vs-lexical and it reparents from "who called whom" to "who wrote whom." That is the artifact. The rest of the chapter assembles it in the order you'd build it.
+Before the code, here is the finished tool end to end, so the pieces below have something to attach to. You load the recipe index under the `:storm` alias and press `Alt+Shift+I`. A panel docks to the right with the call tree for the request that built the page — middleware narrowing to the handler, the handler to `all-recipes`, `all-recipes` to eight `recipe-card` frames. Hover a frame and its instance lights up on the page; click it and a details pane fills with that call's arguments and Hiccup return (navigable level by level), the `pull` and `d/q` that fed it as full datalog, a `db→map→hiccup` transforms badge, and the conditionals in its body that rendered nothing. Alt+click an entity id in the arguments and a flow card pins the read that produced it, with a `d/history` link for the write behind it. A header toggle turns the tree into a flame-graph icicle; another flips it between lexical and temporal parenting. The rest of the chapter assembles that tool in the order you'd build it.
+
+> **What this investment buys, and what it demonstrates.** This is the third chapter ([13](13-construction-view.md), 15) on a single dev tool, and the cumulative machinery — a compiler swap, a recording middleware, seven `/dev/__*` projections, a 500-line overlay — is substantial, so it is worth being clear about what it is for. The everyday "why is this value wrong?" still has its cheap answer, a `println` and a REPL, and that is often enough. What the construction view adds is the question those are bad at: *which* of N identical components on the page in front of you rendered the wrong thing, fed by *which* query, read at *which* basis-t — answered by clicking the pixel. That is the larger point the whole cluster has been making. The REPL already lets you interrogate the running system from the inside; the browser is where that reach normally stops, because a rendered page is an artifact with no thread back to the process that built it. The construction view carries the same interrogate-the-running-system workflow across that border — execution turned into data you can project, keyed onto the very coordinate the inspector welded onto the DOM, reachable from the pixel. It is SPA-grade introspection, arguably past it, since no React devtool shows you the Datalog and basis-t behind a node — and we have it on a server-rendered stack because we own the rendering path and a recording compiler is just one more dev dependency. The reusable idea travels even if you never build this exact tool. The tool itself earns its keep the day you hunt a wrong value across identical components — and the fact that a one-person, server-rendered app can keep its REPL-grade introspection all the way out to the browser is the point.
 
 The overlay ships in the **same dev-only `defn-asset` block as the inspector**, next to `dev-reload` and `inspector`:
 
@@ -11,8 +13,6 @@ The overlay ships in the **same dev-only `defn-asset` block as the inspector**, 
 (when (try (requiring-resolve 'dev-reload/websocket-handler) (catch Exception _ nil))
   (list (dev-reload-script) (inspector-script) (trace-overlay-script)))
 ```
-
----
 
 ## Bootstrap, and riding the inspector's toggle
 
@@ -52,7 +52,7 @@ function start() {
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
 ```
 
-## The highlight: the join that makes it correlate
+## The highlight: one selector that joins tree to page
 
 Everything visual rests on one selector. Given a component name and an instance index, box the k-th rendered element with that `data-myapp-name`:
 
@@ -411,7 +411,7 @@ Two capabilities make this more than the inspector could do, and both live in `f
 
 When an index can't be resolved — genuine render reordering (a `sort` between data order and DOM order), or a conditional that rendered nothing — `flow` returns `:ambiguous true` rather than guessing.
 
-The `:pivot` is the honest part of the whole feature. The trace explains how *this request* rendered the value; it does not explain why the *entity* holds it. The classic case is a fork showing a stale title: `fork!` copied the title onto a new entity days ago, and to Datomic the fork's current title is perfectly correct — the read-trace is green and self-consistent, and unhelpful, because the cause was a write in a different request. So flow mode does not pretend to be a root-cause oracle. It **narrows the suspects, shows the data path, and pivots to the write history** — handing you the entity id and pointing at `d/history`, which is where that question actually lives.
+The `:pivot` is the honest move here. The trace explains how *this request* rendered the value; it does not explain why the *entity* holds it. The classic case is a fork showing a stale title: `fork!` copied the title onto a new entity days ago, and to Datomic the fork's current title is perfectly correct — the read-trace is green and self-consistent, and unhelpful, because the cause was a write in a different request. So flow mode does not pretend to be a root-cause oracle. It **narrows the suspects, shows the data path, and pivots to the write history** — handing you the entity id and pointing at `d/history`, which is where that question actually lives.
 
 ## Flow mode: Alt+click an element
 
@@ -520,15 +520,15 @@ The feature is structurally absent, not merely disabled — the same bar as the 
 - **No timing.** Instrumentation can't measure wall-clock honestly; for profiling, use a sampling profiler.
 - **A real dev startup/first-hit cost.** The compiler swap slows startup and the first hit to each page — paid only under `:storm`, never in plain `:dev` or prod.
 
-## Design Decisions Worth Noting
+## Design decisions worth noting
 
-- **Adopt the engine, build the correlation.** ClojureStorm records far more, and far more reliably, than the var-wrapping we'd write by hand. The original contribution is not the recording; it is welding a *runtime* span id onto the SSR'd DOM the way the inspector welds a *static* source location — and the unfair advantage is that the coordinate already exists.
+- **Adopt the engine, build the correlation.** ClojureStorm records far more, and far more reliably, than the var-wrapping we'd write by hand. The original contribution is not the recording; it is welding a *runtime* span id onto the SSR'd DOM the way the inspector welds a *static* source location — and the leverage is that the coordinate already exists.
 - **Share the format, not the mechanism.** The inspector and the tracer meet at a string, `"ns/fn"`. The inspector stays a zero-runtime static artifact; the tracer is a runtime recording. Unifying them under one engine would make the inspector depend on a running recorder for no benefit. The right amount of coupling is data — `myapp:peek`/`myapp:select` events and a shared attribute, nothing more.
 - **Lazy projection.** Storing a descriptor and projecting on fetch keeps the request hot path cheap and the expensive analysis affordable — and keeps every recorded value in FlowStorm's recorder instead of pinning it in ours. Every dossier endpoint is the same shape: resolve the descriptor, read the window, project, serialize.
 - **Read expressions, not just calls.** Function-call frames give the skeleton; the expression traces give the datalog, the basis-t, the raw-bypass reads, the eid-matched source, and the "why is this empty?" branches. The depth that makes flow mode work is exactly the depth a var-wrapper could never reach — which is why we adopted the compiler in the first place.
 - **Lexical tree, temporal truth one click away.** A `(for …)` body runs during HTML serialization, not where it's written. We re-parent it back to its owner for a readable tree, flag it `:lazy`, and emit both parentings so the lexical⇄temporal toggle costs only a re-render.
 
-## What You Now Have
+## What you now have
 
 Building on the inspector's welded coordinate, with one dev alias, one dev namespace (`trace`), a set of dev-gated endpoints, and one dev-only script, you get a **construction view**:
 

@@ -1,15 +1,12 @@
 # Strict Compilation: Catching Reflection and Boxed Math from Day One
 
-
----
-
 Most Clojure projects add performance checks late -- after mysterious slowdowns in production, after profiling reveals a hot path doing reflective method calls. By then the warnings number in the hundreds and fixing them is a grind.
 
 There is a better way. If you wire up strict compilation from the very first commit, you catch reflection warnings and boxed math warnings the moment they appear. One warning at a time is easy to fix. Three hundred is a project.
 
 This chapter walks through the build hardening setup we use: `tools.build` with fail-on-warnings, zprint for consistent formatting, and clj-kondo for static analysis. By the end you will have a build that refuses to produce an artifact with performance problems baked in, plus formatting and linting scripts that keep the codebase clean with minimal effort.
 
-## The `:build` Alias
+## The `:build` alias
 
 Everything starts in `deps.edn`. You only need one extra alias:
 
@@ -20,9 +17,9 @@ Everything starts in `deps.edn`. You only need one extra alias:
 
 That is it. The `:ns-default build` tells `clojure -T:build` to look for functions in a `build.clj` file at the project root. No build framework, no plugin ecosystem, just a Clojure file you can read and understand.
 
-## The Build Namespace
+## The build namespace
 
-Here is the build-hardening portion of `build.clj` -- the strict-compile gate and the uberjar task. The same file later grows a second half (content-hashing, SRI, the `assets`/`verify-assets` tasks, with two extra requires: `clojure.java.io` and `clojure.java.shell`) when [the asset pipeline chapter](22-asset-pipeline.md) arrives; we leave that out here and come back to it:
+Here is the build-hardening portion of `build.clj` -- the strict-compile gate and the uberjar task. The same file later grows a second half (content-hashing, SRI, the `assets`/`verify-assets` tasks, with two extra requires: `clojure.java.io` and `clojure.java.shell`) in [the asset pipeline chapter](22-asset-pipeline.md):
 
 ```clojure
 (ns build
@@ -92,7 +89,7 @@ Here is the build-hardening portion of `build.clj` -- the strict-compile gate an
 
 Let us break down the important parts.
 
-### Delayed Basis
+### Delayed basis
 
 ```clojure
 (def basis
@@ -101,7 +98,7 @@ Let us break down the important parts.
 
 The basis (resolved dependency tree) is wrapped in a `delay` so it is only computed when actually needed. If you call `clojure -T:build clean`, there is no reason to resolve the entire classpath. Small thing, but it keeps the fast path fast.
 
-### The Two Compiler Flags
+### The two compiler flags
 
 The heart of strict compilation is two bindings passed to `compile-clj`:
 
@@ -129,11 +126,11 @@ The hint goes on the argument (or on a `let` binding, or as a `^Type` tag in fro
 
 **`*unchecked-math* :warn-on-boxed`** warns when a math operation forces boxing of primitive values. Boxing means wrapping a primitive `long` or `double` into a `Long` or `Double` object, which means heap allocation on what should be a register operation. In hot loops this is death by a thousand cuts.
 
-### Why `compile-clj` Needs `:err :capture`
+### Why `compile-clj` needs `:err :capture`
 
 Here is a subtlety: `b/compile-clj` runs compilation in a subprocess. The warnings go to stderr of that subprocess. By default they scroll past and disappear. The `:err :capture` option collects them into a string so we can inspect them programmatically.
 
-### `fail-on-warnings!` -- The Gate
+### `fail-on-warnings!` -- the gate
 
 ```clojure
 (defn- fail-on-warnings!
@@ -155,7 +152,7 @@ The `(take 50)` is a safety valve. If you somehow accumulate a huge number of wa
 
 When any hits are found, it throws an `ex-info` with the warnings attached as data. The build fails. No jar is produced. You fix the type hints, run again, and move on.
 
-### The Uberjar Pipeline
+### The uberjar pipeline
 
 ```clojure
 (defn uber
@@ -180,7 +177,7 @@ Run it with:
 clojure -T:build uber
 ```
 
-## Code Formatting with zprint
+## Code formatting with zprint
 
 Consistent formatting eliminates an entire class of review noise. We use [zprint](https://github.com/kkinnear/zprint) with a `.zprintrc` at the project root:
 
@@ -234,7 +231,7 @@ Run it after every edit:
 ./reformat
 ```
 
-## Static Analysis with clj-kondo
+## Static analysis with clj-kondo
 
 clj-kondo catches bugs, style issues, and questionable patterns at lint time without running your code. Here is the `.clj-kondo/config.edn`:
 
@@ -296,7 +293,7 @@ kondo_rc=$?
 
 # Time-as-global check. clj-kondo's :discouraged-var only fires on Clojure
 # vars, not Java static methods, so we grep for forbidden /now invocations.
-# Everything must read time through myapp.time (see the Datomic chapter).
+# Everything must read time through myapp.time (see the clock chapter).
 forbidden_pattern='(LocalDate/now|LocalDateTime/now|ZonedDateTime/now|OffsetDateTime/now|Instant/now|Year/now|YearMonth/now|System/currentTimeMillis)'
 violations=$(grep -rn -E "$forbidden_pattern" src test \
   --include='*.clj' --include='*.cljs' --include='*.cljc' \
@@ -323,9 +320,9 @@ Run it:
 ./lint
 ```
 
-The script's second job -- the time-as-global grep -- enforces a rule that does not exist yet: every clock read must go through a `myapp.time` wrapper introduced in [the Datomic chapter](07-datomic.md). We flag it here only because it lives in the same `lint` script; the *why*, and the wrapper it guards, belong with that chapter, so we defer the rationale there and leave the grep inert until then. The one thing worth noting now is the mechanism: it is a plain grep precisely because direct calls like `(Instant/now)` are Java static methods that clj-kondo's `:discouraged-var` linter cannot see.
+The script's second job -- the time-as-global grep -- enforces a rule that [the clock chapter](06b-time-clock.md) introduces: every clock read must go through a `myapp.time` wrapper. It lives here because it lives in the same `lint` script. The mechanism is a plain grep precisely because direct calls like `(Instant/now)` are Java static methods that clj-kondo's `:discouraged-var` linter cannot see.
 
-### A Custom Hook for `defn-`
+### A custom hook for `defn-`
 
 clj-kondo's built-in `:missing-docstring` linter only checks `defn`, not `defn-` (private functions). If you want docstrings on private functions too -- and you should, because private does not mean self-explanatory -- you need a hook.
 
@@ -356,7 +353,7 @@ Then register it in `config.edn`:
 
 This walks the AST of every `defn-` form: if the token after the function name is not a string node (i.e., not a docstring), it registers a finding. Simple, effective.
 
-## Putting It Together
+## Putting it together
 
 Your project now has three scripts and a build function:
 
@@ -376,7 +373,7 @@ The workflow is:
 
 These checks are fast (seconds, not minutes) and deterministic. Wire them into CI so they run on every push, and you have a codebase that stays clean without discipline -- the tools enforce it.
 
-## What You Now Have
+## What you now have
 
 After this setup, you have:
 
@@ -387,4 +384,4 @@ After this setup, you have:
 
 The investment is small -- one `build.clj` file, two config files, two shell scripts. The payoff compounds over the life of the project. Every reflection warning you catch now is one you never debug in production. Every formatting argument you never have (even with yourself) is time saved. Every lint warning is a potential bug caught before it ships.
 
-Start strict. Stay strict. Your future self will thank you.
+The discipline only works because it is there from the first commit: a gate added after three hundred warnings is a cleanup project, while the same gate added before the first is simply the floor you build on.

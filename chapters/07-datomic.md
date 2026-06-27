@@ -1,13 +1,12 @@
 # Datomic for Your SaaS: Schema, Queries, and the java.time Bridge
 
-
 Most SaaS applications reach for PostgreSQL or MySQL without a second thought. They are battle-tested, well-documented, and familiar. But for an application where the history of data matters -- think accounting, compliance, audit trails -- you quickly find yourself bolting on soft deletes, history tables, and temporal queries. You end up reimplementing, badly, what Datomic gives you out of the box.
 
 Datomic treats data as immutable facts over time. Every transaction is recorded. Every past state of the database is queryable. Nothing is ever truly deleted -- it is retracted, and the retraction itself is a fact. For a SaaS that handles financial data, this is not a nice-to-have. It is the correct data model.
 
 In this chapter, we will set up Datomic in a Clojure SaaS application: the Peer library, schema design, a wrapper layer that bridges java.time and Datomic's java.util.Date, and a test fixture that gives you a fresh database per test.
 
-## The Datomic Peer Library
+## The Datomic peer library
 
 Datomic offers different deployment models. We use the Peer library, where the application process itself contains the query engine. There is no separate query server to manage -- your app connects directly to the storage backend and runs queries in-process.
 
@@ -22,7 +21,7 @@ The PostgreSQL driver is there because in production, Datomic Peer stores its da
 
 > **Which Datomic is this?** `com.datomic/peer` is the artifact for **Datomic Pro** -- the on-prem product (it was the paid edition until Datomic became free in 2023, and Pro is the name it ships under now). The Peer model embeds the query engine in your application process and reads from a storage backend you run (here, PostgreSQL). The other current option is **Datomic Cloud**, an AWS-native deployment fronted by the *client* API (`com.datomic/client-cloud`) rather than the Peer library: queries run in a query group, your app talks to it over the wire, and there is no in-process Peer. We choose Pro/Peer here because it runs anywhere, has the in-memory backend that makes the per-test fixture below trivial, and keeps the query engine in-process where the time-travel reads this app leans on are cheapest. If you deploy on Cloud, the schema and query *shapes* in this chapter carry over, but the connection and transaction calls go through the client API instead.
 
-## Two Storage Backends: Memory and SQL
+## Two storage backends: memory and SQL
 
 Datomic's connection URI determines the storage backend. This is one of its most practical features: the same code runs against a throwaway in-memory database during development and a durable SQL-backed database in production. No conditional logic, no test doubles for the database layer.
 
@@ -67,7 +66,7 @@ The code that connects to the database does not know or care which backend it is
 
 `create-database!` is safe to call repeatedly. `d/create-database` returns `false` rather than erroring when the database already exists, and the schema transaction behind it is itself idempotent -- Datomic no-ops a `:db/ident` that is already installed with the same definition -- so re-running it reinstalls nothing. (It is not a literal no-op: the schema is re-transacted each call; it simply has no effect.) It creates the database, connects, and transacts the schema. `get-db` returns an immutable database value: a snapshot of the database at a point in time. This is a key Datomic concept. The database value you get from `(d/db conn)` never changes. You can pass it around, query it later, and the results will always be consistent with that moment.
 
-## Schema Design
+## Schema design
 
 Datomic schema is data. You define attributes as maps and transact them into the database like any other data. There are no DDL statements, no migration files, no schema versioning tools. You add attributes by transacting new attribute definitions.
 
@@ -120,7 +119,9 @@ A few things to note about this design:
 
 **Value types.** Datomic has a fixed set of value types: `:db.type/string`, `:db.type/long`, `:db.type/boolean`, `:db.type/instant`, `:db.type/uuid`, `:db.type/ref`, and others. The `:db.type/instant` type stores points in time, which brings us to a practical problem.
 
-## The java.time Bridge
+## The java.time bridge
+
+The previous chapter settled the *source* of time -- one swappable clock behind `myapp.time`. This is the other half of the same story, and a deliberately separate one: the *type* of a timestamp once it crosses into the database. The two never mix, which is why they live in two layers.
 
 Datomic's `:db.type/instant` stores `java.util.Date` internally -- and still does today; this is not deprecated behavior we are working around, it is the current contract. It dates from Datomic's origins, when `java.util.Date` was the standard JVM date type. Modern Java code uses `java.time.Instant`, which is immutable, thread-safe, and generally superior, so the value a query hands back is the one place the older type would otherwise leak into our code.
 
@@ -150,7 +151,7 @@ Both functions walk data structures recursively. `convert-instants` is used on t
 
 The type hint `^Date` is there because we have `*warn-on-reflection*` enabled -- without it, the `.toInstant` call would resolve via reflection, which is both slow and triggers a compiler warning. (`convert-instants` needs no hint: `Date/from` is a static method, so there is nothing to reflect on.)
 
-## Wrapped API Functions
+## Wrapped API functions
 
 With the conversion functions in place, we wrap Datomic's core API to apply them transparently:
 
@@ -187,45 +188,7 @@ With the conversion functions in place, we wrap Datomic's core API to apply them
 
 The naming convention -- `transact*`, `pull*`, `q*` -- signals that these are enhanced versions of the originals. The rest of the application uses these wrappers exclusively and never touches `java.util.Date`.
 
-## Reading the Clock: `myapp.time`
-
-The bridge handles the *type* of a timestamp. There is a second time problem, orthogonal to it: *where the current time comes from*. Scatter `(time/now)` through the codebase and you get code that is impossible to test deterministically -- every run sees a different "now" -- and a clock you cannot pin for a point-in-time feature. So we route every clock read through one namespace, `myapp.time`, whose underlying `java.time.Clock` is swappable:
-
-```clojure
-(ns myapp.time
-  "Single source of truth for the current time. Everywhere else reads time
-  through this namespace, never through Instant/now etc. directly."
-  (:import [java.time Clock Instant LocalDate ZoneId]
-           [java.util Date]))
-
-(def ^ZoneId amsterdam (ZoneId/of "Europe/Amsterdam"))
-
-(defonce ^:private clock-state (atom (Clock/system amsterdam)))
-(defn current-clock ^Clock [] @clock-state)
-(defn set-clock! [^Clock c] (reset! clock-state c))
-
-(defmacro with-clock
-  "Run body with c as the active clock, restoring the previous one after."
-  [c & body]
-  `(let [old# (current-clock)]
-     (try (set-clock! ~c) ~@body (finally (set-clock! old#)))))
-
-;; The ONLY allowed direct /now calls in the codebase live here.
-(defn now      ^Instant [] (Instant/now (current-clock)))
-(defn today    ^LocalDate [] (LocalDate/now (.withZone (current-clock) amsterdam)))
-(defn now-date ^Date [] (Date/from (now)))            ; for raw Date interop
-
-(defn fixed-clock
-  "A clock frozen at `instant` — pin it in tests via (with-clock (fixed-clock i) …)."
-  (^Clock [^Instant instant] (fixed-clock instant amsterdam))
-  (^Clock [^Instant instant ^ZoneId zone] (Clock/fixed instant zone)))
-```
-
-`now` returns an `Instant` (which `transact*` then bridges to `Date`), `today` a `LocalDate` in the app's display timezone, `now-date` a `java.util.Date` for the rare raw-interop path. The point is the indirection: production runs on `Clock/system`, but a test wraps its body in `(with-clock (time/fixed-clock instant) …)` and every downstream `now`/`today` returns the pinned value -- so a token-expiry test or a "what did this look like last Tuesday" assertion is exact, not racy.
-
-This is the wrapper the [build-hardening chapter](04-build-hardening.md)'s `lint` script enforces: its grep fails the build on a stray `Instant/now` (or `LocalDate/now`, `System/currentTimeMillis`, …) anywhere but this file, because clj-kondo's `:discouraged-var` rule only sees Clojure vars, not Java static calls. From here on, application code calls `(time/now)`, never `Instant/now` (or any other raw clock call) directly.
-
-Notice that `transact*` returns a future (just like `d/transact`). You deref it with `@` when you need to wait for the transaction to complete:
+Notice that `transact*` returns a future (just like `d/transact`). You deref it with `@` when you need to wait for the transaction to complete. The `(time/now)` it carries is the clock wrapper from [the previous chapter](06b-time-clock.md) -- the single source of "now" whose output is the `java.time.Instant` the bridge below converts:
 
 ```clojure
 @(db/transact* conn
@@ -237,7 +200,7 @@ Notice that `transact*` returns a future (just like `d/transact`). You deref it 
 
 The `time/now` value (a `java.time.Instant`) gets transparently converted to a `Date` before Datomic sees it. When you later pull this entity, the `Date` comes back as an `Instant`.
 
-## Query Patterns
+## Query patterns
 
 Datomic queries use Datalog, a declarative query language. If you have used SQL, the mental model is different but not difficult. Where SQL stores data in tables of rows and columns, Datomic stores it as a single flat set of **entity-attribute-value** facts -- one row per fact, not per record. A user is not a row in a `users` table; it is a handful of facts that share an entity id: `[42 :user/email "alice@example.com"]`, `[42 :user/active? true]`, and so on. A query, then, is not a `SELECT` over tables with `JOIN`s on keys -- it is a set of *patterns* with logic variables (the `?`-prefixed symbols) that Datomic unifies against those facts. A join across "tables" is just two patterns sharing a variable, with no foreign keys to declare. Read the first query below with that in mind and the rest follow.
 
@@ -294,7 +257,7 @@ The entity API uses lookup refs -- `[:user/email "alice@example.com"]` -- to fin
 
 One caveat: `d/entity` is raw Datomic, so it sits *outside* our conversion wrappers. Reading a non-temporal attribute like `:user/active?` is fine, but reading a `:db.type/instant` attribute through it gives you back a raw `java.util.Date` -- the very thing the wrapper layer exists to keep out of application code. So reach for `d/entity` only for the lazy, navigational reads where you are not pulling timestamps; when you need instant-typed attributes, go through `pull*`/`q*`, which convert. (If you wanted entity-style navigation *with* conversion, you would wrap it the same way -- `(convert-dates (into {} (d/entity db ref)))` -- but realizing the whole entity defeats the laziness, so we keep the two tools separate.)
 
-## Isolated Test Databases
+## Isolated test databases
 
 Testing database code well requires isolation. Each test should start with a clean database and leave no trace when it finishes. Datomic's in-memory backend makes this trivially fast:
 
@@ -403,7 +366,7 @@ These tests verify the full roundtrip: write with `java.time.Instant`, read back
 
 Each test gets its own database, runs in milliseconds, and cleans up after itself. No Docker containers, no test database provisioning, no cleanup scripts.
 
-## Schema Tests
+## Schema tests
 
 It is also worth testing that your schema installs correctly and that uniqueness constraints behave as expected:
 
@@ -439,7 +402,7 @@ It is also worth testing that your schema installs correctly and that uniqueness
 
 The email uniqueness test demonstrates an important Datomic behavior: when you transact an entity with a `:db.unique/identity` attribute that already exists, Datomic merges the new data into the existing entity rather than creating a duplicate. This is upsert semantics. The second transaction with the same email does not fail -- it updates the existing entity. Understanding this early prevents subtle bugs.
 
-## What You Now Have
+## What you now have
 
 At this point, the database layer is complete:
 

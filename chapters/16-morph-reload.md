@@ -15,7 +15,7 @@ The insight that drives this chapter is that **a save is not one thing.** A view
 | a served `.js` module | full reload, scroll restored |
 | (Tailwind rebuilds `styles.css`) | hot-swap the stylesheet `<link>` -- no reload |
 
-This chapter rebuilds the watcher's dispatch around that matrix. It assumes the basic file watcher and WebSocket from the live-reload chapter, the server-rendered Hiccup views and their client dispatcher's `fetchAndMorph` (idiomorph) from the Hiccup views chapter, the source inspector and its `inspector-load` loader from the source inspector chapter, and the Tailwind setup from the asset pipeline chapter.
+This chapter rebuilds the watcher's dispatch around that matrix. It assumes the basic file watcher and WebSocket from the live-reload chapter, the server-rendered Hiccup views from the Hiccup views chapter, the client dispatcher's `fetchAndMorph` (idiomorph) from the morph-dispatcher chapter, the source inspector and its `inspector-load` loader from the source inspector chapter, and the Tailwind setup from the asset pipeline chapter.
 
 > **One artifact, two deliveries.** Dev and production ship *byte-identical* asset files from the same source; they differ only in the HTTP envelope (URL shape, cache headers) and the build cadence (watch vs. one-shot). The dev story below is the "watch" cadence of that single pipeline; the asset pipeline chapter covers the production cadence -- content hashing, an import map, and immutable caching. Nothing here changes the *bytes* between dev and prod; it only changes *when* and *how* they are delivered.
 
@@ -120,7 +120,7 @@ _ (doseq [r ["src" "static"]
 
 If we only watched `src/`, JS edits and CSS rebuilds would fire nothing. The second root closes that gap. Everything else about the watch loop -- daemon thread, `ENTRY_MODIFY`/`ENTRY_CREATE`, the silent `ClosedWatchServiceException` on shutdown -- is exactly as the live-reload chapter built it.
 
-## CSS: One Long-Lived Tailwind Watcher
+## CSS: one long-lived Tailwind watcher
 
 The matrix line for CSS is conspicuous: CSS is absent from the "save triggers a rebuild" path entirely. The watcher only *reacts* to `styles.css` being rewritten; it never rewrites it. That is deliberate, and it is the biggest structural change from a naive design.
 
@@ -247,7 +247,7 @@ The `static-root` itself is the same idea -- one mechanism with a dev/prod switc
 
 In dev the app serves the *source* `static/` tree directly at stable URLs with `no-store`. In production, Caddy serves the *built* `myapp/static/` tree with content-hashed filenames and `immutable` caching (the asset pipeline chapter). Same files, two envelopes.
 
-## WebSocket: From One Message to Four
+## WebSocket: from one message to four
 
 The live-reload chapter had exactly one outbound message: `reload`. The matrix needs more. The `dev-reload` namespace now emits three message types, and the `reload` message carries a `morphable` flag, so the browser has four behaviors to dispatch on.
 
@@ -294,7 +294,7 @@ Note what is *not* in `after-refresh` anymore: no Tailwind shell-out, no CSS has
 
 A manual `(reload!)` from the REPL is intentionally *not* morphable -- it defaults to a full reload, the safe choice when you trigger it by hand. The `send-json!` pruning of dead channels and the `requiring-resolve`-guarded `/dev/ws` route are exactly as the live-reload chapter built them.
 
-## The Client Side: One Socket, Four Responses
+## The client side: one socket, four responses
 
 On the browser side, the dev script dispatches on message type. It is the client end of the delivery matrix:
 
@@ -333,7 +333,7 @@ function morphReload() {
 }
 ```
 
-The key point is that this is *not* a new mechanism. `fetchAndMorph` is the app's production interaction layer (the Hiccup views chapter): it fetches the current URL, parses the response, and uses idiomorph to morph `<main>` in place, preserving form values, focus, and scroll. Dev hot-reload is just one more caller of it. A few options matter:
+The key point is that this is *not* a new mechanism. `fetchAndMorph` is the app's production interaction layer (the morph-dispatcher chapter): it fetches the current URL, parses the response, and uses idiomorph to morph `<main>` in place, preserving form values, focus, and scroll. Dev hot-reload is just one more caller of it. A few options matter:
 
 - `target: 'main'` -- morph only the main content region. The dev overlay scripts and the `<head>` are siblings of `<main>`, so an inner-HTML morph of `<main>` leaves them untouched. The overlay survives for free.
 - `ignoreActiveValue: true` -- this one is mandatory. Without it, idiomorph would clobber the value of the field you are currently typing in. With it, your in-progress input survives the morph.
@@ -430,7 +430,7 @@ The matrix adds two steps to the `hot-reload/start` the live-reload chapter intr
 
 `(start!)` from the REPL still brings up the whole system in one call -- now with the Tailwind process and the view preload folded in.
 
-## The Complete Flow, Per Edit Type
+## The complete flow, per edit type
 
 To see how the pieces fit, here is the end-to-end story for each kind of edit:
 
@@ -458,7 +458,7 @@ To see how the pieces fit, here is the end-to-end story for each kind of edit:
 
 The whole cycle -- from saving a file to seeing the updated page -- typically completes in a fraction of a second, and for the common view-edit case it does so *without losing any page state at all*.
 
-## Design Decisions Worth Noting
+## Design decisions worth noting
 
 **Why decouple CSS from code reloads?** Rebuilding Tailwind on every `.clj` save couples two unrelated concerns and puts a CSS rebuild on the critical path of every code edit -- even edits that touch no markup. A long-lived `tailwindcss --watch=always` rebuilds incrementally and only when classes actually change, and it owns the stylesheet end to end. The file watcher merely *reacts* to its output with a debounced, no-reload `<link>` swap. The result is faster code reloads and a CSS path that never flickers the page.
 
@@ -468,7 +468,7 @@ The whole cycle -- from saving a file to seeing the updated page -- typically co
 
 **Why `requiring-resolve` for dev/prod separation?** The pattern `(requiring-resolve 'dev-reload/websocket-handler)` is a runtime classpath check that returns nil when the namespace is absent. It is structurally impossible to accidentally enable dev reload in production -- the code simply is not there. The base layout uses the same check to decide whether to emit the dev scripts at all, so none of this advanced machinery leaks to a production page.
 
-## What You Now Have
+## What you now have
 
 Building on the file watcher and WebSocket from the live-reload chapter, you now have a development loop where:
 

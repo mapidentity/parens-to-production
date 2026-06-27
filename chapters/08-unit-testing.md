@@ -1,13 +1,10 @@
 # Testing a Clojure App: Fixtures, Helpers, and Coverage
 
-
----
-
 You have a web app. It loads config, connects to Datomic, defines routes, renders pages. It works when you try it in the browser. But "works when I try it" is not a testing strategy. The moment you refactor a handler or change a route, you need something that tells you -- in seconds -- whether you broke anything.
 
 This chapter covers the testing infrastructure we put in place early: a test helpers module with fixtures for fresh in-memory databases and deterministic config, a set of initial tests for configuration and routing, a coverage tool with a minimum threshold, and a shell script that ties it all together. None of this is exotic. That is the point. Setting up boring, reliable test infrastructure early pays dividends for every feature that follows.
 
-## The Testing Philosophy: Fresh State Per Test
+## The testing philosophy: fresh state per test
 
 The core principle is simple: every test gets a fresh in-memory Datomic database. No shared mutable state between tests. No "run tests in this order." No cleanup logic that can silently fail.
 
@@ -15,7 +12,7 @@ Datomic makes this easy. Its in-memory mode (`datomic:mem://`) creates a real da
 
 This matters more than it sounds. When tests share a database, you get two failure modes that waste enormous amounts of time: tests that pass individually but fail together (ordering dependency), and tests that fail individually but pass together (one test's side effects are another test's setup). Both are awful to debug. Fresh state eliminates both.
 
-## The Test Helpers Module
+## The test helpers module
 
 All shared test infrastructure lives in a single file: `test/myapp/test_helpers.clj`. It provides three things -- database fixtures, deterministic config, and a request builder.
 
@@ -31,13 +28,13 @@ All shared test infrastructure lives in a single file: `test/myapp/test_helpers.
     [myapp.db.schema :as schema]))
 ```
 
-This `ns` form compiles and runs as-is. If your app later grows a second database -- ours gains an analytics DB in [the admin dashboard chapter](21-admin-dashboard.md) -- you add one require and one fixture at that point; we show both together [below](#a-second-database-the-analytics-fixture) so the pattern lives in one place. Nothing here depends on it.
+This `ns` form compiles and runs as-is. A second database -- ours gains an analytics DB in [the admin dashboard chapter](21-admin-dashboard.md) -- takes one more require and one more fixture, shown together [below](#a-second-database-the-analytics-fixture).
 
-### The Database Fixture
+### The database fixture
 
 The centerpiece is `with-test-db`, which creates a throwaway in-memory Datomic database per test, binds `*conn*`, and stubs `db/get-connection` so application code transparently hits the test DB. We built it in [the Datomic chapter](07-datomic.md#isolated-test-databases) -- a unique `datomic:mem://` URI per test (via `System/nanoTime`, so parallel runs never collide), the full schema transacted, and the database deleted when the test function returns -- so we will not reprint it here. This chapter is about the infrastructure that surrounds it: deterministic config and a request builder, plus -- for apps that grow a second database -- a parallel fixture you can copy when you need it.
 
-### Deterministic Config
+### Deterministic config
 
 Tests should not depend on your local `config.edn`. A test that passes on your machine but fails in CI because of a config difference is worse than useless -- it builds false confidence. The test helpers define a fixed config map:
 
@@ -78,7 +75,7 @@ And a fixture that installs it:
 
 This uses `with-redefs` to replace the `config/config` delay with one that resolves to the test map. Any code that calls `(config/get-config :server :port)` during the test will get `3000`, deterministically.
 
-### The Request Builder
+### The request builder
 
 For testing Ring handlers, you need request maps. Writing them by hand every time is tedious and error-prone. A small helper takes care of the boilerplate:
 
@@ -110,9 +107,9 @@ Usage in tests:
 
 The `cond->` threading macro keeps it clean -- optional keys are only added when provided.
 
-### A Second Database: The Analytics Fixture
+### A second database: the analytics fixture
 
-You do not need this yet, and you can skip it until you do. When an app grows a second Datomic database, the same fixture pattern scales to it unchanged -- a fresh in-memory instance per test, stubbed at the connection boundary. Ours gains an analytics database in [the admin dashboard chapter](21-admin-dashboard.md); when you reach it, add `[myapp.analytics.db :as analytics]` to the `ns` require above and this fixture beside `with-test-db`:
+When an app grows a second Datomic database, the same fixture pattern scales to it unchanged -- a fresh in-memory instance per test, stubbed at the connection boundary. For the analytics database of [the admin dashboard chapter](21-admin-dashboard.md), add `[myapp.analytics.db :as analytics]` to the `ns` require above and this fixture beside `with-test-db`:
 
 ```clojure
 (def ^:dynamic *analytics-conn*
@@ -136,7 +133,7 @@ You do not need this yet, and you can skip it until you do. When an app grows a 
 
 It is the same shape as `with-test-db`, pointed at a second URI and a second pair of stubs. That is the whole point: one fixture pattern, however many databases your app keeps.
 
-## Example Test: Configuration
+## Example test: configuration
 
 The config tests verify that the configuration system works correctly -- loading profiles, producing the right key types, and supporting nested path access:
 
@@ -180,9 +177,9 @@ These tests are straightforward, but they catch real problems:
 - `session-key-is-16-bytes` verifies the crypto key size constraint. Ring session encryption requires exactly 16 bytes. A 15-byte key would cause a cryptic runtime error.
 - `get-config-nested-path` and `get-config-missing-key` verify the `get-config` accessor works for both present and absent keys. Note how these tests use `with-redefs` directly to set up minimal config -- they do not need the full test fixtures.
 
-## Example Test: Routes
+## Example test: routes
 
-This section builds one self-contained example to teach a *technique* -- data-driven route testing -- rather than a file you will find verbatim in the companion repo. There, the web layer is covered by `test/myapp/web/handler_smoke_test.clj` (each route returns a sane status) and `test/myapp/web/security_test.clj` (the CSP, auth gates, and escaping). The `routes-test` namespace below is the simplest place to show the pattern; adapt its route list to whatever your app actually serves.
+This section builds one self-contained example to teach a *technique*: data-driven route testing. In the companion repo the web layer is covered by `test/myapp/web/handler_smoke_test.clj` (each route returns a sane status) and `test/myapp/web/security_test.clj` (the CSP, auth gates, and escaping); the `routes-test` namespace below is the simplest place to show the pattern. Adapt its route list to whatever your app serves.
 
 The routes tests verify that the routing table is correct and that the app handles edge cases properly:
 
@@ -201,7 +198,7 @@ The routes tests verify that the routing table is correct and that the app handl
 
 The `:once` fixture applies `with-test-config` once for the entire namespace, rather than per test. Config is read-only during tests, so sharing it is safe and faster.
 
-### Route Resolution
+### Route resolution
 
 Rather than testing each route individually, a data-driven approach lists all expected routes and verifies them in a loop:
 
@@ -250,7 +247,7 @@ This is one of those tests that seems almost too simple to be useful. It is not.
 
 Adding a new route to the app means adding one line to `expected-routes`. The test grows with the application, and it takes near-zero effort to maintain.
 
-### Edge Cases: 404 and 405
+### Edge cases: 404 and 405
 
 Two more tests verify that the app handles non-happy paths correctly:
 
@@ -270,7 +267,7 @@ Two more tests verify that the app handles non-happy paths correctly:
 
 The 404 test confirms the default handler returns a proper status code for unknown paths. The 405 test is subtler: `/auth/request` exists, but only for POST. A GET to that path should return 405 (Method Not Allowed), not 404 (Not Found). This distinction matters for API correctness and for clients that use status codes to make decisions.
 
-### Cache Control for Authenticated Responses
+### Cache control for authenticated responses
 
 One more test verifies security-relevant behavior -- that authenticated responses include `Cache-Control: no-store`:
 
@@ -320,7 +317,7 @@ The key flags:
 
 Why 50% and not 80% or 100%? At this stage of the project, the app has config, routes, handlers, database code, and email sending. Some of that (email, database transactions) is harder to unit test and will be covered by integration and end-to-end tests. Setting the bar at 50% ensures meaningful coverage without creating pressure to write bad tests just to hit a number. The threshold should go up as the test suite matures.
 
-## Running the Tests
+## Running the tests
 
 Two commands cover the two modes, both run from the project root:
 
@@ -329,11 +326,11 @@ clojure -X:test      # fast: run the suite, no coverage
 clojure -M:coverage  # run under Cloverage, enforce the coverage threshold
 ```
 
-`clojure -X:test` is the quick feedback loop during development; `clojure -M:coverage` is what the commit gate and CI run, because it both runs the tests and fails if coverage drops below the threshold. The companion repo ships convenience scripts only for the two checks you run constantly by hand -- `./reformat` and `./lint` -- and calls the test commands directly in CI; if you like, wrapping `clojure -M:coverage` in a one-line `./unittest` script (the same `cd "$(dirname "$0")"` pattern as the others) is harmless, but it is not required and the repo does not ship one.
+`clojure -X:test` is the quick feedback loop during development; `clojure -M:coverage` is what the commit gate and CI run, because it both runs the tests and fails if coverage drops below the threshold. The companion repo calls these commands directly rather than wrapping them in a script.
 
 If tests pass and coverage is above the threshold, exit code 0; otherwise non-zero. Because CI runs the very same command, local and CI behavior are identical.
 
-## The `deps.edn` Test Alias
+## The `deps.edn` test alias
 
 For running tests without coverage (faster feedback during development), there is also the `:test` alias:
 
@@ -355,7 +352,7 @@ clojure -M:test
 
 The difference: `:test` runs fast without instrumentation. `:coverage` instruments every form for coverage tracking, which is slower. Use `clojure -X:test` during development, `clojure -M:coverage` before committing.
 
-## In-File Tests: Co-Locating Quick Tests with Source
+## In-file tests: co-locating quick tests with source
 
 Everything above lives in `test/`. That is the right home for most tests -- the database fixtures, the route table, the middleware checks. But there is a second place a test can live: directly underneath the function it tests, in the source file itself. The two approaches are complements, not substitutes. This project uses both, and the only real question is which job goes where.
 
@@ -366,7 +363,7 @@ The division of labor is worth stating plainly:
 
 The signal is the dependency. The only test-only dependency a light in-file test needs is `clojure.test` itself (`deftest`/`is`/`testing`), plus maybe a small helper or data generator. The moment a test reaches for something heavy -- a JDBC driver, testcontainers, anything not on the production classpath -- that is the cue to move it to a `test/` file. The macro below would technically strip it, but a test that needs that machinery is not an example anymore.
 
-### The Problem: Test Dependencies in Production Code
+### The problem: test dependencies in production code
 
 The catch is the `require`. A co-located test needs `clojure.test` (and maybe a small helper), but the obvious ways to pull it in all fail:
 
@@ -374,7 +371,7 @@ The catch is the `require`. A co-located test needs `clojure.test` (and maybe a 
 2. **Inside the `deftest` body.** That is a runtime call inside the test fn -- it does not make `deftest`/`is` resolvable for the rest of the file at compile time.
 3. **Guarded with `(when clojure.test/*load-tests* (require ...))`.** This is a *runtime* branch -- the form is still compiled into the artifact, so it does not reliably keep the dependency out.
 
-### The Macro: Compile-Time Exclusion
+### The macro: compile-time exclusion
 
 The fix leans on a built-in: `clojure.test/*load-tests*` is a dynamic var, default `true`, and when it is `false`, `deftest` expands to nothing. We extend that to arbitrary forms -- including the test-only `require` -- with one macro:
 
@@ -413,7 +410,7 @@ Define (or require) `tests` before you use it. Here it is around a private helpe
 
 `parse-port` is private, and the test calls it directly -- no var gymnastics -- documenting the clamping behavior right where a reader will look for it.
 
-### Stripping for Production
+### Stripping for production
 
 In normal dev and test runs, `*load-tests*` stays `true`, so these blocks load and run as written. You only flip it false for the AOT build. The strict-compilation chapter's `compile-strict` already passes a `:bindings` map to `compile-clj` -- add one entry (leaving its `:err :capture` and warning scan exactly as they were):
 
@@ -427,7 +424,7 @@ In normal dev and test runs, `*load-tests*` stays `true`, so these blocks load a
 
 (`compile-clj` has supported `:bindings` since tools.build 0.8.1.) With this binding the AOT compiler expands every `tests` block to `(comment ...)`, so the uberjar carries no test forms and none of the in-file test requires. (`clojure.test` itself ships with Clojure, so its presence in the namespace that *defines* the `tests` macro is harmless -- the win is keeping the test bodies and any heavier test-only deps out of the artifact.)
 
-### The Real Cost: Discovery
+### The real cost: discovery
 
 There is an ergonomic price, and it is the honest tradeoff. The `:test` alias runs the cognitect test-runner, which by default scans `test/` for namespaces matching `.*-test$`. In-file tests live inside source namespaces like `myapp.config`, which do not end in `-test` -- so the default run never sees them. To include them, point the runner at `src` and widen selection:
 
@@ -445,7 +442,7 @@ The same caveat applies to the commit gate. The coverage gate runs `clojure -M:c
 
 Co-location is convenient -- the test sits where you edit, and reads as documentation for the next person. That convenience is not free: it puts a test concern into a source file, and while the `tests` macro keeps the *dependency* out of the artifact, it cannot make discovery automatic. The trade is worth it for short, doc-style, and private-function checks. For anything heavier -- standalone or integration -- the separate `test/` file stays simpler, and discovery stays free. Keep it there.
 
-## What You Now Have
+## What you now have
 
 At this point the test suite covers three areas:
 
@@ -477,16 +474,7 @@ devcontainer (Ch. 3)
     └── Datomic Peer (in-mem) .. schema transacted on boot       (Ch. 7)
 ```
 
-And here is the sequence that gets you there, each step the subject of a chapter:
-
-1. **Open the repo in the devcontainer** ([Ch. 3](03-devcontainer.md)) -- the same Docker image, JDK, Node, Caddy, Mailpit, and TLS certificates on every machine. "Works on mine" becomes "works on ours."
-2. **The build refuses to compile sloppy code** ([Ch. 4](04-build-hardening.md)) -- reflection and boxed-math warnings, formatting, and lint are gates, not suggestions, from the first commit.
-3. **`clj -M:dev:repl` starts the server** ([Ch. 5](05-web-server.md)) -- http-kit serving a reitit route tree, configured by Aero profiles, with a `curl`-able health endpoint.
-4. **The browser stays in sync as you edit** ([Ch. 6](06-live-reload.md)) -- a file watcher reloads the one changed file and pushes a refresh down a WebSocket.
-5. **The database is live and time-aware** ([Ch. 7](07-datomic.md)) -- a Datomic schema, the `java.time` bridge, and a fresh in-memory database for every test.
-6. **A test harness surrounds all of it** (this chapter) -- per-test databases, deterministic config, a request builder, and coverage that can only climb.
-
-The checklist, then -- everything below is true before we render our first real page:
+That diagram is the running system; the checklist is what it guarantees -- everything below is true before we render our first real page:
 
 - [x] Reproducible environment, identical for every developer and for CI
 - [x] Strict compilation, formatting, and lint enforced as build gates

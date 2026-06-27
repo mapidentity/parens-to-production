@@ -1,15 +1,19 @@
 # A Reproducible Clojure Dev Environment with Devcontainers
 
-
----
-
-## Why Reproducible Environments Matter
+## Why reproducible environments matter
 
 "It works on my machine" is the most expensive sentence in software development. Not because it is hard to fix in the moment, but because it drains time from every new contributor, every OS upgrade, and every debugging session where the root cause turns out to be a missing system dependency.
 
 For a Clojure/Datomic SaaS, the problem compounds. You need a JDK, the Clojure CLI, Node.js (for CSS tooling and browser testing), a mail server for transactional email testing, TLS certificates so your local environment mirrors production, and a reverse proxy to tie it all together. Setting this up manually once is tedious. Keeping it consistent across machines and months of drift is a losing battle.
 
-Devcontainers solve this. You define your entire development environment -- tooling, services, networking -- as code in your repository. Open the project in VS Code, and the environment builds itself. Every time, the same way.
+Several tools address this, and they are worth putting side by side before committing to one:
+
+- A **setup script** (`./install.sh` plus a README) is the zero-dependency option. It is transparent, but it *documents* the steps rather than *enforcing* them: it drifts the moment a machine already has a different JDK, and it has nothing to say about the services the app talks to -- the mail server, the TLS proxy.
+- **Nix** (or `devenv`) is the most rigorous answer, reproducible down to the hash. It is also a second language and toolchain for the team to learn, and it pins the *toolchain* -- you still need something to run Mailpit and a proxy alongside the app.
+- A **VM** (Vagrant) reproduces a whole machine, but it is heavy, slow to boot, and awkward on Apple Silicon.
+- **Docker Compose on its own** pins the services and their images, but not the *editor* side -- the REPL, the extensions, the in-container shell where you actually work.
+
+A **devcontainer** is Docker Compose plus that editor integration, defined as code in the repository. It pins the toolchain *and* the services, *and* it drops your editor inside the same container the app runs in -- and that last part is why we choose it for a REPL-driven Clojure workflow specifically. The nREPL, the file watcher, and the app all live in one place, so "connect your editor" and "run the app" are the same environment rather than two that have to be kept in step. The cost is a hard dependency on Docker and on an editor that speaks the devcontainer protocol (VS Code, or the JetBrains and `devcontainer`-CLI clients); a team already all-in on Nix has a defensible different answer. We take devcontainers because they reproduce the *whole* topology -- tooling, services, networking, and editor -- from one definition.
 
 This chapter walks through a complete devcontainer setup for a Clojure SaaS application. By the end, you will have:
 
@@ -22,9 +26,7 @@ This chapter walks through a complete devcontainer setup for a Clojure SaaS appl
 
 Let's build it.
 
----
-
-## Project Layout
+## Project layout
 
 Here is how the devcontainer-related files are organized in the repository:
 
@@ -44,8 +46,6 @@ myapp/
 
 The `.devcontainer/` directory is the standard location that VS Code looks for. The `compose.yml` lives at the project root because it defines the full development topology, not just the devcontainer itself.
 
----
-
 ## The Dockerfile
 
 The Dockerfile is the foundation. It builds a single image that contains everything you need to develop, test, and debug a Clojure application.
@@ -57,7 +57,7 @@ FROM mcr.microsoft.com/devcontainers/base:trixie
 ARG DEBIAN_FRONTEND=noninteractive
 ```
 
-### Locale Configuration
+### Locale configuration
 
 Setting up UTF-8 locales properly matters more than you might expect. Clojure applications deal with text constantly, and locale mismatches cause subtle bugs in string handling, sorting, and file I/O:
 
@@ -71,7 +71,7 @@ RUN sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
     update-locale LANG=en_US.UTF-8
 ```
 
-### System Tools
+### System tools
 
 Next comes a layer of system utilities. These are not strictly necessary for the application itself, but they make the devcontainer a productive place to live. When you are debugging a network issue at 10pm, you want `tcpdump` and `netcat` already installed, not fighting `apt-get` in a container with no internet:
 
@@ -115,7 +115,7 @@ RUN wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public \
        $(awk -F= '/^VERSION_CODENAME/{print$2}' /etc/os-release) main" \
     | tee /etc/apt/sources.list.d/adoptium.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends temurin-25-jdk rlwrap \
+    && apt-get install -y --no-install-recommends temurin-25-jdk \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -124,7 +124,7 @@ ENV JAVA_HOME=/usr/lib/jvm/temurin-25-jdk-amd64
 
 We install from the Adoptium APT repository rather than downloading a tarball. This way the JDK integrates properly with the system (alternatives, man pages) and gets security updates through `apt-get upgrade`.
 
-### Clojure CLI and Tooling
+### Clojure CLI and tooling
 
 With Java in place, we install the Clojure CLI along with two essential development tools -- Babashka (a fast Clojure scripting runtime) and clj-kondo (a linter):
 
@@ -170,8 +170,6 @@ The symlinks from `/usr/local/bin/` are important. `nvm` manages Node through sh
 
 The `playwright install --with-deps` line downloads browser binaries (Chromium, Firefox, WebKit) and their system dependencies. This is a large download, but doing it at build time means browser tests run instantly during development.
 
----
-
 ## devcontainer.json
 
 The `devcontainer.json` file tells VS Code how to build and connect to the development container:
@@ -205,13 +203,11 @@ A few things to note:
 
 **`remoteUser` is `root`.** In a devcontainer that is throwaway by nature, running as root avoids permission headaches with mounted volumes and installed tools. This is a development environment, not production.
 
----
-
 ## compose.yml
 
 The `compose.yml` defines the full development topology. Here is the structure with each service explained:
 
-### The Application Container
+### The application container
 
 ```yaml
 services:
@@ -241,7 +237,7 @@ The `:cached` mount flag on the workspace volume tells Docker to optimize for re
 
 The container joins two networks: `default` (for inter-service communication) and `myapp-network` (a dedicated bridge network). This separation keeps the service topology clean and allows the Caddy reverse proxy to reach the application.
 
-### TLS Certificate Generation
+### TLS certificate generation
 
 Local HTTPS matters. If your development environment uses plain HTTP while production uses HTTPS, you will hit bugs related to secure cookies, CORS, mixed content, and redirect behavior that only appear after deployment. Better to catch them during development.
 
@@ -361,7 +357,7 @@ volumes:
 
 This means certificates survive container restarts. They are only regenerated if you explicitly delete the volume (`docker volume rm`). No waiting for certificate generation on every restart.
 
-### Caddy Reverse Proxy
+### Caddy reverse proxy
 
 Caddy serves as the ingress layer, providing HTTPS termination and routing to backend services:
 
@@ -432,7 +428,7 @@ The cache headers distinguish between two kinds of static assets:
 
 The Mailpit block is simpler -- just TLS termination and a straight proxy to the Mailpit web UI.
 
-### Mailpit for Email Testing
+### Mailpit for email testing
 
 Every SaaS application sends email: signup confirmations, password resets, invoice notifications. You need to test this locally without actually sending email to real addresses.
 
@@ -468,9 +464,7 @@ networks:
 
 A dedicated bridge network keeps inter-service communication clean. All services that need to talk to each other join this network. Docker's built-in DNS resolves service names to container IPs automatically, so `mailpit:1025` and `myapp:3000` just work.
 
----
-
-## VS Code and Calva Integration
+## VS Code and Calva integration
 
 When you open this project in VS Code, the Remote Containers extension detects `.devcontainer/devcontainer.json` and offers to reopen the project in a container. Accept, and VS Code will:
 
@@ -490,9 +484,7 @@ From there, you start your Clojure application (typically `clojure -M:dev` or ho
 
 This is the core of Clojure development: a live, running application that you modify interactively through your editor.
 
----
-
-## Putting It All Together
+## Putting it all together
 
 Here is what happens when you open the project for the first time:
 
@@ -511,12 +503,10 @@ From this point, you start your Clojure application and begin developing. The en
 - **A fully configured JDK, Clojure CLI, and Node.js** -- ready for application development, CSS builds, and browser testing
 - **Calva in VS Code** -- connected to your running application's REPL for interactive development
 
-And because all of this is defined in files checked into your repository, the next time you (or anyone else) opens the project, they get exactly the same environment. No setup guide to follow. No "which version of Java do I need?" No "I can't get the certificates to work." It just works.
+And because all of this is defined in files checked into your repository, the next time you (or anyone else) opens the project, you get exactly the same environment: the same JDK, the same Node, the same certificates, the same proxy. No setup guide to follow, no "which version of Java do I need?", no "I can't get the certificates to work" -- the questions a setup script leaves open, the definition answers.
 
----
-
-## What Comes Next
+## What comes next
 
 This chapter covered the development environment -- the foundation everything else builds on. The chapters that follow build on this foundation: setting up Datomic, structuring the Clojure application, implementing authentication, and deploying to production.
 
-But for now, you have something valuable: a reproducible, fully-featured development environment that mirrors production from day one. Every hour invested in getting this right pays dividends for the lifetime of the project.
+But for now, you have the foundation everything else rests on: a reproducible development environment that mirrors production from the first commit, so the bugs that only surface under HTTPS, real TLS, and a reverse proxy surface here, on your machine, rather than after deployment.

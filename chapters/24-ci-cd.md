@@ -1,11 +1,8 @@
 # CI/CD for a Clojure SaaS: Forgejo Actions, Podman, and Automated Deployment
 
+Over the preceding chapters we have built a Clojure/Datomic SaaS piece by piece: strict compilation, server-rendered HTML, passwordless authentication, Datomic modeling, an asset pipeline, end-to-end tests, Lighthouse audits, and more. Each piece works on its own, but without a pipeline that ties them together, shipping is a manual checklist that grows longer with every feature. Forget one step and a broken build makes it to production. Forget two and your users notice.
 
----
-
-Over the past fifteen posts we have built a Clojure/Datomic SaaS piece by piece: strict compilation, server-rendered HTML, passwordless authentication, Datomic modeling, an asset pipeline, end-to-end tests, Lighthouse audits, and more. Each piece works on its own, but without a pipeline that ties them together, shipping is a manual checklist that grows longer with every feature. Forget one step and a broken build makes it to production. Forget two and your users notice.
-
-This final post wires everything into a single automated pipeline. Push to main, and the system formats, lints, builds the static assets and verifies their integrity, runs tests with coverage, executes end-to-end tests in a real browser, audits performance with Lighthouse, builds an uberjar, and deploys -- all without human intervention. That is the goal. Let's build it.
+This final chapter wires everything into a single automated pipeline. Push to main, and the system formats, lints, builds the static assets and verifies their integrity, runs tests with coverage, executes end-to-end tests in a real browser, audits performance with Lighthouse, builds an uberjar, and deploys -- all without human intervention. That is the goal. Let's build it.
 
 > **A note on what is actually wired up in the companion repository.** The pipeline in this chapter is the *application* deployment pipeline -- the one you would run for the SaaS itself. The companion repository for this book runs a *different*, much smaller CI workflow: a single GitHub Actions job that builds these chapters with mdBook and publishes the result to GitHub Pages. The application pipeline below (uberjar, Tailwind, esbuild, asset verification, Caddy, SSH deploy) is taught here in full, but it is not the workflow that ships this book's prose. Where it matters -- the asset-integrity gate especially -- we will be explicit about whether a step runs continuously or as a local pre-deploy check. Treat the application pipeline as the design you would adopt the day you stand up your own forge runner; the asset-integrity gate is useful *today*, even run by hand before a deploy.
 
@@ -15,7 +12,7 @@ Forgejo is a self-hosted Git forge (a fork of Gitea) that includes a built-in CI
 
 The key difference from GitHub Actions is the runner model. Instead of ephemeral VMs, Forgejo Actions can run directly on the host machine. We use `runs-on: host` because our pipeline runs each step inside a Podman container anyway -- the host is just the orchestrator. This gives us full control over caching, networking, and the container runtime.
 
-## The CI Container Image
+## The CI container image
 
 Every CI step (except checkout and deploy) runs inside a purpose-built container. This ensures the CI environment is reproducible and isolated from whatever is installed on the host. Here is the Dockerfile:
 
@@ -107,7 +104,7 @@ A few design choices worth explaining.
 
 **Why not a multi-stage build?** The CI image is a build tool, not a production artifact. We want everything in one layer so the container starts fast with no copying between stages. Image size matters less here than build speed.
 
-## The Pipeline
+## The pipeline
 
 Here is the complete `ci.yml` workflow:
 
@@ -241,9 +238,9 @@ The deploy steps continue in the same job:
 
 Let's walk through every stage.
 
-## Stage by Stage
+## Stage by stage
 
-### Triggers and Path Filtering
+### Triggers and path filtering
 
 ```yaml
 on:
@@ -261,7 +258,7 @@ on:
 
 The pipeline triggers on pushes to main and on pull requests targeting main, but only when files under `myapp/` or `.forgejo/` change. If you edit infrastructure configs, documentation, or feature specs, the CI pipeline does not run. This is important in a monorepo -- you do not want to spend ten minutes building and testing the application because someone updated a README in a different directory.
 
-### Environment Variables
+### Environment variables
 
 ```yaml
 env:
@@ -280,7 +277,7 @@ Three variables defined at the workflow level so every step can use them.
 
 `CACHE_VOLS` is the key to fast builds. These are Podman bind mounts that map host directories into the container. Let's look at this more closely.
 
-### Cache Volumes
+### Cache volumes
 
 ```yaml
 CACHE_VOLS: >-
@@ -299,7 +296,7 @@ The `Create cache dirs` step ensures these host directories exist before any con
   run: mkdir -p /var/cache/ci/m2 /var/cache/ci/gitlibs
 ```
 
-### Podman, Not Docker
+### Podman, not Docker
 
 Every containerized step uses `podman run` instead of `docker run`. Podman is a daemonless container runtime -- there is no background daemon process managing containers. Each container is a child process of the calling shell. This matters for CI because:
 
@@ -320,7 +317,7 @@ podman run --rm
 
 `--rm` removes the container after it exits. The workspace is mounted at `/workspace` inside the container, and the working directory is set to the application subdirectory. This means every tool sees the same file layout as a developer working locally.
 
-### Check Formatting
+### Check formatting
 
 ```yaml
 - name: Check formatting
@@ -352,7 +349,7 @@ Note that this step does not mount the cache volumes. Formatting does not need M
 
 Static analysis across all source and test files. clj-kondo reads the `.clj-kondo/config.edn` from the project root for linter configuration (covered in detail in [the strict-compilation chapter](04-build-hardening.md)). Like formatting, this step does not need the cache volumes -- clj-kondo analyzes source code directly without resolving dependencies.
 
-### Build Static Assets and Verify Their Integrity
+### Build static assets and verify their integrity
 
 ```yaml
 - name: Build static assets
@@ -372,7 +369,7 @@ Static analysis across all source and test files. clj-kondo reads the `.clj-kond
     clojure -T:build verify-assets
 ```
 
-These two steps are where the asset pipeline from earlier in the series (the `assets` and `verify-assets` build tasks) becomes a deployment gate. They mount `$CACHE_VOLS` because both run under `clojure -T:build`, which needs resolved dependencies.
+These two steps are where the asset pipeline from earlier chapters (the `assets` and `verify-assets` build tasks) becomes a deployment gate. They mount `$CACHE_VOLS` because both run under `clojure -T:build`, which needs resolved dependencies.
 
 `clojure -T:build assets` produces the served tree. It runs Tailwind CSS once over `input.css` to emit the minified stylesheet, content-hashes it to `styles.<hash>.css`; runs esbuild over each ESM module under `static/js/` to minify it (no bundling, absolute imports preserved) and content-hash it; minifies the vendored idiomorph source into `idiomorph-0.7.4.min.js` with a sourcemap (its version lives in the filename, so it is not content-hashed); copies fonts, SVGs and the error pages through unchanged; and finally writes `asset-manifest.edn` -- a map of `{:assets {logical-name url} :sri {url sri}}` that the running application reads at boot to resolve each logical asset name to its hashed URL and Subresource-Integrity token. The whole tree, plus the manifest, lands under `myapp/static/` (which is gitignored -- only the *sources* under `static/` are committed).
 
@@ -386,7 +383,7 @@ That third invariant is the critical one. Because Caddy serves content-hashed as
 
 There is no separate `scripts/verify-css-hash.bb` or `verify-css` task; asset integrity lives entirely in `build.clj` as `verify-assets`, covering CSS, JavaScript and the manifest in one pass.
 
-### Run Tests with Coverage
+### Run tests with coverage
 
 ```yaml
 - name: Run tests with coverage
@@ -400,7 +397,7 @@ There is no separate `scripts/verify-css-hash.bb` or `verify-css` task; asset in
 
 Runs the test suite with code coverage tracking via the `:coverage` alias. This executes all unit and integration tests and produces a coverage report. A failing test means a non-zero exit code, which fails the pipeline step.
 
-### Run End-to-End Tests
+### Run end-to-end tests
 
 ```yaml
 - name: Run e2e tests
@@ -433,7 +430,7 @@ Lighthouse CI starts the application, loads key pages in Chromium, and measures 
 
 If performance drops below the threshold -- maybe someone added a render-blocking resource or a large unoptimized image -- the pipeline fails. This catches performance regressions before they reach users, automatically and on every push.
 
-### Build the Uberjar
+### Build the uberjar
 
 ```yaml
 - name: Build uberjar
@@ -452,7 +449,7 @@ The uberjar build compiles all Clojure source with strict compilation flags (`*w
 
 The `Verify jar exists` step is a simple sanity check that runs on the host (not in a container). If the uberjar build succeeded but somehow did not produce the expected file, this catches it.
 
-### Conditional Deployment
+### Conditional deployment
 
 ```yaml
 - name: Deploy static files
@@ -483,7 +480,7 @@ Static assets are served by Caddy, not by the JVM. In the companion repository's
 
 The SSH key (`deploy_ed25519`) is pre-installed on the CI runner and grants access to a `deploy` user on the application server. This user has limited permissions -- it can write to the static directory and execute the deploy script, nothing else.
 
-## The Pipeline Order
+## The pipeline order
 
 The stages are deliberately ordered from fastest to slowest, and from cheapest to most expensive:
 
@@ -499,7 +496,7 @@ The stages are deliberately ordered from fastest to slowest, and from cheapest t
 
 If formatting is wrong, you find out in seconds, not after waiting for the entire test suite and build to run. This fast feedback loop makes CI less painful -- developers fix issues quickly because the pipeline tells them quickly.
 
-## What You Now Have
+## What you now have
 
 Once this pipeline is wired up to your forge runner, every push to main triggers a fully automated sequence:
 
@@ -514,9 +511,9 @@ The entire pipeline runs inside Podman containers built from a single Dockerfile
 
 There is nothing to remember. No manual checklist. No "did I run the tests?" anxiety before deploying. The pipeline enforces the standards every time, whether it is Monday morning or Friday evening.
 
-A closing honesty about scope: the workflow above is the *application* pipeline. The repository that holds these chapters runs only the mdBook-to-Pages job described at the top of this chapter -- the prose ships continuously; the application pipeline is the design you reach for the day you run your own SaaS on your own runner. Until then, `clojure -T:build assets` followed by `clojure -T:build verify-assets` is a two-command pre-deploy ritual you can run by hand: build the tree, prove its integrity, then ship it.
+A closing note on scope, briefly, since the chapter opened on it: the workflow above is the *application* pipeline, not the mdBook-to-Pages job that actually ships these chapters. The practical takeaway needs no runner of your own, though -- `clojure -T:build assets` followed by `clojure -T:build verify-assets` is a two-command pre-deploy ritual you can run by hand: build the tree, prove its integrity, then ship it.
 
-## Reflecting on the Series
+## Looking back
 
 This is the final chapter of "Building a Clojure/Datomic SaaS from Scratch." Over the course of this book, we have assembled a complete application stack from first principles:
 

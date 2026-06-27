@@ -1,13 +1,10 @@
 # Passwordless Auth Part 2: Magic Link Emails and the Full Login Flow
 
+In the [previous chapter](18-auth-tokens.md), we built the cryptographic foundation for passwordless authentication: HMAC-SHA256 signed tokens with expiration. But a token sitting in memory is useless until it reaches the user's inbox and completes the round trip back to our server. This chapter wires up the complete flow: sending magic link emails, handling the callback, creating sessions, and gating access behind terms acceptance. The thread running through all of it is that no secret the user has to remember exists anywhere in the system -- the inbox is the credential, and the server's only job is to prove the user reached it.
 
-In the [previous chapter](18-auth-tokens.md), we built the cryptographic foundation for passwordless authentication: HMAC-SHA256 signed tokens with expiration. But a token sitting in memory is useless until it reaches the user's inbox and completes the round trip back to our server. This chapter wires up the complete flow: sending magic link emails, handling the callback, creating sessions, and gating access behind terms acceptance.
+## The full login flow
 
-By the end, you will have a fully working passwordless login system with no passwords stored anywhere.
-
-## The Full Login Flow
-
-Before diving into code, here is the sequence of events:
+Six steps make up the round trip, and it is worth holding them in view before the code arrives one handler at a time:
 
 1. User enters their email and submits the login form
 2. Server generates a signed token with a nonce, records the nonce, and sends an email containing the magic link
@@ -18,7 +15,7 @@ Before diving into code, here is the sequence of events:
 
 Every step uses the Post-Redirect-Get pattern where appropriate, and the session is an encrypted cookie -- no server-side session store needed.
 
-## Sending Email with Jakarta Mail (Eclipse Angus)
+## Sending email with Jakarta Mail (Eclipse Angus)
 
 There are Clojure email libraries out there, but they are all thin wrappers around Jakarta Mail anyway. Using Jakarta Mail directly means one fewer dependency to track, and the API is straightforward enough that a wrapper does not add much value. Eclipse Angus is the reference implementation of Jakarta Mail since it moved out of the javax namespace.
 
@@ -48,7 +45,7 @@ Here is the email namespace:
 
 The imports tell the story. We need `Session` to configure the SMTP connection, `MimeMessage` to build the email, and `Transport` to send it. Nothing else.
 
-### Configuring the SMTP Session
+### Configuring the SMTP session
 
 ```clojure
 (defn- smtp-session
@@ -74,7 +71,7 @@ Two things worth noting. First, we branch on whether `user` is present. In devel
 
 Second, the `^Session` type hint on the return value. With `*warn-on-reflection*` set to true, the Clojure compiler will tell us if we miss a hint that causes reflective method lookup. In a namespace full of Java interop, this matters for both performance and correctness.
 
-### The send-magic-link! Function
+### The send-magic-link! function
 
 ```clojure
 (defn send-magic-link!
@@ -100,7 +97,7 @@ Second, the `^Session` type hint on the return value. With `*warn-on-reflection*
 
 The function takes four arguments: the locale (for i18n), the recipient email, the signed token, and the base URL. It constructs the full magic link URL, builds a `MimeMessage`, and sends it.
 
-A few design choices:
+Three decisions are folded into those few lines, and each is a small refusal of a more elaborate default:
 
 **Plain text email.** No HTML templates, no inline CSS wrestling. A magic link email should contain exactly one thing: the link. Plain text is universally readable, does not get clipped by email clients, and is trivial to test.
 
@@ -108,11 +105,11 @@ A few design choices:
 
 **Return value, not exception.** The function returns `{:error :SUCCESS}` or `{:error :FAIL :message "..."}`. The caller can decide what to do. In our case, the handler always shows the "check your email" page regardless -- we do not want to leak information about whether an email address is registered.
 
-## The Handler Layer
+## The handler layer
 
 With token creation (from the previous chapter) and email sending in place, the handlers orchestrate the full flow.
 
-### Requesting a Magic Link (POST /auth/request)
+### Requesting a magic link (POST /auth/request)
 
 ```clojure
 (defn- normalize-email
@@ -159,7 +156,7 @@ The happy path does four things: create a token (and its nonce), send the email,
 
 Recall from [Part 1](18-auth-tokens.md) that `create-magic-link-token` returns `{:token ... :nonce ...}`. The token goes in the email; the nonce we write to a small server-side store keyed by `:magic-link/nonce`, alongside the email and request time. (This store is the same lightweight event log the admin dashboard reads for analytics -- its schema is defined there; here we only need the nonce field.) When the user clicks the link, verification will look this record up and atomically flip it to "consumed." A second click finds it already consumed and is rejected.
 
-### Why Post-Redirect-Get Matters
+### Why Post-Redirect-Get matters
 
 Without PRG, refreshing the "check your email" page would resubmit the form and send another email. The browser would show a "resubmit form data?" dialog. With PRG:
 
@@ -167,9 +164,9 @@ Without PRG, refreshing the "check your email" page would resubmit the form and 
 2. Browser follows redirect to **GET** `/auth/sent?email=user@example.com`
 3. Refreshing this page is a harmless GET -- no duplicate emails
 
-(The dispatcher from the views chapter enhances this form submission into an in-place fetch when JavaScript is available, but the server is oblivious to that -- it always renders the same full page and redirects. No `X-Enhanced` header, no content negotiation, no separate code path.)
+(The dispatcher from [the morph-dispatcher chapter](11b-morph-dispatcher.md) enhances this form submission into an in-place fetch when JavaScript is available, but the server is oblivious to that -- it always renders the same full page and redirects. No `X-Enhanced` header, no content negotiation, no separate code path.)
 
-### Rate Limiting Beyond One Instance
+### Rate limiting beyond one instance
 
 The in-process counter is the right default -- one instance, no external dependency, and rate limiting that works the moment you boot. But the moment you run two app instances behind a load balancer, each keeps its own counts, so the effective limit doubles with every replica. The fix is not to change *what* we limit, only *where the count lives*, and the call sites above already make that separation clean: every check goes through one function with one signature.
 
@@ -193,7 +190,7 @@ Because the *key* carries the dimension (`ml-ip:…`, `ml-email:…`) and the po
 
 A Datomic-backed counter or a Postgres `UPDATE … RETURNING` works the same way; the only requirement is that the increment-and-read is atomic so two simultaneous requests cannot both read "under the limit." The decision the chapter made -- per-email *and* per-IP, fail-closed, same redirect either way -- is independent of all of this. That is the payoff of routing both checks through one `allow?`: the security policy is fixed in the handler, and the store is a deployment detail you change once, in one namespace, the day you add the second instance.
 
-### The Confirmation Page (GET /auth/sent)
+### The confirmation page (GET /auth/sent)
 
 ```clojure
 (defn magic-link-sent
@@ -207,9 +204,9 @@ A Datomic-backed counter or a Postgres `UPDATE … RETURNING` works the same way
 
 Simple: read the email from the query string, render a page telling the user to check their inbox.
 
-### Verifying the Token (GET /auth/verify)
+### Verifying the token (GET /auth/verify)
 
-When the user clicks the magic link, three things must all hold before we sign them in: the token must be authentic and unexpired, its nonce must not have been used before, and a user account must exist (creating one on first sign-in). Let us build the one-shot check first.
+When the user clicks the magic link, three things must all hold before we sign them in: the token must be authentic and unexpired, its nonce must not have been used before, and a user account must exist (creating one on first sign-in). The one-shot check is the piece to build first, because the other two are familiar and it is the subtle one.
 
 #### Consuming the nonce exactly once
 
@@ -280,7 +277,7 @@ Crucially, every failure path produces the *same* generic error page. We never t
 
 The session is the moment where "stateless token" becomes "stateful session." The token was a one-time bridge to prove the user controls that email address; the nonce guaranteed it was crossed only once. The session persists across requests.
 
-## Session Management
+## Session management
 
 Sessions are configured in the middleware stack using Ring's cookie store:
 
@@ -306,15 +303,23 @@ Sessions are configured in the middleware stack using Ring's cookie store:
 
 The session cookie is:
 
-- **Encrypted** with a 16-byte key (AES via Ring's cookie store)
+- **Encrypted and authenticated** with a 16-byte key. Ring's cookie store does not merely scramble the session, it *seals* it: AES-CBC with a random IV for confidentiality, then an HMAC-SHA256 tag over the ciphertext, verified in constant time *before* anything is decrypted (encrypt-then-MAC).
 - **http-only** so JavaScript cannot read it
 - **secure** so it only travels over HTTPS
 - **same-site :lax** to prevent CSRF while still allowing the magic link GET request to work (the link opens in a new tab, which is a top-level navigation -- `:lax` permits this)
 - **30 days** expiry
 
-No server-side session store. The session data is encrypted inside the cookie itself. For our use case -- storing just an email address -- this is ideal. No session table to query, no cleanup jobs, no scaling concerns.
+No server-side session store. The session data is sealed inside the cookie itself. For our use case -- storing just an email address -- this is ideal. No session table to query, no cleanup jobs, no scaling concerns.
 
-### Cache Control for Authenticated Pages
+### Why a client-held session is safe
+
+Putting the session in the cookie only works because of that HMAC, and it is worth being precise about why, because encryption alone would not be enough. Encryption keeps the contents secret; it says nothing about *integrity* -- and integrity is the property that matters when the client holds the data. The session is just `{:user-email "..."}`. If a user could flip those bytes to someone else's address and have the server believe them, the whole scheme would be theatre. They cannot: any edit to the sealed blob -- one byte, the whole thing, or a value lifted from another site -- fails the MAC check, and `unseal` returns `nil`, which Ring reads as *no session*. Forging a valid cookie requires the server's secret key, which never leaves the server. So "no server-side session store" is not a shortcut that trades away safety; it trades a database lookup for a signature check, and the signature is what lets the server trust a value it did not keep. (One honest caveat: the same 16-byte key drives both the AES and the HMAC. With encrypt-then-MAC over two distinct algorithms that is not a practical weakness, but it is one more reason the key must be real CSPRNG bytes -- the config refuses to boot without `SESSION_KEY` in production, exactly as it does for the magic-link signing key.)
+
+### CSRF: what `same-site :lax` does, and what it leaves on the table
+
+Notice what is *not* here: a CSRF token. There is no hidden `_csrf` field on the forms and no synchronizer token in the session, and that is a deliberate choice with a named cost. The defense we rely on instead is `SameSite=Lax`, which tells the browser not to attach the session cookie to cross-site subrequests -- so the classic attack, a hidden form on `evil.com` auto-POSTing to `/terms/accept`, arrives with no cookie and is simply unauthenticated. It works precisely because every state-changing endpoint here is a POST (`/auth/request`, `/terms/accept`, `/auth/logout`): `:lax` *does* send the cookie on top-level cross-site GET navigations -- which is what makes the magic link work -- but never on a cross-site POST. The cost of leaning on `:lax` is that the protection is the browser's to enforce, not ours: it assumes a current browser (every maintained one now defaults to honoring it, but a sufficiently old client may not), it does nothing against a same-origin attacker such as an XSS hole or a hostile subdomain, and it would not cover a state-changing GET if we ever introduced one. For this app -- modern browsers, every mutation behind a POST, and escaping plus a strict CSP closing the XSS door upstream ([the asset pipeline chapter](22-asset-pipeline.md)) -- `:lax` is sufficient and is the simplest thing that is correct. A higher-value app, or one that must accept a cross-site POST, should add a double-submit or synchronizer token on top; the place to put it is this same middleware stack.
+
+### Cache control for authenticated pages
 
 One subtle middleware worth highlighting:
 
@@ -332,7 +337,7 @@ One subtle middleware worth highlighting:
 
 Without this, a user who logs out and hits the back button might see their dashboard from the browser's back-forward cache. `no-store` prevents this. It only applies to authenticated responses, so public pages still benefit from caching.
 
-## The Terms Acceptance Gate
+## The terms acceptance gate
 
 Authentication proves who you are. But before a new user can use the application, they need to accept the terms of service. The dashboard handler enforces this:
 
@@ -421,7 +426,7 @@ The dependency goes in the `:test` alias:
        ...}
 ```
 
-### The GreenMail Fixture
+### The GreenMail fixture
 
 ```clojure
 (ns myapp.auth.email-test
@@ -466,7 +471,7 @@ The dependency goes in the `:test` alias:
 (use-fixtures :each with-greenmail)
 ```
 
-Key details:
+Four details carry the fixture, and together they are why the email tests run in milliseconds with no network in sight:
 
 - **Port 0** tells GreenMail to pick a random available port. No port conflicts, tests can run in parallel.
 - **`with-redefs`** swaps the app config to point SMTP at the GreenMail instance. The production code does not know it is talking to a test server.
@@ -475,7 +480,7 @@ Key details:
 
 The `^"[Lcom.icegreen.greenmail.util.ServerSetup;"` type hint is the JVM's notation for an array of `ServerSetup` objects. It looks ugly, but it eliminates a reflection warning.
 
-### Testing Email Delivery
+### Testing email delivery
 
 ```clojure
 (deftest send-magic-link-delivers-email
@@ -540,7 +545,7 @@ In production:
 
 The production email code is identical to the development email code. Only the config changes. This is the advantage of using a real SMTP server for development instead of mocking -- you exercise the actual email path every time.
 
-## The Config Layer
+## The config layer
 
 One detail worth calling out: the SMTP configuration is read at runtime, not compile time. The `smtp-session` function calls `(config/get-config :smtp)` every time it creates a session. This means:
 
@@ -551,20 +556,8 @@ One detail worth calling out: the SMTP configuration is read at runtime, not com
 
 This is the same pattern used for the signing key, the database URI, and the session key. Aero's profile system handles the branching, and the code just calls `get-config`.
 
-## What You Now Have
+## Where this leaves us
 
-Starting from the token infrastructure in the previous chapter, we have added:
-
-1. **Email delivery** -- Jakarta Mail via Eclipse Angus, no wrapper libraries
-2. **Magic link flow** -- request, send, verify, session creation
-3. **Session management** -- encrypted cookie, http-only, secure, 30-day expiry
-4. **Post-Redirect-Get** -- no accidental double-submissions
-5. **Terms acceptance gate** -- users must agree before accessing the app
-6. **GreenMail tests** -- real SMTP assertions, no mocking
-7. **Mailpit for development** -- visual email inspection during development
-
-The complete flow works like this: a user enters their email on the home page. The server creates a signed token, emails a magic link, and redirects to a "check your email" page. The user clicks the link. The server verifies the token, creates a session, and redirects to the dashboard. If the user has not accepted terms, they see the terms page first. All of this with zero passwords stored anywhere.
-
-The system is also testable at every layer. Unit tests verify token signing and verification. Integration tests verify email delivery end-to-end with GreenMail. And the config system makes it trivial to swap between test, development, and production SMTP.
+The previous chapter's token primitive is now a working login. Email goes out through Jakarta Mail with no wrapper library; the request/send/verify/session cycle runs on Post-Redirect-Get, so a refresh never re-sends; the session itself is a sealed cookie -- http-only, secure, thirty-day -- with no server-side store to scale or clean up; and a terms gate lives in the read path, so an account can exist before it has agreed to anything rather than forcing a half-written record. Every layer stays testable without mocking: GreenMail captures real SMTP in-process, and the runtime-read config swaps cleanly between GreenMail, Mailpit, and a production provider without a line of code changing.
 
 The result is a complete passwordless authentication flow -- signed tokens, email delivery, encrypted sessions, and a terms gate -- built from the JDK, Datomic, and a handful of small functions, with no passwords stored anywhere and tests at every layer.

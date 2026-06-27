@@ -10,8 +10,6 @@ It is worth being concrete about the payoff before the machinery, because the ma
 
 The feature is large enough to build in two movements. **This chapter** records a request and projects it into a call tree — middleware to handler to domain to view, with every Datomic read — served as JSON. [The next chapter](15-construction-view-overlay.md) adds the targeted projections over the same recording — *flow* (trace one element's value back to the query behind it) and a *dossier* of drill-downs — and builds the in-page overlay that renders all of it. Everything is dev-only and **structurally absent** from production, the same standard the rest of our dev infrastructure holds itself to; it reuses the inspector's welded coordinates, the `/dev/ws` editor relay from [the live-reload chapter](06-live-reload.md), and the `defn-asset` dev block from [the Hiccup views chapter](11-hiccup-views.md). The whole server lives in one dev-only namespace, `dev/trace.clj`, which we build from the bottom up here.
 
----
-
 ## Why not just extend the inspector?
 
 The obvious move is to generalize what we already have. The inspector auto-instruments every view function by wrapping its var:
@@ -491,7 +489,7 @@ mw (if-let [wt (when (System/getProperty "clojure.storm.instrumentEnable")
      base-mw)
 ```
 
-## What You Now Have
+## What you now have
 
 With one dev alias, the `trace` namespace, and one route, a request under `clojure -M:dev:storm:repl` now records itself, and `GET /dev/__trace/:id` returns the whole construction as JSON: the middleware-to-handler-to-domain-to-view call tree, each frame's recorded args and return summarized as ValueRefs, every Datomic read as real datalog at its basis-t — including the raw `d/as-of`/`d/history` time-travel reads a wrapper allowlist would miss — plus an N+1 signal, both lexical and temporal parentings, and the throw site if the request 500'd.
 

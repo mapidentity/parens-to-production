@@ -1,9 +1,8 @@
-# Server-Rendered HTML with Hiccup: Views, Layouts, and Progressive Enhancement
+# Server-Rendered HTML with Hiccup: Views, Layouts, and Escaping
 
+In the previous chapters we set up our Ring server and routing with Reitit, a live-reload workflow, a Datomic schema, internationalization, and Tailwind styling. But we glossed over how pages actually get rendered. In this chapter we build the entire server-side view layer: HTML generation with Hiccup, a layout system that shares structure across pages, navigation components, the output-escaping that is our primary defense against cross-site scripting, and Markdown rendering. The progressive-enhancement layer that makes navigation feel instant -- the client dispatcher -- is involved enough to earn [its own chapter](11b-morph-dispatcher.md) next; here we build the views it enhances. (The login and session machinery the layouts hint at -- magic-link authentication -- comes later, in the authentication chapters; here we just render the views it will plug into.)
 
-In the previous chapters we set up our Ring server and routing with Reitit, a live-reload workflow, a Datomic schema, internationalization, and Tailwind styling. But we glossed over how pages actually get rendered. In this chapter we build the entire view layer: HTML generation with Hiccup, a layout system that shares structure across pages, navigation components, and a progressive enhancement strategy that keeps things fast without requiring a JavaScript framework. (The login and session machinery the layouts hint at -- magic-link authentication -- comes later, in the authentication chapters; here we just render the views it will plug into.)
-
-## Why Server-Rendered HTML
+## Why server-rendered HTML
 
 The default assumption in 2026 is that you need React (or something like it) to build a web app. For a lot of products, that is the wrong starting point. Here is why we went with server-rendered HTML:
 
@@ -14,7 +13,7 @@ The default assumption in 2026 is that you need React (or something like it) to 
 
 This is not a philosophical stance against SPAs. It is a pragmatic choice: for a solo-operated SaaS, every moving part you add is a part you maintain. Server-rendered HTML eliminates an entire category of complexity.
 
-## Hiccup 2: HTML as Data
+## Hiccup 2: HTML as data
 
 [Hiccup](https://github.com/weavejester/hiccup) represents HTML as Clojure data structures. We render with version 2 (`hiccup/hiccup "2.0.0"`), whose `hiccup2.core/html` macro auto-escapes string content by default. That auto-escaping is the foundation of our XSS defense -- more on this in the output-encoding section below.
 
@@ -52,11 +51,11 @@ We use one namespace from the library for rendering:
 
 `hiccup2.core/html` renders hiccup to an escaped string. `hiccup2.core/raw` wraps a string we want emitted *verbatim* (no escaping) -- used for the doctype, for markdown-rendered HTML, and for the inline scripts and styles we control. We will see both at work in the base layout.
 
-## The Layout System
+## The layout system
 
 Every web app has shared structure: the `<head>` tag, stylesheets, scripts, navigation. We handle this with three layout functions that compose together.
 
-### Base Layout
+### Base layout
 
 The base layout is the HTML5 shell that every page shares. It is private -- page functions never call it directly:
 
@@ -118,19 +117,19 @@ The base layout is the HTML5 shell that every page shares. It is private -- page
         (list (dev-reload-script) (inspector-script) (trace-overlay-script)))]]))
 ```
 
-A few things to note:
+Several things in that shell carry weight worth drawing out:
 
 - **`locale` is threaded everywhere.** Every layout takes it as the first argument, and all user-facing text goes through `(t locale :key)` for i18n. i18n has [its own chapter](09-i18n.md); the view layer is ready for it from day one.
 - **The whole document is built by `h/html`, the *escaping* renderer.** This matters enough that it gets its own section below. The doctype is the one structural literal we want emitted as-is, so it goes through `(h/raw "<!DOCTYPE html>")`.
 - **Assets resolve through `(assets/asset "...")`.** The stylesheet, the module scripts, and the import map all come from the asset system: in production each URL is content-hashed and carries an integrity (SRI) attribute; in development the same calls return stable, unhashed URLs. The asset pipeline is its own topic -- here, the view layer just asks for a logical name and gets back a URL.
-- **`(script-tag "js/dispatcher.js" {:type "module"})`** loads the dispatcher, the script that powers progressive enhancement (covered in detail below). It is a normal ES module, served from the classpath through the asset pipeline -- not inlined.
+- **`(script-tag "js/dispatcher.js" {:type "module"})`** loads the dispatcher, the script that powers progressive enhancement ([its own chapter](11b-morph-dispatcher.md), next). It is a normal ES module, served from the classpath through the asset pipeline -- not inlined.
 - **`(toast-script)`** inlines a small toast helper. The `defn-asset` macro and inline scripts are covered later in this chapter.
 - **`(tag-root body)`** wraps the page body for the development source inspector. In production it is the identity function; the body is unchanged.
 - **The final body block is dev-only.** `(when (requiring-resolve 'dev-reload/websocket-handler) (list (dev-reload-script) (inspector-script) (trace-overlay-script)))` emits three small scripts — the live-reload client ([live reload](06-live-reload.md)), the source inspector ([the inspector](12-inspector.md)), and the construction-view overlay ([the construction view](13-construction-view.md)) — and nothing else. This is the single place those overlays mount, so as you build each of those chapters you add its script to this list. The `requiring-resolve` check returns `nil` when the dev namespace is not on the classpath, so the whole block is *structurally absent* in production; the `defn-asset` declarations behind `dev-reload-script`/`inspector-script`/`trace-overlay-script` arrive with [the asset pipeline](22-asset-pipeline.md). (If you are following along before those chapters exist, drop the names you have not built yet — the block renders nothing until the dev namespace is present anyway.)
 - **The `page-enter` keyframes** give each freshly rendered `<main>` a subtle entrance; it pairs with the DOM-morphing reload in [the morph-reload chapter](16-morph-reload.md).
 - **`body` uses `& body` (rest args)** so callers can pass multiple elements naturally without wrapping them in a container.
 
-### Public Layout
+### Public layout
 
 For unauthenticated pages (login, error pages, terms acceptance), we want a centered card on a subtle background:
 
@@ -149,7 +148,7 @@ This wraps `base-layout`, adding a centered container. The Tailwind classes hand
 
 Note the `<main data-layout="public">`. Every page's content lives inside a single `<main>` element, and that element carries a `data-layout` marker. The dispatcher uses both facts -- `<main>` as the morph target, `data-layout` to detect when navigating would change the whole chrome.
 
-### App Layout
+### App layout
 
 Authenticated pages -- and the public recipe-browsing pages -- get the navigation chrome:
 
@@ -173,7 +172,7 @@ The `active-tab` parameter (a keyword like `:browse`, `:new`, `:dashboard`, `:ad
 
 Again, the content sits in `<main data-layout="app">` -- same morph target as the public layout, different `data-layout` value.
 
-### How They Compose
+### How they compose
 
 The hierarchy is:
 
@@ -187,11 +186,11 @@ base-layout          (HTML5 shell, head, scripts)
 
 Page functions call either `public-layout` or `app-layout`, never `base-layout` directly. This keeps the shared structure in one place while giving each page type its own wrapper.
 
-## Navigation Components
+## Navigation components
 
 The app layout includes a single, responsive top navigation bar. The same bar shows whether or not someone is signed in -- it just shows different tabs.
 
-### The Top Bar
+### The top bar
 
 The top navigation bar is a horizontal strip with tabs for each workflow area. Each tab is an icon plus a label (the label hides on the narrowest screens):
 
@@ -241,7 +240,7 @@ The bar itself adapts to the signed-in state. Browse is always shown; "New recip
          (t locale :home/sign-in)])]]]])
 ```
 
-### Inline SVG Icons
+### Inline SVG icons
 
 Tabs use inline SVG icons. Using inline SVGs means no icon font to load, and each icon is just a vector of path strings:
 
@@ -263,7 +262,7 @@ Tabs use inline SVG icons. Using inline SVGs means no icon font to load, and eac
 
 The icon paths are stored in a map keyed by tab name, so the markup that draws each tab stays small.
 
-## Building Pages
+## Building pages
 
 With layouts and navigation in place, building a page is straightforward. Here is the landing page:
 
@@ -293,7 +292,7 @@ With layouts and navigation in place, building a page is straightforward. Here i
       [:p.mt-4.text-xs.text-text-secondary.text-center (t locale :home/magic-link-explanation)]]]))
 ```
 
-There is nothing special on the form. A plain `<form method="POST" action="/auth/request">` with a plain `<button type="submit">`. No data attributes, no per-element wiring. The dispatcher enhances it automatically (next section), and if the dispatcher never loads, the form posts the old-fashioned way and everything still works.
+There is nothing special on the form. A plain `<form method="POST" action="/auth/request">` with a plain `<button type="submit">`. No data attributes, no per-element wiring. The dispatcher enhances it automatically (next chapter), and if the dispatcher never loads, the form posts the old-fashioned way and everything still works.
 
 And here is the authenticated dashboard, using `app-layout`:
 
@@ -318,7 +317,7 @@ And here is the authenticated dashboard, using `app-layout`:
 
 The `:dashboard` keyword tells the navigation to highlight the Dashboard tab. The `admin?` flag passes through to the nav.
 
-## Handlers: Connecting Routes to Views
+## Handlers: connecting routes to views
 
 Handlers sit between routes and views. They extract data from the request, call domain logic, and return a Ring response with rendered HTML. A small private helper does the wrapping:
 
@@ -356,151 +355,9 @@ Handlers then read what they need off the request and render:
 
 The pattern is consistent: gather data, render the view, wrap with `html`. No framework magic. The `str` inside `html` realizes the Hiccup output as an HTML string for the response body.
 
-Importantly, **handlers do not branch on the request type.** There is no "is this a fetch?" check and no separate partial-vs-full code path. A handler renders one thing -- the full page -- and the dispatcher on the client extracts the part it needs. We will see why that works in a moment.
+Importantly, **handlers do not branch on the request type.** There is no "is this a fetch?" check and no separate partial-vs-full code path. A handler renders one thing -- the full page -- and the dispatcher on the client extracts the part it needs. That client dispatcher -- the script that turns these full-page responses into in-place `<main>` morphs, and the reason `data-layout` rides on every `<main>` -- is involved enough to be its own chapter, [The Morph Dispatcher](11b-morph-dispatcher.md), which comes next. The rest of *this* chapter finishes the server side of the view layer.
 
-## Progressive Enhancement: the Dispatcher + Idiomorph
-
-This section builds one mechanism -- the morph dispatcher -- because the view layer needs it now: it is what makes server-rendered navigation feel in-place. It is *not* the whole progressive-enhancement story. Morphing is only the right tool for one kind of update (reconciling server-authored HTML); menus, motion, and local interactions each have a narrower correct mechanism, and choosing among them is the subject of [the progressive-enhancement chapter](17-progressive-enhancement.md), which treats this dispatcher as the top layer of a five-layer stack. Here we just build the layer.
-
-The base layout loads `dispatcher.js` as an ES module. It is the one script responsible for turning ordinary links and forms into smooth, in-place updates -- without any per-element configuration, and without changing how the server responds.
-
-The whole strategy rests on one idea: **the server always renders complete pages; the client morphs the part that changed.** Specifically, the dispatcher intercepts same-origin navigation, fetches the destination, parses the returned HTML, pulls out its `<main>`, and *morphs* the live `<main>` to match using [idiomorph](https://github.com/bigskysoftware/idiomorph). Morphing diffs the existing DOM against the new DOM and applies the minimal set of mutations -- so focus, scroll position, form state, and ongoing CSS transitions inside unchanged subtrees survive the update.
-
-### What it intercepts
-
-The dispatcher attaches exactly three listeners at the document level:
-
-```javascript
-document.addEventListener('click', onClick, true);
-document.addEventListener('submit', onSubmit);
-window.addEventListener('popstate', onPopState);
-```
-
-For clicks, it looks for the nearest `<a href>` and decides whether to take over. It deliberately bows out -- letting the browser do its native thing -- for anything that is not a plain primary-button, same-origin navigation:
-
-```javascript
-function shouldEnhanceLink(a, e) {
-  if (a.hasAttribute('data-no-enhance')) return false;
-  if (a.getAttribute('target') === '_blank') return false;
-  if (a.hasAttribute('download')) return false;
-  if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return false;
-  if (e.button !== undefined && e.button !== 0) return false;
-  const href = a.getAttribute('href');
-  if (!href) return false;
-  if (!sameOrigin(href)) return false;
-  if (isFragmentOnly(a)) return false;
-  return true;
-}
-```
-
-So cmd-click to open in a new tab, downloads, external links, and in-page `#anchor` jumps all behave exactly as the browser intends. The only opt-out attribute is `data-no-enhance`; everything else is inferred from the link itself.
-
-Forms are similar -- the dispatcher reads `action` and `method` straight off the `<form>` (honoring an `<input formaction>`/`formmethod` submitter when present), and skips anything cross-origin or marked `data-no-enhance`. There is no DSL: a normal `<form method="POST" action="/auth/request">` is enhanced as-is.
-
-### The core primitive: fetchAndMorph
-
-Both the click and submit handlers funnel into one exported function, `fetchAndMorph`. It fetches, picks the fragment to apply, morphs, and updates history. The skeleton below shows the shape; the full `static/js/dispatcher.js` in the companion repo fills in the robustness details called out beneath it (in-flight de-duplication via `AbortController`, `formaction`/`formmethod` discovery, re-executing `<script>` tags the morph carried in), which are mechanical once the shape is clear:
-
-```javascript
-export async function fetchAndMorph(url, opts = {}) {
-  // ... fetch the URL (credentials: same-origin, redirect: follow) ...
-
-  const finalUrl = res.url || url;       // reflects any 302 the server issued
-  const html = await res.text();
-
-  // Pull <main> (or an explicit data-target) out of the response HTML.
-  const { fragmentEl, parsedDoc } = pickResponseFragment(html, target);
-  const targetEl = document.querySelector(target);
-  if (!targetEl) return;                 // page already morphed away; bail quietly
-
-  // Cross-layout guard (see below).
-  // ...
-
-  morph(targetEl, fragmentEl, { morphStyle: 'innerHTML', ignoreActiveValue });
-  updateTitle(parsedDoc);
-  // ... history bookkeeping ...
-}
-```
-
-A few details worth pulling out, because they are what make this robust rather than a toy:
-
-- **The server is the source of truth for errors and redirects.** A 4xx or 5xx with an HTML body is morphed in place, so server-rendered error pages just appear. A POST that ends in a redirect (the Post-Redirect-Get pattern) is followed by `fetch`, and `finalUrl` carries the redirect target, which the dispatcher then writes into the address bar -- so a refresh does not re-POST.
-- **Cross-layout navigation falls back to a full load.** If the response's `<main data-layout>` differs from the live one (e.g. going from `public-layout` to `app-layout`), an in-place morph would leave the wrong chrome around it. The dispatcher detects the mismatch and does an honest full navigation instead:
-
-  ```javascript
-  if (target === 'main') {
-    const liveLayout = document.querySelector('main[data-layout]');
-    const newLayout = parsedDoc.querySelector('main[data-layout]');
-    if (liveLayout && newLayout
-        && liveLayout.dataset.layout !== newLayout.dataset.layout) {
-      window.location.assign(finalUrl);
-      return;
-    }
-  }
-  ```
-
-  This is the payoff for putting `data-layout` on every `<main>`.
-- **In-flight requests are de-duplicated.** Each destination keys an `AbortController`; a newer click to the same target aborts the older fetch, so rapid navigation cannot land an out-of-order morph.
-- **Failure degrades gracefully.** A network error on a GET falls back to `window.location.assign(url)` -- a real navigation -- so the user is never stranded on a dead click.
-
-### A note on the Accept header
-
-You will see the fetch send `headers: { 'Accept': 'text/html' }`. **The server does not branch on it.** There is no content negotiation, no "partial vs full" response, no special header that flips the handler into a different mode. Every handler renders the complete page every time; the dispatcher is the only thing that decides to extract `<main>`. The `Accept` header is vestigial -- harmless, but do not build server logic around it. Keeping the server oblivious to *how* it is being called is exactly what lets the no-JavaScript path stay correct for free.
-
-### History and accessibility
-
-For link clicks and GET form submits, the dispatcher pushes a history entry to the fetched URL, so Back and Forward work. `popstate` re-fetches whatever URL the browser is now showing and morphs `<main>` again. After a navigation morph it moves focus to `<main>` (giving it `tabindex="-1"` if needed) so screen readers re-announce the new content, and it copies the new document's `<title>` over.
-
-### Scripts inside a morph
-
-One sharp edge of morphing (or any `innerHTML` swap): browsers do **not** execute `<script>` tags introduced that way. If a page embeds a per-page script inside `<main>`, a morph would insert it inert. The dispatcher handles this by re-materializing such scripts after the morph -- cloning each into a fresh `<script>` element (which the browser *does* run) and marking it `data-executed` so later morphs leave it alone:
-
-```javascript
-function executeScripts(root) {
-  const scripts = root.querySelectorAll('script:not([data-executed])');
-  scripts.forEach((old) => {
-    const fresh = document.createElement('script');
-    for (const attr of old.attributes) fresh.setAttribute(attr.name, attr.value);
-    fresh.setAttribute('data-executed', 'true');
-    fresh.text = old.textContent;
-    old.replaceWith(fresh);
-  });
-}
-```
-
-In practice our pages avoid inline `<script>` inside `<main>` entirely (it would also fight our strict Content-Security-Policy -- see the [asset pipeline chapter](22-asset-pipeline.md)). Page-specific behavior is delivered as ES modules loaded once in `<head>` that *enhance* whatever DOM is present and re-run their setup on the `dispatcher:morphed` event the function fires at the end:
-
-```javascript
-document.dispatchEvent(new CustomEvent('dispatcher:morphed', {
-  detail: { url: finalUrl, target, method },
-}));
-```
-
-That event is the extension point. The `live-form`, `defer-details`, `server-preview`, and `admin-stats` modules each listen for it (or for native events) and idempotently wire up the elements they care about after every morph.
-
-Concretely, a module loaded once in `<head>` looks like this -- it enhances whatever DOM is present on first load, and re-runs the same enhancement after every morph, guarding against double-wiring with a marker attribute:
-
-```javascript
-// static/js/live-form.js — loaded once; survives every morph.
-function enhance(root = document) {
-  for (const form of root.querySelectorAll('form[data-live]')) {
-    if (form.dataset.enhanced) continue;   // idempotent: never wire twice
-    form.dataset.enhanced = '1';
-    form.addEventListener('input', validate);
-  }
-}
-
-document.addEventListener('DOMContentLoaded', () => enhance());
-document.addEventListener('dispatcher:morphed', () => enhance());
-```
-
-The shape is the whole point. The module never assumes it owns the lifecycle: it asks "which `form[data-live]` elements exist right now, and which have I not touched?" on both the initial load and after each morph. Idiomorph preserves the nodes it can and replaces the ones it must, so a morph may hand the module brand-new form elements (no `data-enhanced`, so they get wired) or the very same ones it saw before (already marked, so they are skipped). There is no teardown to write, because the element either survives the morph with its listener intact or is replaced wholesale and re-enhanced from scratch. That is why the contract is a single event and an idempotent `enhance` -- not a mount/unmount pair.
-
-### Why this shape
-
-This is progressive enhancement in the literal sense. The HTML is complete and functional on its own; the dispatcher is a strict speed-up layered on top. There is no client-side router to keep in sync with the server's routes, no template duplicated between server and client, no hydration step, and no handler that has to know whether it is talking to a browser navigation or a `fetch`. Delete `dispatcher.js` and the app still works -- every link navigates, every form posts. Keep it and navigation becomes a partial DOM morph that preserves UI state.
-
-## Output Encoding: Escaping is the Primary XSS Defense
+## Output encoding: escaping is the primary XSS defense
 
 Recipes carry user-supplied text -- titles, descriptions, ingredient lines -- that we render straight into pages. That is precisely where stored XSS lives: if a recipe title containing `<script>...</script>` is written into the page unescaped, every visitor runs the attacker's script. The fix is not to sanitize on the way in; it is to **encode on the way out, by default, everywhere**.
 
@@ -540,9 +397,9 @@ Some content we *do* want emitted verbatim, and only those places use `h/raw`:
 
 Each `h/raw` is a deliberate, auditable decision. The rule of thumb: grep for `h/raw`, and every hit should be either a literal you wrote or output from a renderer that sanitizes its input. The doctype and inline assets are bytes we control; the markdown renderer is trusted *because* it neutralizes the HTML a user might smuggle in. Everything else flows through `h/html` and is escaped.
 
-A correctly-escaped output layer is the primary defense here. (The app also ships a strict, hash-based Content-Security-Policy with no `'unsafe-inline'` for scripts, which would *additionally* block an injected inline script -- but that is defense-in-depth sitting behind escaping, and it is the subject of its own post. The escaping is what makes the XSS not happen in the first place.)
+A correctly-escaped output layer is the primary defense here. (The app also ships a strict, hash-based Content-Security-Policy with no `'unsafe-inline'` for scripts, which would *additionally* block an injected inline script -- but that is defense-in-depth sitting behind escaping, and it is the subject of its own chapter ([the asset pipeline chapter](22-asset-pipeline.md)). The escaping is what makes the XSS not happen in the first place.)
 
-## CommonMark for Markdown Content
+## CommonMark for Markdown content
 
 Recipe descriptions and legal documents (terms of service, privacy policy) are written in Markdown and rendered to HTML. We use [CommonMark](https://commonmark.org/) via the `commonmark-java` library:
 
@@ -595,7 +452,7 @@ The rendered HTML is inserted into a styled container with `h/raw` (the delibera
 
 The `.legal-content` class applies typography styles to the rendered HTML -- heading sizes, paragraph spacing, list styles, table formatting -- in CSS. This is a clean separation: the Markdown is pure content, the renderer converts to semantic HTML, and the CSS handles presentation.
 
-## Inline Scripts via defn-asset
+## Inline scripts via defn-asset
 
 A few small scripts -- like the toast helper -- are best inlined directly into the document rather than fetched as separate modules. The `defn-asset` macro turns a classpath resource into a private function that returns the corresponding inline Hiccup element:
 
@@ -629,7 +486,7 @@ In development the file is re-read on every render so you can edit the script an
 
 Then `(toast-script)` in the layout returns `[:script (h/raw "...the JS...")]`.
 
-## The Middleware Stack
+## The middleware stack
 
 The view layer relies on middleware to prepare the request and to set response headers. Here is the relevant portion of the stack:
 
@@ -658,20 +515,12 @@ The pieces that touch the view layer:
 
 - **`wrap-locale`** detects the user's locale from the session or the `Accept-Language` header and assocs `:locale` onto the request. Every view function receives this. (This is the *only* request header the server negotiates on -- there is no enhanced/partial negotiation.)
 - **`wrap-no-cache-authenticated`** sets `Cache-Control: no-store` on authenticated responses, preventing the browser's back-forward cache from showing stale pages after logout.
-- **`wrap-csp`** attaches the strict Content-Security-Policy header to every `text/html` response (the defense-in-depth backstop behind output escaping). Its construction lives in `myapp.web.assets` and gets its own post.
+- **`wrap-csp`** attaches the strict Content-Security-Policy header to every `text/html` response (the defense-in-depth backstop behind output escaping). Its construction lives in `myapp.web.assets` and gets its own chapter ([the asset pipeline chapter](22-asset-pipeline.md)).
 
 Static assets are served from `assets/static-root` -- the source `static/` tree in development, the built and content-hashed tree in production. In development a small `wrap-dev-no-store` keeps the browser from caching stable, unhashed dev URLs.
 
-## What You Now Have
+## Where this leaves us
 
-After this chapter, the view layer is complete:
+The server-side view layer is complete. HTML is generated with Hiccup 2's escaping renderer -- composable Clojure data, auto-escaped so user content is safe by default, with raw output pared back to a handful of explicit, auditable opt-ins. Three composing layouts (`base-layout`, `public-layout`, `app-layout`) put every page's content inside a single `<main data-layout>`; one state-aware top bar adapts to signed-in versus anonymous with active-tab highlighting in pure CSS; and CommonMark turns Markdown content into sanitized HTML, keeping content in Markdown and presentation in CSS. There is no virtual DOM, no client-side state store, no hydration, and no separate API -- the server renders complete HTML and the browser shows it.
 
-- **Hiccup 2 with the escaping renderer** for HTML generation -- composable, just Clojure data, and auto-escaped so user content is safe by default. Raw output is an explicit, auditable opt-in.
-- **A layout system**: `base-layout` for the HTML5 shell, `public-layout` for unauthenticated pages, `app-layout` for the chrome-bearing experience -- every page's content inside a single `<main data-layout>`.
-- **Responsive, state-aware navigation**: one top bar that adapts to signed-in vs anonymous, with active-tab highlighting in pure CSS.
-- **Progressive enhancement via the dispatcher + idiomorph**: links and forms are upgraded into in-place `<main>` morphs that preserve UI state, with zero per-element configuration and zero server-side branching. The server always renders full pages; the client decides what to swap. Works without JavaScript. Better with it.
-- **CommonMark rendering** for Markdown content, keeping content in Markdown and presentation in CSS.
-
-There is no virtual DOM, no client-side state store, no hydration, and no separate API. The server renders complete HTML; the browser shows it; one small dispatcher makes navigation feel instant.
-
-The next chapters sharpen the development experience further -- a source inspector and morph-based hot reload -- and a later chapter puts this view layer under test end to end, driving a real browser with Playwright to verify the full request, render, and morph loop, including the no-JavaScript fallback path.
+That `<main data-layout>` seam is also the setup for what comes next. Because every handler renders a whole page and never branches on how it was called, a small client script can fetch any page and morph just its `<main>` into place without the server knowing anything about it -- which is the next chapter, [The Morph Dispatcher](11b-morph-dispatcher.md). After that the book sharpens the development experience -- a source inspector and morph-based hot reload -- and later puts this view layer under end-to-end test, driving a real browser with Playwright to verify the full request, render, and morph loop, including the no-JavaScript fallback path.

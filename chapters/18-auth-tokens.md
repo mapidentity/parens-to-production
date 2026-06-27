@@ -1,6 +1,5 @@
 # Passwordless Auth Part 1: HMAC-Signed Magic Link Tokens
 
-
 Passwords are a liability. They get reused, leaked, phished, and forgotten. For a small SaaS, they also mean building password reset flows, hashing infrastructure, and breach notification procedures. That is a lot of surface area for something your users already hate.
 
 Magic links sidestep all of this. The user enters their email, gets a link, clicks it, and they are in. No password to remember, no credential to steal, no database of hashed secrets waiting to be breached. The email inbox becomes the authenticator -- and your users already have that secured with their own MFA, biometrics, or whatever their provider offers.
@@ -38,7 +37,7 @@ To verify a token, you recompute the signature from the payload using your secre
 
 ## Crypto primitives: HMAC-SHA256 and Base64
 
-Let's start with the low-level building blocks. Java's `javax.crypto` package gives us everything we need.
+The low-level building blocks come first. Java's `javax.crypto` package gives us everything we need, so nothing third-party touches the signing path.
 
 ```clojure
 (ns myapp.auth.core
@@ -160,7 +159,7 @@ Verification is the mirror image of signing, with two additional checks: signatu
     (catch Exception _e nil)))
 ```
 
-Let's walk through the verification logic:
+The order of operations is the security-relevant part -- each step is a gate the token has to pass before the next one runs, and the cheap, tamper-proof checks come first:
 
 1. **Split the token** on the first dot. We pass `2` as the limit to `str/split` so that any dots in the signature do not cause extra parts.
 2. **Check both parts exist.** If the token is malformed (no dot, empty parts), bail early with `nil`.
@@ -173,7 +172,7 @@ The entire function is wrapped in a `try/catch` that returns `nil` on any except
 
 ### Constant-time comparison
 
-We compare signatures with `MessageDigest/isEqual` rather than `=`. Clojure's `=` on strings (or `java.util.Arrays/equals` on bytes) short-circuits at the first differing byte, so the time it takes to reject a forgery leaks how many leading bytes were guessed correctly -- the classic byte-at-a-time timing oracle. `MessageDigest/isEqual` compares every byte regardless, in time independent of where the first mismatch is. It costs nothing here and removes the question entirely, so there is no reason to reach for `=` and then argue about whether the leak is exploitable. Comparing the raw HMAC bytes (we decode the incoming signature first) is the standard form; a malformed base64 signature throws in `base64-decode` and is caught as an invalid token.
+We compare signatures with `MessageDigest/isEqual` rather than `=`. Clojure's `=` on strings (or `java.util.Arrays/equals` on bytes) short-circuits at the first differing byte, so the time it takes to reject a forgery leaks how many leading bytes were guessed correctly -- the classic byte-at-a-time timing oracle. `MessageDigest/isEqual` compares every byte regardless, in time independent of where the first mismatch is. It costs nothing here and removes the question entirely, so there is no reason to reach for `=` and then argue about whether the leak is exploitable. (One honest footnote on `isEqual`: it does short-circuit on a *length* mismatch before comparing bytes. That is irrelevant here, because both sides are always 32-byte HMAC-SHA256 outputs, so the lengths are equal by construction -- but if you reuse this helper to compare variable-length inputs, the length check becomes a small oracle of its own, and you would hash both sides to a fixed width first.) Comparing the raw HMAC bytes (we decode the incoming signature first) is the standard form; a malformed base64 signature throws in `base64-decode` and is caught as an invalid token.
 
 ### A note on the signing key
 
@@ -246,7 +245,7 @@ The query takes `db` (an immutable database value) rather than a connection. Thi
     user-id))
 ```
 
-A few things to note:
+Four small things are doing real work in those eight lines:
 
 - **`transact*`** is a thin wrapper around `d/transact` that converts `java.time.Instant` values to `java.util.Date`, which is what Datomic stores internally. It lets us use the modern Java time API everywhere else.
 - **`"temp-user"`** is a temporary ID. Datomic assigns the real entity ID during the transaction. We do not need to track it -- we identify users by their `:user/email` or `:user/id` going forward.
@@ -270,7 +269,7 @@ If the user exists, we skip the transaction entirely. If they do not, we create 
 
 ## Testing
 
-Tests are where the design proves itself. Let's walk through the test suite.
+Tests are where the design proves itself, and a signing primitive earns trust less by what it accepts than by what it refuses. The suite below is weighted accordingly: a couple of round-trip tests to show the happy path works, and then a battery of rejection tests -- expired, tampered, wrong-key, garbage -- because those are the cases an attacker actually probes.
 
 ### Test setup
 
@@ -461,19 +460,10 @@ Because `:user/email` has `:db.unique/identity`, Datomic performs an upsert rath
 
 Call it with a new email, get a new user. Call it with an existing email, get the same one back. No errors either way.
 
-## What You Now Have
+## Where this leaves us
 
-At the end of this chapter, we have a complete token-based authentication primitive:
+What the chapter has produced is a self-contained token primitive. `sign-token` and `verify-token` are the core pair -- sign mints a time-limited token carrying an email and a one-time nonce, verify settles the signature and expiry and hands back the email and nonce or `nil`, with no middle ground. `create-magic-link-token` wraps signing with the 15-minute window and returns both halves: the token to email and the nonce to record. Around them sits the minimum user storage the login flow needs -- `find-user-by-email`, `create-user!`, and the idempotent `get-or-create-user!` -- and a test suite weighted, as argued above, toward rejection: expiry, tampering, wrong keys, and garbage input alongside the round-trips.
 
-- **`sign-token`** -- creates a signed, time-limited token containing an email address and a one-time nonce
-- **`verify-token`** -- validates the signature, checks expiry, and returns the email and nonce, returning `nil` for any failure
-- **`create-magic-link-token`** -- wraps `sign-token` with a 15-minute expiry and returns both the token (to email) and the nonce (to record)
-- **`find-user-by-email`** and **`create-user!`** -- user CRUD in Datomic
-- **`get-or-create-user!`** -- idempotent user lookup/creation for the login flow
-- **A comprehensive test suite** covering round-trips, expiry, tampering, wrong keys, garbage input, and user management
-
-The entire implementation is about 60 lines of Clojure with zero external dependencies beyond `clojure.data.json` (for JSON) and Datomic. The crypto comes from the JDK. The token format is simple enough to explain in one sentence and audit in five minutes.
+The whole thing is about 60 lines of Clojure with zero external dependencies beyond `clojure.data.json` and Datomic; the crypto comes from the JDK. That is the payoff of declining the JWT spec's generality -- a format simple enough to explain in one sentence and audit in five minutes.
 
 What we do not have yet: HTTP routes, email sending, sessions, the server-side recording and one-shot consumption of the nonce, and the actual magic link flow that ties it all together. That is [Part 2](19-auth-email-flow.md).
-
-*All code in this book is from a real production SaaS. If you are building something similar, the patterns here should translate directly -- just swap in your own namespace and database.*
