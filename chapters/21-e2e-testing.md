@@ -282,11 +282,11 @@ async function getMagicLink(request, email) {
 
 /** Generate a unique email for test isolation. */
 function uniqueEmail() {
-  return `e2e-${Date.now()}@test.myapp.nl`;
+  return `e2e-${Date.now()}-${Math.floor(Math.random() * 1e6)}@test.myapp.lan`;
 }
 ```
 
-Two helper functions set the stage. `getMagicLink` calls our test-only `/test/emails` endpoint to retrieve the magic link that was "sent" to a given address. `uniqueEmail` generates a timestamp-based email so each test gets its own user, even when tests run in parallel.
+Two helper functions set the stage. `getMagicLink` calls our test-only `/test/emails` endpoint to retrieve the magic link that was "sent" to a given address. `uniqueEmail` generates a fresh address per test -- a timestamp plus a random suffix, so two tests that begin in the same millisecond still get distinct users when the suite runs in parallel.
 
 ### Shared registration flow
 
@@ -306,7 +306,7 @@ async function registerUser(page, request, email) {
   await page.goto(magicLink);
   await expect(page).toHaveURL(/\/terms\/welcome/);
 
-  await page.getByRole('button', { name: 'I agree to the terms' }).click();
+  await page.getByRole('button', { name: 'Agree and start cooking' }).click();
   await expect(page).toHaveURL(/\/dashboard/);
 }
 ```
@@ -327,15 +327,35 @@ This calls our `DELETE /test/emails` endpoint to clear the atom. Combined with u
 
 ### Test: new user registration
 
-Registration *is* the path `registerUser` already walks and asserts -- the "Check your email" page, the `/terms/welcome` redirect a new account hits, then `/dashboard` once the terms are accepted -- so the test is that one call, with a fresh email:
+The first test spells the whole path out inline rather than calling the helper. That is deliberate: it is the one place the entire flow is visible end to end as executable documentation -- enter email, retrieve the magic link, visit it, get redirected to `/terms/welcome` as a new account, accept, and land on `/dashboard` -- with a closing assertion that the dashboard's own heading actually rendered, not just that the URL changed:
 
 ```javascript
 test('new user registration', async ({ page, request }) => {
-  await registerUser(page, request, uniqueEmail());
+  const email = uniqueEmail();
+
+  await page.goto('/');
+  await page.fill('input[name="email"]', email);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Check your email' })
+  ).toBeVisible();
+
+  const magicLink = await getMagicLink(request, email);
+  await page.goto(magicLink);
+
+  // New user → redirected to terms acceptance
+  await expect(page).toHaveURL(/\/terms\/welcome/);
+  await page.getByRole('button', { name: 'Agree and start cooking' }).click();
+
+  // Should reach the dashboard
+  await expect(page).toHaveURL(/\/dashboard/);
+  await expect(
+    page.getByRole('heading', { name: 'Your recipes' })
+  ).toBeVisible();
 });
 ```
 
-The helper's inline `expect`s are the assertions: the test fails if the confirmation page never shows, if a new user is not sent to `/terms/welcome`, or if accepting terms does not land on `/dashboard`. Behind that single call it exercises form submission, server-side email "sending," token verification, terms acceptance, session creation, and the final redirect -- which is why the remaining tests reuse the helper rather than re-walking the same steps.
+That single test exercises form submission, server-side email "sending," token verification, terms acceptance, session creation, and the final redirect. The *other* tests do not re-walk it -- they call `registerUser`, whose inline `expect`s carry the same assertions -- so the flow is spelled out once, here, and reused everywhere else.
 
 ### Test: returning user skips terms
 

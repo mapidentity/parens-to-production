@@ -457,17 +457,6 @@ Stop it:
 ;; Server stopped
 ```
 
-## What you now have
+## Where this leaves us
 
-You have a running Clojure web server with:
-
-- **Ring** handling the HTTP abstraction -- requests and responses as plain maps
-- **http-kit** serving requests on a configurable host and port
-- **Reitit** routing requests to handler functions based on path and method
-- **Aero** loading environment-specific configuration from a single EDN file
-- **A clean entry point** in `myapp.core` with start/stop/restart lifecycle
-- **A REPL workflow** where code changes take effect immediately without restarting
-
-The pieces are independent and composable -- the through-line of the whole chapter -- so the stack grows by addition rather than rework: nothing here forces a structure you would later have to undo.
-
-Next, we sharpen the development loop with live reload so changes show up in the browser the instant you save. Soon after, a test suite -- covering config loading, routing, and the middleware stack -- lets us keep refactoring this foundation without fear of breaking it.
+The pieces are independent and composable -- the through-line of the whole chapter -- so the stack grows by addition rather than rework: Ring's request/response maps, http-kit serving them, Reitit routing on path and method, and Aero loading one EDN config per profile, behind a `myapp.core` lifecycle you drive from the REPL. Nothing here forces a structure you would later have to undo, which is exactly what lets the next chapter sharpen the loop with live reload, and the testing chapter cover this foundation, without first tearing it apart.

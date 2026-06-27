@@ -493,9 +493,9 @@ mw (if-let [wt (when (System/getProperty "clojure.storm.instrumentEnable")
      base-mw)
 ```
 
-## What you now have
+## The recording, as JSON
 
-With one dev alias, the `trace` namespace, and one route, a request under `clojure -M:dev:storm:repl` now records itself, and `GET /dev/__trace/:id` returns the whole construction as JSON: the middleware-to-handler-to-domain-to-view call tree, each frame's recorded args and return summarized as ValueRefs, every Datomic read as real Datalog at its basis-t -- including the raw `d/as-of`/`d/history` time-travel reads a wrapper allowlist would miss -- plus an N+1 signal, both lexical and temporal parentings, and the throw site if the request 500'd.
+With one dev alias, the `trace` namespace, and one route, a request under `clojure -M:dev:storm:repl` records itself, and `GET /dev/__trace/:id` returns the whole construction as JSON: the middleware-to-handler-to-domain-to-view call tree, each frame's recorded args and return summarized as ValueRefs, every Datomic read as real Datalog at its basis-t -- including the raw `d/as-of`/`d/history` time-travel reads a wrapper allowlist would miss -- plus an N+1 signal, both lexical and temporal parentings, and the throw site if the request 500'd.
 
 ```
 wrap-locale › … › recipes-index

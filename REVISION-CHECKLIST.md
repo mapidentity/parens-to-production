@@ -247,4 +247,76 @@ substance; these are calibration and polish. Priority order:
 Not changing (consistent with the book's thesis, flagged so a later pass doesn't
 "fix" them): no end-of-chapter exercises or summaries, the high density, and the
 opinionated voice. These are the book's identity, not defects.
-</content>
+
+---
+
+## Third pass — publisher fidelity + recap sweep (2026-06-27)
+
+An independent O'Reilly/Manning-style read focused on the book's signature
+covenant ("every listing lifted from a server that runs; where the two drift,
+the book says so") where it had broken, plus the residual recap/sign-off
+sections the voice pass missed. Verified after each change: `./lint` 0/0,
+`compile-strict` OK, full suite 87 tests / 205 assertions 0 failures, links
+resolve, `mdbook build` clean.
+
+Fidelity reconciliations (book ↔ repo):
+
+- [x] **Ch. 13 — rewrote "Scripts inside a morph" to the shipped design.** The
+      `executeScripts` listing and the `enhance()`/`data-enhanced`/`DOMContentLoaded`
+      pattern contradicted the repo (`dispatcher.js` deliberately does NOT
+      re-execute morphed scripts; behavior attaches via the `controllers.js`
+      registry's `connect`/`disconnect`, which forbids the old pattern) and the
+      book's own CSP. Now matches; forward-references ch. 18 for the registry;
+      fixed the stale "idempotent `enhance`" line in the close.
+- [x] **Ch. 8 — made the phantom test suite real.** `myapp.db.core-test` was
+      presented as the repo's suite but did not exist. Added
+      `test/myapp/db/core_test.clj` verbatim from the listings (passes: 5 tests,
+      12 assertions) and cut the chapter's "What you now have" recap.
+- [x] **Ch. 9 — `*load-tests*` binding made real + in-file-tests reframed.** Added
+      `#'clojure.test/*load-tests* false` to `compile-strict`'s `:bindings` in
+      `build.clj` (real hygiene, makes the chapter's claim true); reframed §"In-file
+      tests" so it no longer claims the repo ships them; corrected the
+      `test_helpers` ns disclosure (the file grows an `auth.core` require, not just
+      the analytics one).
+- [x] **Ch. 22 — corrected the "how the repo factors this" box.** It claimed
+      `wrap-admin` reads `(:user-email request)`; the repo reads the resolved
+      `:admin?` flag, with the case-fold in `admin-email?`/`wrap-current-user`.
+- [x] **Ch. 18 — speculation-rules listing.** Added the `/terms/*` and
+      `/partials/*` exclusions to match `assets.clj` and the chapter's own prose.
+- [x] **Ch. 3 — three fixes.** "Calva is the only required extension" → noted
+      Joyride is also installed; added an excerpt note for the omitted `browser`/X11
+      compose service; fixed the `enUS.UTF-8` locale typo in the Dockerfile (repo).
+
+Technical fix:
+
+- [x] **Rate limiter mislabel (ch. 20 + `ratelimit.clj`).** The code is a
+      sliding-window log (per-hit timestamps pruned to a trailing window), not a
+      "fixed-window" counter with boundary burst. Corrected the docstring and the
+      chapter; noted the Redis alternative *is* a true fixed window.
+
+Recap sweep (remove bulleted "What you now have" recaps + motivational sign-offs;
+keep genuinely essayistic/forward-looking closes):
+
+- [x] Cut in chs. **4, 5, 8, 9, 10, 11, 17, 19, 20, 22, 23**. Ch. **25**'s triple
+      close ("What you now have" + "Looking back" + "Now go build something")
+      collapsed to one essayistic ending that lands the own-your-code thesis. Ch. 9
+      kept its first-movement diagram (a deliberate movement boundary, not a recap).
+
+Construction-view cluster trim (chs. 14–16):
+
+- [x] Cut the redundant bulleted "Design decisions worth noting" and "What you now
+      have" feature-recaps in chs. **14** and **16** (each restated body/inline
+      material), keeping the essayistic closing paragraph and the substantive
+      "Trade-offs & limitations" / "Keeping production clean" sections. Relabeled
+      ch. **15**'s "What you now have" (it is a prose+diagram close, not a recap).
+      Trimmed the ch. 16 opening "What this investment buys" callout: kept the
+      pay-off/cost framing (the cheap `println`+REPL alternative, when the tool
+      wins), compressed the thrice-stated REPL-to-the-browser thesis to a
+      back-reference to ch. 14.
+
+Re-checked and deliberately NOT changed (verified against the repo, agent
+over-call): ch. 3's Playwright listing — the repo installs both Playwright
+browsers (`Dockerfile`) and Chrome, and `playwright.config.js` uses chromium, so
+the listing is correct. Ch. 7's "grep rather than a linter rule" — accurate: the
+time functions are Java statics clj-kondo can't see; its `:discouraged-var` rule
+targets a different concern (`datomic.api/pull`).

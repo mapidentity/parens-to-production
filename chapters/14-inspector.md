@@ -546,21 +546,6 @@ The feature is structurally absent, not merely disabled.
 - **The dev WebSocket is unauthenticated.** Anything that can reach `localhost:3000/dev/ws` can ask to open a (src-confined) file or push a cursor. That is acceptable for a dev-only, loopback service; don't expose the dev server.
 - **A small dev startup cost.** Reading views through tools.reader, wrapping calls, instrumenting vars, and indexing is more work than a plain `load` -- paid once per view file at startup/reload, and never in production.
 
-## Design decisions worth noting
-
-- **The metadata rides on the value -- there is no index to keep in sync (forward).** The location travels welded to the Hiccup vector from read time, through `eval`, through every `for` and helper, onto the page. A `for`-row maps to its template line; an `if`-branch maps to the branch taken.
-- **The loader instruments; the views stay plain.** Auto-instrumenting every fn in a `views.clj` (safe because `tag-hiccup` no-ops on non-elements) gets the component layer with zero source ceremony: views need no per-function annotation.
-- **Only the markup is touched.** `element?` gates every mutation, so a blanket walk can never corrupt a non-Hiccup value. That is what makes it safe to apply across every view without auditing each one.
-- **DOM-as-truth precedence (reverse).** The server proposes coordinates; the browser highlights whatever actually rendered, so conditionals, loops, and not-taken branches all behave correctly without the server predicting anything.
-- **A resource check for `dev?`.** Detecting dev with `requiring-resolve` of the hot-reload namespace can close a circular load during the app's own startup, throw, get swallowed, and silently freeze `dev?` to false. `(io/resource "hot_reload.clj")` answers the same question without loading anything.
-
-## What you now have
-
-Building on the live-reload chapter's watcher and dev WebSocket, with one namespace (`myapp.web.inspector`), one dev loader (`inspector-load`), one inlined script (`inspector.js`), one Joyride script (`workspace_activate.cljs`), and a relay in `dev-reload`, you get a **bidirectional** inspector:
-
-- Hold `Alt+Shift+I`, hover any element, walk its ancestor chain with Alt+wheel (component λ / call site ()), and click to open the exact source.
-- Move your cursor in the editor and the matching element lights up -- the right card among eight, or every row of a `for`, framed within its component.
-- `for`-rows resolve to their template; conditionals to the branch taken; clicks to the selection, not the pointer.
-- Zero production footprint -- no attributes, no script, no server code, all structurally excluded.
+## What it rests on
 
 The whole thing rests on one move the front-end world never had to make: Hiccup is plain data with no source information, so you manufacture it -- and `clojure.tools.reader` plus the Clojure compiler will, between them, carry a line number from your file to a running vector if you simply stop throwing it away. Everything else -- call sites, the reverse direction, the editor bridge -- is built on that single welded coordinate.

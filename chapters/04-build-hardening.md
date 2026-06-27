@@ -364,24 +364,6 @@ Your project now has three scripts and a build function:
 | `clojure -T:build compile-strict` | AOT compile with warnings-as-errors |
 | `clojure -T:build uber` | Build uberjar (includes compile-strict) |
 
-The workflow is:
-
-1. Write code.
-2. Run `./reformat` to fix formatting.
-3. Run `./lint` to catch static issues.
-4. Run `clojure -T:build uber` to produce an artifact, which will fail if any reflection or boxed math warnings exist in your code.
-
 These checks are fast (seconds, not minutes) and deterministic. Wire them into CI so they run on every push, and you have a codebase that stays clean without discipline -- the tools enforce it.
-
-## What you now have
-
-After this setup, you have:
-
-- **A `tools.build` configuration** that AOT-compiles your code with `*warn-on-reflection*` and `*unchecked-math* :warn-on-boxed` enabled, and fails the build if any warnings come from your namespaces.
-- **A zprint configuration** that formats your Clojure code consistently, including custom rules for threading macros, Datomic queries, and map formatting.
-- **A clj-kondo configuration** with linters for documentation, correctness, consistency, and code simplification, plus a custom hook for `defn-` docstrings.
-- **Shell scripts** to run formatting and linting with a single command.
-
-The investment is small -- one `build.clj` file, two config files, two shell scripts. The payoff compounds over the life of the project. Every reflection warning you catch now is one you never debug in production. Every formatting argument you never have (even with yourself) is time saved. Every lint warning is a potential bug caught before it ships.
 
 The discipline only works because it is there from the first commit: a gate added after three hundred warnings is a cleanup project, while the same gate added before the first is simply the floor you build on.

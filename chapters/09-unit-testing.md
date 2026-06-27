@@ -28,7 +28,7 @@ All shared test infrastructure lives in a single file: `test/myapp/test_helpers.
     [myapp.db.schema :as schema]))
 ```
 
-This `ns` form compiles and runs as-is. A second database -- ours gains an analytics DB in [the admin dashboard chapter](22-admin-dashboard.md) -- takes one more require and one more fixture, shown together [below](#a-second-database-the-analytics-fixture).
+This `ns` form is the slice this chapter builds on; the file grows two requires beyond it as the app does. The request builder gains user resolution from the database once the auth chapters exist (a `myapp.auth.core` require), and a second database -- ours gains an analytics DB in [the admin dashboard chapter](22-admin-dashboard.md) -- takes one more require and one more fixture, shown together [below](#a-second-database-the-analytics-fixture). In the repo all of these are already in place.
 
 ### The database fixture
 
