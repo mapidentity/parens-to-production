@@ -354,7 +354,7 @@ The difference: `:test` runs fast without instrumentation. `:coverage` instrumen
 
 ## In-file tests: co-locating quick tests with source
 
-Everything above lives in `test/`. That is the right home for most tests -- the database fixtures, the route table, the middleware checks. But there is a second place a test can live: directly underneath the function it tests, in the source file itself. The two approaches are complements, not substitutes. This project uses both, and the only real question is which job goes where.
+Everything above lives in `test/`. That is the right home for most tests -- the database fixtures, the route table, the middleware checks -- and it is where this project keeps its suite. But there is a second place a test can live: directly underneath the function it tests, in the source file itself. The two approaches are complements, not substitutes, and the only real question is which job goes where; the co-located form is worth knowing for the specific cases below, even where you reach for it sparingly.
 
 The division of labor is worth stating plainly:
 
@@ -412,7 +412,7 @@ Define (or require) `tests` before you use it. Here it is around a private helpe
 
 ### Stripping for production
 
-In normal dev and test runs, `*load-tests*` stays `true`, so these blocks load and run as written. You only flip it false for the AOT build. The strict-compilation chapter's `compile-strict` already passes a `:bindings` map to `compile-clj` -- add one entry (leaving its `:err :capture` and warning scan exactly as they were):
+In normal dev and test runs, `*load-tests*` stays `true`, so these blocks load and run as written. You only flip it false for the AOT build. The strict-compilation chapter's `compile-strict` carries exactly that entry in its `:bindings` map -- shipped as hygiene whether or not any in-file tests exist, so a stray `(tests …)` or `deftest` in a source namespace can never ride into the artifact:
 
 ```clojure
 ;; the :bindings map inside compile-strict's b/compile-clj call
@@ -422,7 +422,7 @@ In normal dev and test runs, `*load-tests*` stays `true`, so these blocks load a
            #'clojure.test/*load-tests* false}
 ```
 
-(`compile-clj` has supported `:bindings` since tools.build 0.8.1.) With this binding the AOT compiler expands every `tests` block to `(comment ...)`, so the uberjar carries no test forms and none of the in-file test requires. (`clojure.test` itself ships with Clojure, so its presence in the namespace that *defines* the `tests` macro is harmless -- the win is keeping the test bodies and any heavier test-only deps out of the artifact.)
+(`compile-clj` has supported `:bindings` since tools.build 0.8.1.) With this binding the AOT compiler expands every `tests` block to `(comment ...)`, so the uberjar carries no test forms and none of the in-file test requires. (`clojure.test` itself ships with Clojure, so referring to its `*load-tests*` var from `build.clj` is harmless -- the win is keeping the test bodies and any heavier test-only deps out of the artifact.)
 
 ### The real cost: discovery
 
@@ -442,24 +442,9 @@ The same caveat applies to the commit gate. The coverage gate runs `clojure -M:c
 
 Co-location is convenient -- the test sits where you edit, and reads as documentation for the next person. That convenience is not free: it puts a test concern into a source file, and while the `tests` macro keeps the *dependency* out of the artifact, it cannot make discovery automatic. The trade is worth it for short, doc-style, and private-function checks. For anything heavier -- standalone or integration -- the separate `test/` file stays simpler, and discovery stays free. Keep it there.
 
-## What you now have
+## The first movement, whole
 
-At this point the test suite covers three areas:
-
-1. **Configuration** -- the config system loads correctly, produces keys of the right type and size, and supports nested access.
-2. **Routes** -- every defined route resolves, unknown routes return 404, wrong methods return 405.
-3. **Middleware** -- security-relevant behavior (cache headers for authenticated users) is verified.
-
-The infrastructure supports more:
-
-- **Fresh in-memory databases per test**, ready for when you start testing data access.
-- **Deterministic config**, so tests never depend on local environment.
-- **A request builder**, for when you start testing handlers end-to-end.
-- **Coverage enforcement**, so coverage can only go up as you add features.
-
-The investment is small -- one helpers file, two test files, and a couple of aliases in `deps.edn` (the test commands run directly, no wrapper script). But it establishes patterns that scale. Every new feature you add gets tested against this infrastructure, and you find out in seconds whether it works. Next time you sit down to add a feature, you write the test first (or at least alongside), and you have everything you need to run it.
-
-This chapter also closes the book's first movement. Six chapters in, before a single feature exists, you have built the scaffold every later chapter stands on -- and it is worth pausing to see it whole, because from here the book turns from *infrastructure* to *the application itself*.
+This chapter closes the book's first movement. Six chapters in, before a single feature exists, you have built the scaffold every later chapter stands on -- and it is worth pausing to see it whole, because from here the book turns from *infrastructure* to *the application itself*.
 
 Here is what is running when you start the app in development:
 

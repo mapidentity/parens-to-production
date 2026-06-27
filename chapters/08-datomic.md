@@ -404,15 +404,4 @@ It is also worth testing that your schema installs correctly and that uniqueness
 
 The email uniqueness test demonstrates an important Datomic behavior: when you transact an entity with a `:db.unique/identity` attribute that already exists, Datomic merges the new data into the existing entity rather than creating a duplicate. This is upsert semantics. The second transaction with the same email does not fail -- it updates the existing entity. Understanding this early prevents subtle bugs.
 
-## What you now have
-
-At this point, the database layer is complete:
-
-- **Schema as data.** Attributes are defined as plain maps, transacted like any other data. Adding new attributes is a single transaction -- no migration framework, no schema version table.
-- **Environment-agnostic connections.** The same code runs against `datomic:mem` in development and `datomic:sql` in production. The URI in config is the only difference.
-- **Transparent date handling.** The `transact*`, `pull*`, and `q*` wrappers mean the rest of your application works exclusively with `java.time.Instant`. The `java.util.Date` conversion is invisible.
-- **Fast, isolated tests.** Each test gets a fresh in-memory database that spins up in milliseconds and is deleted afterward. No shared state, no test ordering dependencies, no cleanup scripts.
-
-The wrapper functions are thin -- about 40 lines total. They do not try to be a framework or an ORM. They solve one specific problem (the `Date`/`Instant` mismatch) and stay out of the way for everything else. You still write Datalog queries directly, use `d/entity` for navigation, and call `d/transact` (via `transact*`) with plain maps. Datomic's API is good; it just needs this one bridge.
-
-Later chapters build on this foundation to implement domain logic -- creating users, handling authentication state, and querying across entity relationships.
+The wrapper functions are thin -- about 40 lines total. They are not a framework or an ORM; they solve one specific problem, the `Date`/`Instant` mismatch, and stay out of the way for everything else. You still write Datalog directly, navigate with `d/entity`, and transact plain maps through `transact*`. Datomic's API is good; it just needs this one bridge -- and with it in place, the chapters that follow build domain logic on top without ever seeing a `java.util.Date`.

@@ -581,16 +581,4 @@ These guarantees are pinned by regression tests in `test/myapp/web/security_test
         (finally (reset! a saved))))))
 ```
 
-## What you now have
-
-After this setup, the project has:
-
-- **A single content-hash pipeline** for every served file, built by one `assets` task from committed sources into a git-ignored `myapp/static/` tree plus an `asset-manifest.edn`.
-- **Per-file ESM minification with SRI** -- no bundler, absolute imports preserved, each module independently cacheable and integrity-checked, wired together by an import map.
-- **A vendored library** built to a version-pinned, sourcemapped, SRI-protected file.
-- **A manifest-driven runtime** -- `load-manifest!` at startup, `asset` / `asset-sri` / `importmap-json` lookups, no directory scanning.
-- **`verify-assets` as an integrity gate** that proves no hashed filename can lie about its contents.
-- **One engine, two deliveries** -- dev serves source at stable URLs with `no-store`; prod serves the hashed tree as `immutable` -- with no drift, because the prod artifact is built from the same sources.
-- **A real security posture** -- escaping as the primary XSS defense, a strict no-nonce CSP (script hashes + per-module SRI, no `'unsafe-inline'` for scripts) emitted by the app, the long-lived headers (HSTS, nosniff, Referrer-Policy, Permissions-Policy, immutable caching) set by Caddy, and regression tests that fail the build if any of it regresses.
-
-No webpack, no PostCSS plugin chain, no application bundle. A Tailwind CLI, a pinned esbuild used purely as a minifier, a few functions for hashing, SRI, the manifest, and the CSP. That is the entire pipeline.
+No webpack, no PostCSS plugin chain, no application bundle. A Tailwind CLI, a pinned esbuild used purely as a minifier, a few functions for hashing, SRI, the manifest, and the CSP -- one `assets` task building from committed sources into a hashed tree, one `verify-assets` gate proving no hashed filename can lie about its bytes, and one engine behind two deliveries (dev source at stable URLs, prod hashed and `immutable`) that cannot drift because both come from the same sources. That is the entire pipeline.

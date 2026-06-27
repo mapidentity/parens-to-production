@@ -1,12 +1,14 @@
 (ns myapp.web.ratelimit
-  "Minimal in-process fixed-window rate limiter for abuse-prone endpoints.
+  "Minimal in-process sliding-window-log rate limiter for abuse-prone endpoints.
 
   The counters live in a local atom, so this is SINGLE-INSTANCE only: a
   load-balanced, multi-instance deployment needs a shared store (Redis, a
   Datomic/SQL table) keyed the same way. It is deliberately small — enough to
   blunt mail-bombing and credential-spraying from one source — not a general
-  quota system. Fixed windows are slightly bursty at the boundary; that is an
-  acceptable trade for a coarse abuse limit."
+  quota system. Each key keeps the timestamps of its recent hits and prunes
+  those older than the trailing window on every call, so the cap holds exactly
+  for any window-length span — no fixed-window boundary burst — at the cost of
+  O(hits) memory per active key, which the pruning bounds."
   (:require
     [myapp.time :as time]))
 

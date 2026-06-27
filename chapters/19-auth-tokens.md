@@ -462,8 +462,6 @@ Call it with a new email, get a new user. Call it with an existing email, get th
 
 ## Where this leaves us
 
-What the chapter has produced is a self-contained token primitive. `sign-token` and `verify-token` are the core pair -- sign mints a time-limited token carrying an email and a one-time nonce, verify settles the signature and expiry and hands back the email and nonce or `nil`, with no middle ground. `create-magic-link-token` wraps signing with the 15-minute window and returns both halves: the token to email and the nonce to record. Around them sits the minimum user storage the login flow needs -- `find-user-by-email`, `create-user!`, and the idempotent `get-or-create-user!` -- and a test suite weighted, as argued above, toward rejection: expiry, tampering, wrong keys, and garbage input alongside the round-trips.
+The chapter has produced a self-contained token primitive, and its size is the point: about 60 lines of Clojure with zero external dependencies beyond `clojure.data.json` and Datomic, the crypto coming entirely from the JDK. That is the payoff of declining the JWT spec's generality -- a format simple enough to explain in one sentence and audit in five minutes, with a test suite weighted, as argued above, toward rejection rather than the happy path.
 
-The whole thing is about 60 lines of Clojure with zero external dependencies beyond `clojure.data.json` and Datomic; the crypto comes from the JDK. That is the payoff of declining the JWT spec's generality -- a format simple enough to explain in one sentence and audit in five minutes.
-
-What we do not have yet: HTTP routes, email sending, sessions, the server-side recording and one-shot consumption of the nonce, and the actual magic link flow that ties it all together. That is [Part 2](20-auth-email-flow.md).
+What it does not yet have is everything that makes it a *login*: HTTP routes, email sending, sessions, the server-side recording and one-shot consumption of the nonce, and the flow that ties them together. That is [Part 2](20-auth-email-flow.md).

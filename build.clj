@@ -3,6 +3,7 @@
     [clojure.java.io :as io]
     [clojure.java.shell :as shell]
     [clojure.string :as str]
+    [clojure.test :as test]
     [clojure.tools.build.api :as b]))
 
 (def lib
@@ -43,7 +44,10 @@
                          :class-dir class-dir
                          :err :capture
                          :bindings {#'*warn-on-reflection* true
-                                    #'*unchecked-math* :warn-on-boxed}})]
+                                    #'*unchecked-math* :warn-on-boxed
+                                    ;; Strip any in-file `tests`/`deftest` forms
+                                    ;; from the artifact (see the testing chapter).
+                                    #'test/*load-tests* false}})]
     (when err
       (binding [*out* *err*]
         (print err)

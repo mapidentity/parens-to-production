@@ -468,16 +468,6 @@ The whole cycle -- from saving a file to seeing the updated page -- typically co
 
 **Why `requiring-resolve` for dev/prod separation?** The pattern `(requiring-resolve 'dev-reload/websocket-handler)` is a runtime classpath check that returns nil when the namespace is absent. It is structurally impossible to accidentally enable dev reload in production -- the code simply is not there. The base layout uses the same check to decide whether to emit the dev scripts at all, so none of this advanced machinery leaks to a production page.
 
-## What you now have
+## Where this leaves the loop
 
-Building on the file watcher and WebSocket from the live-reload chapter, you now have a development loop where:
-
-- Saving a *view* morphs `<main>` in place, preserving scroll, focus, and open `<details>`.
-- Saving a non-view `.clj` or a `.js` module does a full reload with scroll restored -- the correct response, because an ES module is a URL-cached singleton that can't be hot-swapped without `eval` (which our CSP forbids).
-- A Tailwind rebuild swaps the stylesheet `<link>` with no reload at all, fired only after the rebuild settles.
-- A failed reload raises a soft staleness banner that clears itself on the next success.
-- CSS is owned by one long-lived `tailwindcss --watch=always` process, decoupled from code reloads, with explicit lifecycle hardening (wait-for-exit on stop, a JVM shutdown hook, idempotent start).
-- The dev stylesheet is served at a stable URL with `no-store`; production serves the byte-identical, content-hashed file with immutable caching.
-- The entire dev infrastructure remains structurally excluded from production by classpath separation.
-
-The result is a feedback loop tight enough that you rarely need to leave your editor -- and for the most common edit, the page updates *in place*, exactly where you left it.
+The matrix is the argument: a save is not one thing, so each edit earns the lightest correct response. A view edit morphs `<main>` in place, preserving scroll, focus, and open `<details>`; a `.js` module or a non-view `.clj` triggers the full reload it actually needs, because an ES module is a URL-cached singleton that cannot be hot-swapped without the `eval` the CSP forbids; a Tailwind rebuild swaps the stylesheet `<link>` and nothing else, fired only once the rebuild settles. A failed reload raises a soft staleness banner rather than a silent stale page. The CSS watcher and the JVM share explicit lifecycle hardening, and the whole apparatus stays out of production by classpath separation -- so a loop this tight is paid for only in development and never shipped.

@@ -496,33 +496,10 @@ The stages are deliberately ordered from fastest to slowest, and from cheapest t
 
 If formatting is wrong, you find out in seconds, not after waiting for the entire test suite and build to run. This fast feedback loop makes CI less painful -- developers fix issues quickly because the pipeline tells them quickly.
 
-## What you now have
+## Where this leaves us
 
-Once this pipeline is wired up to your forge runner, every push to main triggers a fully automated sequence:
+The whole pipeline runs inside Podman containers built from a single Dockerfile, with host-mounted cache volumes for fast dependency resolution: pull requests get the full quality-gate treatment without deploying, and only pushes to main reach production. The standards are enforced every time rather than remembered.
 
-- **Code quality gates**: formatting with zprint, static analysis with clj-kondo
-- **Asset integrity**: the `assets` build produces the hashed, minified served tree and manifest; `verify-assets` proves every content-hashed filename matches its bytes and every manifest target exists
-- **Correctness verification**: unit tests with coverage, end-to-end browser tests
-- **Performance assurance**: Lighthouse CI audits with score thresholds
-- **Build integrity**: strict AOT compilation that rejects reflection and boxed math warnings
-- **Automated deployment**: conditional deployment of the built static tree (with its manifest) and the uberjar via SSH
+A closing note on scope, since the chapter opened on it: the workflow above is the *application* pipeline, not the mdBook-to-Pages job that actually ships these chapters. The practical takeaway needs no runner of your own, though -- `clojure -T:build assets` followed by `clojure -T:build verify-assets` is a two-command pre-deploy ritual you can run by hand: build the tree, prove its integrity, then ship it.
 
-The entire pipeline runs inside Podman containers built from a single Dockerfile, using host-mounted cache volumes for fast dependency resolution. Pull requests get the full quality gate treatment without deploying. Only pushes to main go to production.
-
-There is nothing to remember. No manual checklist. No "did I run the tests?" anxiety before deploying. The pipeline enforces the standards every time, whether it is Monday morning or Friday evening.
-
-A closing note on scope, briefly, since the chapter opened on it: the workflow above is the *application* pipeline, not the mdBook-to-Pages job that actually ships these chapters. The practical takeaway needs no runner of your own, though -- `clojure -T:build assets` followed by `clojure -T:build verify-assets` is a two-command pre-deploy ritual you can run by hand: build the tree, prove its integrity, then ship it.
-
-## Looking back
-
-This is the final chapter of "Building a Clojure/Datomic SaaS from Scratch." Over the course of this book, we have assembled a complete application stack from first principles:
-
-We started with a Clojure project structure and strict compilation. We added server-side rendering with escaping Hiccup. We modeled our domain in Datomic. We built passwordless authentication. We built a content-hashed asset pipeline -- Tailwind, esbuild, an import map and Subresource Integrity -- behind a strict Content-Security-Policy. We wrote tests at every level -- unit, integration, and end-to-end. We measured performance with Lighthouse. And now we have tied everything together with continuous integration and automated deployment.
-
-Every piece was built to be understood by one person. No magic frameworks, no hidden abstractions, no build tools that require a dedicated team to maintain. A single Dockerfile for CI. A single YAML file for the pipeline. SSH and a shell script for deployment.
-
-That simplicity is the point. A solo operator building a SaaS does not have the luxury of complexity. Every moving part is a part that can break at 2 AM with no one else to call. The system we have built is not sophisticated -- it is simple, transparent, and entirely within one person's ability to understand, debug, and maintain.
-
-Whether you read straight through or jumped to the topics that interested you, we hope this book demonstrated that building a production SaaS with Clojure and Datomic is not only feasible but genuinely enjoyable. The tools are mature. The ecosystem is stable. And the language rewards you with a codebase that stays manageable as it grows.
-
-Now go build something.
+That ritual is the whole book in miniature. Every part of this stack is small enough for one person to build from first principles, hold in their head, and audit before it ships -- a single Dockerfile, a single pipeline definition, a shell script and SSH for deployment. That was the wager the first chapter made: that an application you own completely, with no framework's recovery machinery to maintain, is not the harder path but the simpler one, once you have built the few pieces it asks of you. Every moving part is still a part that can break at 2 AM with no one else to call -- but each one here is yours, transparent, and within a single person's reach to debug. The stack is complete, from the reproducible environment it is built in to the pipeline that ships it. That was the point.

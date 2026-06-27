@@ -1,7 +1,7 @@
 FROM mcr.microsoft.com/devcontainers/base:trixie
 ARG DEBIAN_FRONTEND=noninteractive
 
-ENV LANG=enUS.UTF-8
+ENV LANG=en_US.UTF-8
 ENV LANGUAGE=en_US:en
 ENV LC_ALL=en_US.UTF-8
 

@@ -197,7 +197,7 @@ A few details earn a note:
 
 **`workspaceFolder` is `/workspace`**, where the project source gets mounted.
 
-**Calva is the only required extension.** Calva provides Clojure language support, REPL integration, structural editing (paredit), and inline evaluation. It connects to your running application's nREPL server, giving you the ability to evaluate code in the context of your live application, not just a standalone REPL.
+**Calva is the load-bearing extension.** Calva provides Clojure language support, REPL integration, structural editing (paredit), and inline evaluation. It connects to your running application's nREPL server, giving you the ability to evaluate code in the context of your live application, not just a standalone REPL. The repo also installs **Joyride** alongside it -- VS Code scripted in ClojureScript -- but Calva is the one this book leans on.
 
 **`remoteUser` is `root`.** In a devcontainer that is throwaway by nature, running as root avoids permission headaches with mounted volumes and installed tools. This is a development environment, not production.
 
@@ -461,6 +461,8 @@ networks:
 ```
 
 A dedicated bridge network keeps inter-service communication clean. All services that need to talk to each other join this network. Docker's built-in DNS resolves service names to container IPs automatically, so `mailpit:1025` and `myapp:3000` just work.
+
+The listings above are the load-bearing services. The repo's `compose.yml` carries one more the book does not walk: a containerized **`browser`** service wired to the host X server (a `DISPLAY` environment variable and a `/tmp/.X11-unix` mount, mirrored on the app container) so a real Chromium can render the running app from inside the topology -- useful for the construction-view tooling later in the book. It is orthogonal to the dev loop here; see the file for the exact wiring.
 
 ## VS Code and Calva integration
 

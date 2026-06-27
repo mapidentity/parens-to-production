@@ -93,22 +93,9 @@ For link clicks and GET form submits, the dispatcher pushes a history entry to t
 
 ## Scripts inside a morph
 
-One sharp edge of morphing (or any `innerHTML` swap): browsers do **not** execute `<script>` tags introduced that way. If a page embeds a per-page script inside `<main>`, a morph would insert it inert. The dispatcher handles this by re-materializing such scripts after the morph -- cloning each into a fresh `<script>` element (which the browser *does* run) and marking it `data-executed` so later morphs leave it alone:
+One sharp edge of morphing (or any `innerHTML` swap): browsers do **not** execute `<script>` tags introduced that way. The naive fix is to re-materialize them -- clone each inert `<script>` into a fresh element the browser will run. We deliberately do *not*, and a morphed fragment never carries behavior-bearing script, for two reasons that point the same way. The first is the strict, no-`eval` Content-Security-Policy (see [the asset pipeline chapter](23-asset-pipeline.md)): it authorizes exactly the inline scripts hashed at boot and nothing else, so an injected `<script>` would be refused anyway -- re-executing fragment scripts is a door the policy keeps shut by construction. The second is that there is nothing to re-execute: all page behavior lives in ES modules loaded once in `<head>`, and the only thing a morph changes is the DOM those modules act on.
 
-```javascript
-function executeScripts(root) {
-  const scripts = root.querySelectorAll('script:not([data-executed])');
-  scripts.forEach((old) => {
-    const fresh = document.createElement('script');
-    for (const attr of old.attributes) fresh.setAttribute(attr.name, attr.value);
-    fresh.setAttribute('data-executed', 'true');
-    fresh.text = old.textContent;
-    old.replaceWith(fresh);
-  });
-}
-```
-
-In practice our pages avoid inline `<script>` inside `<main>` entirely (it would also fight our strict Content-Security-Policy -- see the [asset pipeline chapter](23-asset-pipeline.md)). Page-specific behavior is delivered as ES modules loaded once in `<head>` that *enhance* whatever DOM is present and re-run their setup on the `dispatcher:morphed` event the function fires at the end:
+So the dispatcher's contract with the behavior layer is not a script but an *event*. Once the new markup is in place it fires one:
 
 ```javascript
 document.dispatchEvent(new CustomEvent('dispatcher:morphed', {
@@ -116,25 +103,18 @@ document.dispatchEvent(new CustomEvent('dispatcher:morphed', {
 }));
 ```
 
-That event is the extension point. The `live-form`, `defer-details`, `server-preview`, and `admin-stats` modules each listen for it (or for native events) and idempotently wire up the elements they care about after every morph.
-
-Concretely, a module loaded once in `<head>` looks like this -- it enhances whatever DOM is present on first load, and re-runs the same enhancement after every morph, guarding against double-wiring with a marker attribute:
+That event is the single extension point, and exactly one listener hangs on it: a small controller registry. A "controller" is a behavior attached to elements matching a selector -- `live-form`, `defer-details`, `server-preview`, `live-stats` -- declared as a `connect`/`disconnect` pair. The registry owns the lifecycle each of them would otherwise re-implement by hand: find matching elements on first load *and* on every `dispatcher:morphed`, attach exactly once, and detach when an element leaves the DOM or stops matching. A behavior never touches `DOMContentLoaded`, the morph event, or a "have I wired this already" flag; it just says what to do when a matching element appears and what to undo when it goes:
 
 ```javascript
-// static/js/live-form.js — loaded once; survives every morph.
-function enhance(root = document) {
-  for (const form of root.querySelectorAll('form[data-live]')) {
-    if (form.dataset.enhanced) continue;   // idempotent: never wire twice
-    form.dataset.enhanced = '1';
-    form.addEventListener('input', validate);
-  }
-}
-
-document.addEventListener('DOMContentLoaded', () => enhance());
-document.addEventListener('dispatcher:morphed', () => enhance());
+// static/js/live-form.js — registers a behavior; the registry runs its lifecycle.
+register('live-form', {
+  selector: 'form[data-live]',
+  connect(form)    { /* attach input/change listeners, start the debounce */ },
+  disconnect(form) { /* remove them */ },
+});
 ```
 
-The shape is the whole point. The module never assumes it owns the lifecycle: it asks "which `form[data-live]` elements exist right now, and which have I not touched?" on both the initial load and after each morph. Idiomorph preserves the nodes it can and replaces the ones it must, so a morph may hand the module brand-new form elements (no `data-enhanced`, so they get wired) or the very same ones it saw before (already marked, so they are skipped). There is no teardown to write, because the element either survives the morph with its listener intact or is replaced wholesale and re-enhanced from scratch. That is why the contract is a single event and an idempotent `enhance` -- not a mount/unmount pair.
+The division is the whole point. Idiomorph preserves the nodes it can and replaces the ones it must, so after a morph some elements are the very ones a controller already connected (left alone) and some are brand new (connected now); anything the morph removed is disconnected, so its listeners and timers are torn down rather than leaked. Because the registry reconciles the live DOM against the set of connected elements on every morph, a controller is a pure `connect`/`disconnect` pair with no bookkeeping of its own -- which is precisely the island layer that [the progressive-enhancement chapter](18-progressive-enhancement.md) builds out in full. Here the load-bearing fact is narrower: the dispatcher's whole obligation to that layer is to fire one event once the new markup is in place.
 
 ## Why this shape
 
@@ -142,6 +122,6 @@ This is progressive enhancement in the literal sense. The HTML is complete and f
 
 ## Where this leaves us
 
-One script, three listeners, and one exported function are the whole of it -- no router, no hydration, no second copy of the routing table on the client. The leverage comes from how little the rest of the system has to know about it: the server keeps rendering whole pages in blissful ignorance, and the only contract the client side exposes is a single `dispatcher:morphed` event and an idempotent `enhance`.
+One script, three listeners, and one exported function are the whole of it -- no router, no hydration, no second copy of the routing table on the client. The leverage comes from how little the rest of the system has to know about it: the server keeps rendering whole pages in blissful ignorance, and the only contract the client side exposes is a single `dispatcher:morphed` event, which a small controller registry listens for.
 
 That narrow surface is also why `fetchAndMorph` turns out to be reused well beyond navigation. The dev hot-reload loop in [the morph-reload chapter](17-morph-reload.md) is, as that chapter puts it, just one more caller of this same function -- a view edit on the server becomes a morph in the browser through exactly this path, with no dev-only morphing code to maintain. And the whole island layer in [the progressive-enhancement chapter](18-progressive-enhancement.md) hangs off the one event this function fires. Build the dispatcher once, correctly, and two later chapters get to treat it as bedrock.

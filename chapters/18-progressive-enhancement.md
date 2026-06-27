@@ -267,7 +267,10 @@ The remaining gap between a server-rendered app and an SPA is the network latenc
     {"prerender"
      [{"where" {"and" [{"href_matches" "/*"}
                        {"not" {"href_matches" "/auth/*"}}
+                       {"not" {"href_matches" "/terms/*"}}
                        {"not" {"href_matches" "/admin/*"}}
+                       ;; partials are fetched by islands, never navigated to
+                       {"not" {"href_matches" "/partials/*"}}
                        {"not" {"selector_matches" "[data-no-prerender]"}}]}
        "eagerness" "moderate"}]}))
 ```

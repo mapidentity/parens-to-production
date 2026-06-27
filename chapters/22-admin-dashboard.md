@@ -40,7 +40,7 @@ Admin routes need to be locked down -- not "requires authentication" but "requir
 
 The comparison is **case-insensitive**, and that is a deliberate hardening choice, not a stylistic one. A naive `(= user-email admin-email)` is the kind of check that passes every test and then locks you out in production the first time a session carries `Admin@example.com` while config holds `admin@example.com`. Email local parts are case-insensitive in practice for every provider you will meet, so the only correct behavior is to fold both sides to lower case before comparing -- otherwise the gate is one stray capital letter away from excluding the one person it exists to admit. (This needs `[clojure.string :as str]` in the namespace.)
 
-> **How the repo factors this.** The version above reads the email straight from the session, which keeps this chapter self-contained. In the companion repo, `wrap-admin` is the bottom layer of the middleware stack from [the login-flow chapter](20-auth-email-flow.md): `wrap-auth` has already put `:user-email` on the request and `wrap-terms-accepted` has enforced the terms gate, so `wrap-admin` just reads `(:user-email request)` instead of re-deriving the user. Same check, composed into that stack. If you have built the auth chapters' middleware, prefer that structure; the standalone form here is the minimal thing that works on its own.
+> **How the repo factors this.** The version above does the lookup and the case-fold inline, which keeps this chapter self-contained. In the companion repo the work is split across the middleware stack from [the login-flow chapter](20-auth-email-flow.md): `wrap-current-user` resolves the session once and, via an `admin-email?` helper that does exactly this lower-cased comparison, stamps a boolean `:admin?` onto the request; `wrap-admin` is then the bottom layer that simply reads `(:admin? request)` and chooses redirect-or-JSON. The check is identical -- it has just moved up into the layer that already touched the session, so the gate itself is a one-line flag read. If you have built the auth chapters' middleware, prefer that structure; the standalone form here is the minimal thing that works on its own.
 
 Three branches, each with two sub-branches for HTML vs JSON responses:
 
@@ -606,15 +606,5 @@ The data flow is:
 5. Every 20 seconds, JavaScript polls `/admin/stats` for fresh numbers and updates the CSS custom property on any card whose value changed; the counter tweens to the new figure.
 
 No WebSockets, no server-sent events, no client-side state management. The page is server-rendered, the polling is a simple `setInterval` with `fetch`, and the presentation is pure CSS.
-
-## What you now have
-
-After implementing this, you have:
-
-- **A locked-down admin surface**: a `wrap-admin` middleware gating the whole `/admin` route group on a single, case-insensitively-matched admin email from config, choosing redirects for page requests and status-coded JSON errors for the polling endpoint.
-- **A separate analytics database** that can be independently created, queried, or destroyed without touching operational data.
-- **Datomic queries across two databases** for user stats, signup funnel metrics, and magic link analytics including time-to-click -- with the `total-users`/`terms-accepted` distinction made explicit rather than left as a trap.
-- **JVM memory monitoring** with used/free/total/max stats and percentage indicators.
-- **A stat grid with live polling** that updates every 20 seconds without a page reload, and a CSS-only counter animation layered on top as presentational polish.
 
 The authorization is the part that has to be right; everything downstream of it is conventional query-and-render. No monitoring service to pay for, no dashboard framework to learn, no JavaScript build pipeline to maintain -- just your server, your database, and a gate you can audit in one screen.
