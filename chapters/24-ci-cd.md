@@ -2,7 +2,7 @@
 
 Over the preceding chapters we have built a Clojure/Datomic SaaS piece by piece: strict compilation, server-rendered HTML, passwordless authentication, Datomic modeling, an asset pipeline, end-to-end tests, Lighthouse audits, and more. Each piece works on its own, but without a pipeline that ties them together, shipping is a manual checklist that grows longer with every feature. Forget one step and a broken build makes it to production. Forget two and your users notice.
 
-This final chapter wires everything into a single automated pipeline. Push to main, and the system formats, lints, builds the static assets and verifies their integrity, runs tests with coverage, executes end-to-end tests in a real browser, audits performance with Lighthouse, builds an uberjar, and deploys -- all without human intervention. That is the goal. Let's build it.
+This final chapter wires everything into a single automated pipeline. Push to main, and the system formats, lints, builds the static assets and verifies their integrity, runs tests with coverage, executes end-to-end tests in a real browser, audits performance with Lighthouse, builds an uberjar, and deploys -- all without human intervention. That is the goal.
 
 > **A note on what is actually wired up in the companion repository.** The pipeline in this chapter is the *application* deployment pipeline -- the one you would run for the SaaS itself. The companion repository for this book runs a *different*, much smaller CI workflow: a single GitHub Actions job that builds these chapters with mdBook and publishes the result to GitHub Pages. The application pipeline below (uberjar, Tailwind, esbuild, asset verification, Caddy, SSH deploy) is taught here in full, but it is not the workflow that ships this book's prose. Where it matters -- the asset-integrity gate especially -- we will be explicit about whether a step runs continuously or as a local pre-deploy check. Treat the application pipeline as the design you would adopt the day you stand up your own forge runner; the asset-integrity gate is useful *today*, even run by hand before a deploy.
 
@@ -236,7 +236,7 @@ The deploy steps continue in the same job:
 
 > **One insecure default to close before production.** `StrictHostKeyChecking=no` disables SSH host-key verification on the deploy connection, which leaves it open to a man-in-the-middle on the runner-to-host path. It is the convenient choice for a first green pipeline, but it is the one place this otherwise-hardened workflow trusts the network. The fix is to pin the host's key: capture it once with `ssh-keyscan $APP_HOST` (verified out-of-band), store it as a secret, write it to `~/.ssh/known_hosts` in the job, and drop the flag (or use `StrictHostKeyChecking=yes` with that `known_hosts` in place). Treat the `no` above as a placeholder, not the recommendation.
 
-Let's walk through every stage.
+The stages, in order.
 
 ## Stage by stage
 
@@ -275,7 +275,7 @@ Three variables defined at the workflow level so every step can use them.
 
 `APP_HOST` comes from a Forgejo repository variable (configured in Settings -> Actions -> Variables). This keeps the production hostname out of the workflow file. If you move to a different server, you change the variable, not the pipeline.
 
-`CACHE_VOLS` is the key to fast builds. These are Podman bind mounts that map host directories into the container. Let's look at this more closely.
+`CACHE_VOLS` is the key to fast builds. These are Podman bind mounts that map host directories into the container.
 
 ### Cache volumes
 

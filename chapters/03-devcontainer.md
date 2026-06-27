@@ -15,7 +15,7 @@ Several tools address this, and they are worth putting side by side before commi
 
 A **devcontainer** is Docker Compose plus that editor integration, defined as code in the repository. It pins the toolchain *and* the services, *and* it drops your editor inside the same container the app runs in -- and that last part is why we choose it for a REPL-driven Clojure workflow specifically. The nREPL, the file watcher, and the app all live in one place, so "connect your editor" and "run the app" are the same environment rather than two that have to be kept in step. The cost is a hard dependency on Docker and on an editor that speaks the devcontainer protocol (VS Code, or the JetBrains and `devcontainer`-CLI clients); a team already all-in on Nix has a defensible different answer. We take devcontainers because they reproduce the *whole* topology -- tooling, services, networking, and editor -- from one definition.
 
-This chapter walks through a complete devcontainer setup for a Clojure SaaS application. By the end, you will have:
+A complete devcontainer setup for a Clojure SaaS application has six parts:
 
 - A Dockerfile with Java, Clojure, and Node.js
 - A `devcontainer.json` that wires it into VS Code with Calva
@@ -23,8 +23,6 @@ This chapter walks through a complete devcontainer setup for a Clojure SaaS appl
 - A Caddy reverse proxy providing local HTTPS with auto-generated TLS certificates
 - A Mailpit instance for testing transactional emails
 - Everything accessible via `.lan` domains, just like production uses real domains
-
-Let's build it.
 
 ## Project layout
 
@@ -191,7 +189,7 @@ The `devcontainer.json` file tells VS Code how to build and connect to the devel
 }
 ```
 
-A few things to note:
+A few details earn a note:
 
 **`dockerComposeFile` points to `compose.yml`** at the project root, not a standalone Dockerfile. This is important. When you use Compose, VS Code starts the entire service topology -- your app container plus Caddy, Mailpit, and any other services -- in one operation. You do not need to remember to start supporting services separately.
 

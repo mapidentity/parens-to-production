@@ -2,7 +2,7 @@
 
 You have Clojure installed and a project skeleton. Now you need to serve HTTP requests. In most ecosystems this means picking a framework -- Rails, Django, Express -- and letting it dictate your project structure. Clojure takes a different approach. You compose small, focused libraries into your own stack. This gives you exactly what you need and nothing you don't.
 
-In this chapter we will build a running web server with routing, configuration, and a clean development workflow. By the end you will have a `curl`-able health endpoint and a REPL you can use to start, stop, and inspect your server without leaving your editor.
+The web server needs three things: routing, configuration, and a clean development workflow. The result is a `curl`-able health endpoint and a REPL you can use to start, stop, and inspect the server without leaving your editor.
 
 ## The stack
 
@@ -267,7 +267,7 @@ Middleware wraps around the entire application. Order matters -- the first middl
   (@app* request))
 ```
 
-Let's walk through the middleware stack:
+The middleware stack, layer by layer:
 
 1. **`wrap-params`** -- Parses query string and form body parameters into a `:params` map on the request.
 2. **`wrap-keyword-params`** -- Converts string parameter keys to keywords, so you get `(:email params)` instead of `(get params "email")`.

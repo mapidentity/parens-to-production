@@ -60,7 +60,7 @@ Here is the top of `input.css`:
 }
 ```
 
-A few things to note:
+A few decisions here are worth drawing out:
 
 **`@import "tailwindcss" source("./src")`** -- This tells Tailwind v4 to scan the `./src` directory for utility classes. It will find class names in your `.clj` files, inside Hiccup vectors like `[:div.mt-4 ...]` or `[:div {:class "flex items-center"} ...]`.
 

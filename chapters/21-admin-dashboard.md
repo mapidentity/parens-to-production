@@ -206,7 +206,7 @@ For the users table, we need more detail:
                      (update :user/terms-accepted-at convert)))))))
 ```
 
-A few things to note here:
+A few details here are worth calling out:
 
 - The `[... ...]` collection find spec returns a flat vector of results instead of nested tuples.
 - `pull` fetches multiple attributes in one shot, avoiding N+1 queries.

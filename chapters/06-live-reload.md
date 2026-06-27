@@ -92,7 +92,7 @@ When a `.clj` file changes, we load it and then tell the browser to do a full re
                  :duration-seconds duration-seconds}))))))))
 ```
 
-A few things to note. We `load-file` the one path that changed -- not a tree refresh, just that file. We then call `dev-reload/notify-reload!`, which pushes a reload message to every connected browser. The whole thing is wrapped in a timing block: during development you want to know how long a reload takes, and if it ever creeps above a fraction of a second something is wrong and you want to catch it early.
+We `load-file` the one path that changed -- not a tree refresh, just that file. We then call `dev-reload/notify-reload!`, which pushes a reload message to every connected browser. The whole thing is wrapped in a timing block: during development you want to know how long a reload takes, and if it ever creeps above a fraction of a second something is wrong and you want to catch it early.
 
 The failure path is the important detail. A broken file -- a syntax error, an unbalanced paren -- does not crash the watcher. The exception is caught and logged, the watcher keeps running, and your next save gets a fresh chance to succeed. A crash-on-error watcher that you have to restart every time you fat-finger a paren would defeat the entire purpose.
 

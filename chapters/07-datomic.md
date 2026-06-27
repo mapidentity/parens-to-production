@@ -4,7 +4,7 @@ Most SaaS applications reach for PostgreSQL or MySQL without a second thought. T
 
 Datomic treats data as immutable facts over time. Every transaction is recorded. Every past state of the database is queryable. Nothing is ever truly deleted -- it is retracted, and the retraction itself is a fact. For a SaaS that handles financial data, this is not a nice-to-have. It is the correct data model.
 
-In this chapter, we will set up Datomic in a Clojure SaaS application: the Peer library, schema design, a wrapper layer that bridges java.time and Datomic's java.util.Date, and a test fixture that gives you a fresh database per test.
+Setting up Datomic in a Clojure SaaS application has four parts: the Peer library, schema design, a wrapper layer that bridges `java.time` and Datomic's `java.util.Date`, and a test fixture that gives you a fresh database per test.
 
 ## The Datomic peer library
 
@@ -109,7 +109,7 @@ Here is the user schema:
 
 Right now `schema` is just `user-schema`. As the recipe domain takes shape later in the book, this same file gains a `recipe-schema` and `schema` becomes `(vec (concat user-schema recipe-schema))`; `user-schema` itself also picks up a `:user/display-name` attribute. The shape -- one `schema` var transacted at startup -- does not change; the contents grow.
 
-A few things to note about this design:
+Three decisions in this schema are worth drawing out:
 
 **Namespaced attributes.** Every attribute is namespaced (`:user/email`, `:user/created-at`). In Datomic, attributes are global -- they exist at the database level, not the table level. Namespacing is how you organize them. An entity can have attributes from any namespace. This is more flexible than relational tables but demands discipline in naming.
 

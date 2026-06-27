@@ -4,7 +4,7 @@ Most Clojure projects add performance checks late -- after mysterious slowdowns 
 
 There is a better way. If you wire up strict compilation from the very first commit, you catch reflection warnings and boxed math warnings the moment they appear. One warning at a time is easy to fix. Three hundred is a project.
 
-This chapter walks through the build hardening setup we use: `tools.build` with fail-on-warnings, zprint for consistent formatting, and clj-kondo for static analysis. By the end you will have a build that refuses to produce an artifact with performance problems baked in, plus formatting and linting scripts that keep the codebase clean with minimal effort.
+The build-hardening setup is three tools: `tools.build` with fail-on-warnings, zprint for consistent formatting, and clj-kondo for static analysis. Together they make the build refuse to produce an artifact with performance problems baked in, and keep the codebase formatted and linted with minimal effort.
 
 ## The `:build` alias
 
