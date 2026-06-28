@@ -107,7 +107,7 @@ Here is the user schema:
   user-schema)
 ```
 
-Right now `schema` is just `user-schema`. As the recipe domain takes shape later in the book, this same file gains a `recipe-schema` and `schema` becomes `(vec (concat user-schema recipe-schema))`; `user-schema` itself also picks up a `:user/display-name` attribute. The shape -- one `schema` var transacted at startup -- does not change; the contents grow.
+Right now `schema` is just `user-schema`. In the [next chapter](09-recipe-domain.md), as the recipe domain takes shape, this same file gains a `recipe-schema` and `schema` becomes `(vec (concat user-schema recipe-schema))`; `user-schema` itself also picks up a `:user/display-name` attribute. The shape -- one `schema` var transacted at startup -- does not change; the contents grow.
 
 Three decisions in this schema are worth drawing out:
 

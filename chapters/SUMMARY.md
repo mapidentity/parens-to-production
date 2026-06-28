@@ -11,6 +11,7 @@
 - [Live Reload: A File Watcher and WebSocket Browser Refresh](06-live-reload.md)
 - [A Single Source of Time: A Swappable Clock](07-time-clock.md)
 - [Datomic for Your SaaS: Schema, Queries, and the java.time Bridge](08-datomic.md)
+- [The Recipe Domain: Versions, Diffs, and Forks from Datomic's History](09-recipe-domain.md)
 - [Testing a Clojure App: Fixtures, Helpers, and Coverage](10-unit-testing.md)
 - [i18n in Clojure: Multi-Language Support with Accept-Language Detection](11-i18n.md)
 - [Styling with Tailwind CSS](12-tailwind-styling.md)
