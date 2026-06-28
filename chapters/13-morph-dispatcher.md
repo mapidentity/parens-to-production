@@ -103,7 +103,7 @@ document.dispatchEvent(new CustomEvent('dispatcher:morphed', {
 }));
 ```
 
-That event is the single extension point, and exactly one listener hangs on it: a small controller registry. A "controller" is a behavior attached to elements matching a selector -- `live-form`, `defer-details`, `server-preview`, `live-stats` -- declared as a `connect`/`disconnect` pair. The registry owns the lifecycle each of them would otherwise re-implement by hand: find matching elements on first load *and* on every `dispatcher:morphed`, attach exactly once, and detach when an element leaves the DOM or stops matching. A behavior never touches `DOMContentLoaded`, the morph event, or a "have I wired this already" flag; it just says what to do when a matching element appears and what to undo when it goes:
+That event is the single extension point, and exactly one listener hangs on it: a small controller registry. A "controller" is a behavior attached to elements matching a selector -- `live-form`, `defer-details`, `server-preview`, `live-stats`, and a handful more -- declared as a `connect`/`disconnect` pair. The registry owns the lifecycle each of them would otherwise re-implement by hand: find matching elements on first load *and* on every `dispatcher:morphed`, attach exactly once, and detach when an element leaves the DOM or stops matching. A behavior never touches `DOMContentLoaded`, the morph event, or a "have I wired this already" flag; it just says what to do when a matching element appears and what to undo when it goes:
 
 ```javascript
 // static/js/live-form.js — registers a behavior; the registry runs its lifecycle.

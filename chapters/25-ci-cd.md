@@ -98,7 +98,7 @@ A few design choices worth explaining.
 
 **Debian Trixie as the base.** We need a recent enough base to support current versions of Java, Node, and Chromium. Debian is stable, well-understood, and produces reasonably small images.
 
-**Everything is pinned or versioned.** Java comes from Adoptium's Temurin 25 JDK. The zprint binary is pinned to 1.3.0. Clojure CLI pulls the latest stable release. The goal is reproducibility -- you want the same CI results whether you run the pipeline today or three months from now.
+**Versions: pinned where it counts, latest where it helps.** The major pieces are pinned -- Adoptium's Temurin 25 JDK, the zprint binary at 1.3.0, nvm at v0.40.3. Several tools deliberately track the latest release instead: the Clojure CLI (`releases/latest`), Babashka and clj-kondo (their `master` install scripts), Node (`nvm install --lts`), and the global npm tools (`@playwright/test`, `@lhci/cli`, `tailwindcss`). That is a freshness-versus-reproducibility trade -- it keeps the toolchain current, at the cost of two builds months apart not being guaranteed bit-for-bit identical. Because the image is built deliberately rather than on every push, the drift is bounded to when you rebuild. If you need the stronger guarantee, pin those too -- exact versions on the npm installs, a fixed Clojure CLI version, tagged (not `master`) install scripts, and a digest-pinned base image.
 
 **Playwright with Chromium.** The `playwright install --with-deps` command downloads Chromium and all its system dependencies (X11 libraries, fonts, etc.) into the container. The final `ln -s` creates a `/usr/local/bin/chromium` symlink so Lighthouse CI can find the browser without extra configuration.
 

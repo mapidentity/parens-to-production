@@ -66,6 +66,8 @@ A few decisions here are worth drawing out:
 
 **`@source not "./src/myapp/web/inspector.js"`** -- A targeted exclusion. The dev-only source inspector is a JS file under `src/`, and Tailwind's scanner would otherwise see a `resize` substring in its `addEventListener('resize', ...)` and emit a stray `resize` utility. Excluding the file keeps that false positive out of the production stylesheet at zero cost.
 
+**`@view-transition { navigation: auto }`** -- Opts the site into the browser's native cross-document view transitions, so a full server-rendered navigation cross-fades instead of flashing white. This is the no-JavaScript baseline of the app's page-transition story: it works on a plain link click with no script at all. The morph dispatcher ([chapter 13](13-morph-dispatcher.md)) layers smoother in-place updates on top, and the full stylesheet adds `::view-transition` rules and a `prefers-reduced-motion` guard. Where a browser does not support it, the directive is simply ignored and navigation behaves as before -- zero cost.
+
 **`@font-face` for Geist** -- Geist is a variable font, so a single `.woff2` file covers all weights from 100 to 900. `font-display: swap` shows a fallback immediately, then swaps to Geist once it downloads.
 
 **`@theme` block** -- Design tokens as CSS custom properties. Once declared, you use them directly in utilities: `bg-primary`, `text-text-secondary`, `border-border`. The naming is deliberately semantic -- `surface`, `chrome`, `accent` -- rather than color scales like `indigo-600`. A focused app has a small, fixed palette; you do not need eleven shades of every color.

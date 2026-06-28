@@ -10,7 +10,7 @@ There is one idea under everything that follows: a 100 is not an achievement, it
 
 ![Lighthouse's four category gauges for the recipes page: Performance 98, Accessibility 100, Best Practices 100, SEO 100.](images/lighthouse-scores.png)
 
-*The contract, made visible -- the recipes page audited through the test server below. Accessibility, Best Practices, and SEO sit at the hard 100 the gate pins; Performance rides just above its 0.95 floor, the small gap being exactly the run-to-run jitter that floor exists to absorb.*
+*The contract, made visible -- the recipes page audited through the test server below. Accessibility, Best Practices, and SEO sit at the hard 100 the gate pins. Performance is the one category scored from noisy, continuous metrics, so it does not repeat a 100 from run to run; here it lands at 98, sitting comfortably between the 0.95 floor the gate enforces and the 100 we engineer toward -- which is exactly the band that floor exists to protect.*
 
 ## The test server
 
@@ -199,7 +199,7 @@ Two blocks do the work: `collect`, which starts the server and produces the audi
 The assertion block is where you set your standards. Each category maps to an assertion level and a minimum score:
 
 - **Accessibility and Best Practices** are set to `error` with `minScore: 1` (100%). Any score below 100 fails the build. For a server-rendered app these are genuinely achievable, so we hold the line at perfect.
-- **Performance** is set to `error` with `minScore: 0.95`. Performance scores carry a little run-to-run variance even on identical pages (CPU contention in CI, lab-throttling jitter), so a 0.95 floor fails real regressions without flaking on a single unlucky run that lands at 0.99. The page should still score 100 in practice; the threshold just leaves headroom for the measurement noise.
+- **Performance** is set to `error` with `minScore: 0.95`. Performance is the one category Lighthouse scores from continuous metrics -- largest contentful paint, total blocking time, layout shift -- measured under simulated CPU and network throttling, so its score carries genuine run-to-run variance: CI CPU contention and lab-throttling jitter move it by a few points on an unchanged page. That makes a *repeatable* 100 unrealistic. A 100 is achievable and is the ceiling we engineer toward, but it is not a number we can guarantee on every run -- so the contract is the floor, not the round number. A 0.95 floor fails a genuine regression while absorbing the jitter, and a representative run landing at 98 is exactly that jitter, not a defect. The deterministic categories above have no such noise, which is why we can pin *them* at a hard 100 and only give performance a floor.
 - **SEO** is set to `warn` with `minScore: 1`. It warns rather than errors because some SEO checks (like canonical URLs or structured data) may not apply to authenticated pages. The warning keeps it visible without blocking deploys.
 
 ## Running it

@@ -64,8 +64,8 @@ Now the HMAC function:
 ```clojure
 (defn hmac-sha256
   "Compute HMAC-SHA256 of data using secret key."
-  [^bytes secret-key ^String data]
-  (let [mac (Mac/getInstance "HmacSHA256")
+  ^bytes [^bytes secret-key ^String data]
+  (let [^Mac mac (Mac/getInstance "HmacSHA256")
         secret-key-spec (SecretKeySpec. secret-key "HmacSHA256")]
     (.init mac secret-key-spec)
     (.doFinal mac (.getBytes data "UTF-8"))))
@@ -73,7 +73,7 @@ Now the HMAC function:
 
 Three lines of Java interop, no external dependencies. `Mac/getInstance` gives us an HMAC engine. `SecretKeySpec` wraps our raw key bytes into something the JCA (Java Cryptography Architecture) understands. We initialize the engine with our key, then feed it the data. Out comes a byte array -- the signature.
 
-The `^bytes` and `^String` type hints are not just documentation. Without them, Clojure would use reflection to find the right `.init` and `.getBytes` overloads at runtime, which is both slower and noisier in the logs.
+The `^Mac`, `^bytes`, and `^String` type hints are not just documentation. Without them, Clojure would fall back to reflection to resolve the `.init`, `.doFinal`, and `.getBytes` calls at runtime -- the `^Mac` hint on the `mac` local is what lets the compiler resolve `.init` and `.doFinal` directly instead of reflecting on each call -- which is both slower and noisier in the logs.
 
 Next, base64 encoding and decoding:
 

@@ -102,10 +102,13 @@ The base layout is the HTML5 shell that every page shares. It is private -- page
       ;; so window.Idiomorph is available when dispatcher.js runs.
       (script-tag "idiomorph" {:defer true})
       (script-tag "js/dispatcher.js" {:type "module"})
+      (script-tag "js/controllers.js" {:type "module"})
       (script-tag "js/live-form.js" {:type "module"})
       (script-tag "js/defer-details.js" {:type "module"})
       (script-tag "js/server-preview.js" {:type "module"})
       (script-tag "js/admin-stats.js" {:type "module"})
+      ;; ...and one <script> per remaining behavior controller (sortable, confirm,
+      ;; tagline); like the dev block below, this is where each one mounts.
       [:style
        (h/raw "@keyframes page-enter{from{opacity:.92;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}main{animation:page-enter .12s ease-out}")]]
      [:body (tag-root body)
@@ -127,6 +130,7 @@ Several things in that shell carry weight worth drawing out:
 - **The whole document is built by `h/html`, the *escaping* renderer.** This matters enough that it gets its own section below. The doctype is the one structural literal we want emitted as-is, so it goes through `(h/raw "<!DOCTYPE html>")`.
 - **Assets resolve through `(assets/asset "...")`.** The stylesheet, the module scripts, and the import map all come from the asset system: in production each URL is content-hashed and carries an integrity (SRI) attribute; in development the same calls return stable, unhashed URLs. The asset pipeline is its own topic -- here, the view layer just asks for a logical name and gets back a URL.
 - **`(script-tag "js/dispatcher.js" {:type "module"})`** loads the dispatcher, the script that powers progressive enhancement ([its own chapter](13-morph-dispatcher.md), next). It is a normal ES module, served from the classpath through the asset pipeline -- not inlined.
+- **`(script-tag "js/controllers.js" {:type "module"})`** loads the controller registry -- the single listener that attaches every behavior module to the elements it enhances, on first load and after each morph ([the dispatcher chapter](13-morph-dispatcher.md) builds it). The behavior modules below (`live-form`, `defer-details`, and the rest) each register themselves with it. This listing shows a representative few; like the dev-only block below, this `<head>` is the one place they mount, so each later behavior chapter adds its module here.
 - **`(toast-script)`** inlines a small toast helper. The `defn-asset` macro and inline scripts are covered later in this chapter.
 - **`(tag-root body)`** wraps the page body for the development source inspector. In production it is the identity function; the body is unchanged.
 - **The final body block is dev-only.** `(when (requiring-resolve 'dev-reload/websocket-handler) (list (dev-reload-script) (inspector-script) (trace-overlay-script)))` emits three small scripts -- the live-reload client ([live reload](06-live-reload.md)), the source inspector ([the inspector](14-inspector.md)), and the construction-view overlay ([the construction-view overlay](16-construction-view-overlay.md)) -- and nothing else. This is the single place those overlays mount, so as you build each of those chapters you add its script to this list. The `requiring-resolve` check returns `nil` when the dev namespace is not on the classpath, so the whole block is *structurally absent* in production; the `defn-asset` declarations behind `dev-reload-script`/`inspector-script`/`trace-overlay-script` arrive with [the asset pipeline](23-asset-pipeline.md). (If you are following along before those chapters exist, drop the names you have not built yet -- the block renders nothing until the dev namespace is present anyway.)
