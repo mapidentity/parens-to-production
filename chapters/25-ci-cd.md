@@ -478,7 +478,7 @@ The deployment itself is straightforward:
 
 1. **Static files** are copied via `scp` from `myapp/static/` -- the *built* tree that `clojure -T:build assets` produced and `verify-assets` just signed off on -- to the directory the reverse proxy serves. That tree contains the content-hashed stylesheet and ESM modules, the version-pinned `idiomorph-0.7.4.min.js` (and its sourcemap), the passed-through fonts and SVGs, and `asset-manifest.edn`. The manifest must travel with the assets: the running application reads it at boot to map each logical asset name to its hashed URL and SRI token, so deploying the hashed files without the manifest would leave the app unable to resolve them.
 
-2. **The uberjar** is copied to `/tmp/` on the server, then a deploy script moves it into place and restarts the application. The deploy script handles the atomic swap: stop the running process, move the new JAR into position, start the new process. This keeps downtime to a few seconds.
+2. **The uberjar** is copied to `/tmp/` on the server, then a deploy script moves it into place and restarts the application. The deploy script handles the atomic swap: stop the running process, move the new JAR into position, start the new process, and roll back to the previous JAR if the new one fails to come up. It is a brief hard restart -- a few seconds of downtime, not zero-downtime -- and the script below names that cost rather than hiding it.
 
 That script (`/etc/scripts/deploy-myapp.sh`) is the single highest-stakes line in the whole pipeline -- the one that actually touches production -- so it is worth seeing rather than describing. It is not in the companion repository, which deploys this book rather than the app, but here is the shape it takes, made concrete:
 
@@ -493,13 +493,22 @@ target=/opt/myapp/myapp.jar
 # Refuse a missing or truncated upload before we stop anything.
 [ -s "$new_jar" ] || { echo "no jar at $new_jar" >&2; exit 1; }
 
-systemctl stop myapp                  # stop the running process
+cp -f "$target" "$target.prev" 2>/dev/null || true  # keep the last-good jar to roll back to
+
+systemctl stop myapp                  # the brief outage window opens here
 mv -f "$new_jar" "$target"            # same filesystem → mv is an atomic rename
 systemctl start myapp                 # start the new process
-systemctl is-active --quiet myapp     # non-zero exit if it failed to come up
+
+# If the new jar fails to come up, restore the previous one and fail the deploy.
+if ! systemctl is-active --quiet myapp; then
+  echo "myapp failed to start — rolling back to previous jar" >&2
+  [ -s "$target.prev" ] && mv -f "$target.prev" "$target"
+  systemctl restart myapp
+  exit 1
+fi
 ```
 
-It is deliberately small: the `systemd` unit owns restart-on-failure, logging, and the JVM flags, so the script's only job is the swap. Because `/tmp` and `/opt/myapp` sit on the same filesystem, the `mv` is an atomic rename rather than a copy, and the closing `systemctl is-active` turns a JAR that boots and immediately dies into a *failed deploy* the pipeline reports, rather than a silent outage. The `deploy` user is granted exactly two `sudo` rights -- stop and start this one unit -- and nothing else.
+It is deliberately small: the `systemd` unit owns restart-on-failure, logging, and the JVM flags, so the script's only job is the swap. Because `/tmp` and `/opt/myapp` sit on the same filesystem, the `mv` is an atomic rename rather than a copy. Two honesty points are worth naming plainly. First, this is **not** zero-downtime: `stop` → `mv` → `start` is a hard restart, so requests in flight during the swap are dropped and the site is unreachable for the second or two the JVM takes to boot. True zero-downtime -- a second app node drained behind the proxy, or a blue-green pair -- is the horizontal-scale work the afterword flags as out of scope; for a single-node SaaS a few seconds of off-hours restart is usually an acceptable trade, named rather than hidden. Second, the closing `is-active` check does more than report: a JAR that boots and immediately dies is rolled back to the previous jar (kept as `myapp.jar.prev`) and surfaced as a *failed deploy*, rather than left as a silent outage. The `deploy` user is granted exactly two `sudo` rights -- stop and start this one unit -- and nothing else.
 
 Static assets are served by Caddy, not by the JVM. In the companion repository's Caddyfile, the proxy applies `Cache-Control: public, max-age=31536000, immutable` to any content-hashed filename (the `\.([a-f0-9]{8})\.(css|js)$` pattern) and to the version-pinned `idiomorph-*.min.js`, and it sets the long-lived security headers (HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, and the `Cross-Origin-Opener-Policy`/`Cross-Origin-Resource-Policy` isolation pair). It deliberately does **not** set a Content-Security-Policy: the per-document CSP carries the SHA-256 hashes of the application's inline scripts and import map, so the *application* must own it. This is why immutable caching and asset integrity are two sides of one coin -- once a hashed file is out, browsers may cache it for a year, so `verify-assets` is the last chance to catch a hash that does not match its bytes.
 

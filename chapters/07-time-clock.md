@@ -63,7 +63,7 @@ A convention that says "always go through `myapp.time`" is worth only as much as
 
 ```bash
 # Everything must read time through myapp.time (see this chapter).
-forbidden_pattern='(LocalDate/now|LocalDateTime/now|ZonedDateTime/now|OffsetDateTime/now|Instant/now|Year/now|YearMonth/now|System/currentTimeMillis)'
+forbidden_pattern='(LocalDate/now|LocalDateTime/now|ZonedDateTime/now|OffsetDateTime/now|Instant/now|Year/now|YearMonth/now|System/currentTimeMillis|System\.currentTimeMillis)'
 ```
 
 It is a plain grep rather than a proper linter rule for a precise reason: these calls are Java static methods, and clj-kondo's `:discouraged-var` mechanism only sees Clojure vars, not interop. A grep sees the text, which is exactly the level the rule lives at. From here on, application code calls `(time/now)`; the build refuses to let it do otherwise.

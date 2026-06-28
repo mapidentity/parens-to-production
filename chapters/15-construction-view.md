@@ -186,12 +186,24 @@ Where do `start` and `end` come from? A Ring middleware, placed outermost, recor
 
 (defn wrap-trace [handler]
   (fn [req]
-    (if (str/starts-with? (str (:uri req)) "/dev/")
-      (handler req)
-      (record-page handler req))))
+    (if (and (not (str/starts-with? (str (:uri req)) "/dev/"))
+             (page-request? req))
+      (record-page handler req)   ; the only path that records
+      (handler req))))            ; assets, JSON XHR, /dev/ fetches: recording stays off
 ```
 
-Two helpers it leans on -- recognize an HTML response, and weld the trace id onto its `<html>` so the browser can find it:
+Three helpers it leans on. The first decides whether a request is even worth recording -- only a page render is, never a sub-resource or a prefetch:
+
+```clojure
+(defn- page-request? [req]
+  (let [h (:headers req)]
+    (and (#{:get :post} (:request-method req))
+         (some-> (get h "accept") (str/includes? "text/html"))
+         (not (some-> (get h "sec-purpose") (str/includes? "prefetch")))
+         (not (some-> (get h "purpose")     (str/includes? "prefetch"))))))
+```
+
+This is the same `Accept: text/html` distinction the dispatcher already trades on: a full navigation, a form submit, and the dispatcher's fetch-and-morph all ask for `text/html`, while CSS/JS/image sub-resources and JSON XHR do not. Gating on it means the recorder is never even switched on for an asset, an XHR, or a prefetch -- so assets and idle time accrete nothing, and a recorded window is always a page the user actually saw. The other two helpers recognize an HTML response, and weld the trace id onto its `<html>` so the browser can find it:
 
 ```clojure
 (defn- html? [resp]
