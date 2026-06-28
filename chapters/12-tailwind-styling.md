@@ -2,7 +2,7 @@
 
 You are about to build the view layer in Hiccup -- vectors of tags and attributes that render to HTML. Those views need to look like something. Before we get into markup, we need a styling system: a way to give every page a consistent look without inventing a parallel vocabulary of class names and a sprawl of CSS files that drift out of sync with the markup they style.
 
-This chapter sets that up. It is deliberately small and self-contained. All it needs is a running web server and the project's `static/` directory. The production story for styles -- content-hashing the stylesheet, immutable caching, the Content-Security-Policy -- belongs to [the asset pipeline chapter](23-asset-pipeline.md); here Tailwind produces a stylesheet your views can use as you write them.
+This chapter sets that up. It is deliberately small and self-contained. All it needs is a running web server and the project's `static/` directory. The production story for styles -- content-hashing the stylesheet, immutable caching, the Content-Security-Policy -- belongs to [the asset pipeline chapter](24-asset-pipeline.md); here Tailwind produces a stylesheet your views can use as you write them.
 
 ## Why Tailwind in a server-rendered Clojure app
 
@@ -66,7 +66,7 @@ A few decisions here are worth drawing out:
 
 **`@source not "./src/myapp/web/inspector.js"`** -- A targeted exclusion. The dev-only source inspector is a JS file under `src/`, and Tailwind's scanner would otherwise see a `resize` substring in its `addEventListener('resize', ...)` and emit a stray `resize` utility. Excluding the file keeps that false positive out of the production stylesheet at zero cost.
 
-**`@view-transition { navigation: auto }`** -- Opts the site into the browser's native cross-document view transitions, so a full server-rendered navigation cross-fades instead of flashing white. This is the no-JavaScript baseline of the app's page-transition story: it works on a plain link click with no script at all. The morph dispatcher ([chapter 13](13-morph-dispatcher.md)) layers smoother in-place updates on top, and the full stylesheet adds `::view-transition` rules and a `prefers-reduced-motion` guard. Where a browser does not support it, the directive is simply ignored and navigation behaves as before -- zero cost.
+**`@view-transition { navigation: auto }`** -- Opts the site into the browser's native cross-document view transitions, so a full server-rendered navigation cross-fades instead of flashing white. This is the no-JavaScript baseline of the app's page-transition story: it works on a plain link click with no script at all. The morph dispatcher ([chapter 14](14-morph-dispatcher.md)) layers smoother in-place updates on top, and the full stylesheet adds `::view-transition` rules and a `prefers-reduced-motion` guard. Where a browser does not support it, the directive is simply ignored and navigation behaves as before -- zero cost.
 
 **`@font-face` for Geist** -- Geist is a variable font, so a single `.woff2` file covers all weights from 100 to 900. `font-display: swap` shows a fallback immediately, then swaps to Geist once it downloads.
 

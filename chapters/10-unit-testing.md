@@ -28,7 +28,7 @@ All shared test infrastructure lives in a single file: `test/myapp/test_helpers.
     [myapp.db.schema :as schema]))
 ```
 
-This `ns` form is the slice this chapter builds on; the file grows two requires beyond it as the app does. The request builder gains user resolution from the database once the auth chapters exist (a `myapp.auth.core` require), and a second database -- ours gains an analytics DB in [the admin dashboard chapter](22-admin-dashboard.md) -- takes one more require and one more fixture, shown together [below](#a-second-database-the-analytics-fixture). In the repo all of these are already in place.
+This `ns` form is the slice this chapter builds on; the file grows two requires beyond it as the app does. The request builder gains user resolution from the database once the auth chapters exist (a `myapp.auth.core` require), and a second database -- ours gains an analytics DB in [the admin dashboard chapter](23-admin-dashboard.md) -- takes one more require and one more fixture, shown together [below](#a-second-database-the-analytics-fixture). In the repo all of these are already in place.
 
 ### The database fixture
 
@@ -109,7 +109,7 @@ The `cond->` threading macro keeps it clean -- optional keys are only added when
 
 ### A second database: the analytics fixture
 
-When an app grows a second Datomic database, the same fixture pattern scales to it unchanged -- a fresh in-memory instance per test, stubbed at the connection boundary. For the analytics database of [the admin dashboard chapter](22-admin-dashboard.md), add `[myapp.analytics.db :as analytics]` to the `ns` require above and this fixture beside `with-test-db`:
+When an app grows a second Datomic database, the same fixture pattern scales to it unchanged -- a fresh in-memory instance per test, stubbed at the connection boundary. For the analytics database of [the admin dashboard chapter](23-admin-dashboard.md), add `[myapp.analytics.db :as analytics]` to the `ns` require above and this fixture beside `with-test-db`:
 
 ```clojure
 (def ^:dynamic *analytics-conn*
@@ -300,7 +300,7 @@ The coverage configuration lives in the `:coverage` alias in `deps.edn`:
 ```clojure
 :coverage {:extra-paths ["test"]
            :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}
-                        ;; in-memory SMTP for the email-flow tests (ch. 20)
+                        ;; in-memory SMTP for the email-flow tests (ch. 21)
                         com.icegreen/greenmail {:mvn/version "2.1.8"}}
            :main-opts ["-m" "cloverage.coverage"
                        "--src-ns-path" "src"
@@ -338,7 +338,7 @@ For running tests without coverage (faster feedback during development), there i
 :test {:extra-paths ["test"]
        :extra-deps {io.github.cognitect-labs/test-runner
                     {:git/tag "v0.5.1" :git/sha "dfb30dd"}
-                    ;; in-memory SMTP for the email-flow tests (ch. 20)
+                    ;; in-memory SMTP for the email-flow tests (ch. 21)
                     com.icegreen/greenmail {:mvn/version "2.1.8"}}
        :main-opts ["-m" "cognitect.test-runner"]
        :exec-fn cognitect.test-runner.api/test}

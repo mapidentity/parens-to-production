@@ -21,7 +21,7 @@ That is it. The `:ns-default build` tells `clojure -T:build` to look for functio
 
 ## The build namespace
 
-Here is the build-hardening portion of `build.clj` -- the strict-compile gate and the uberjar task. The same file later grows a second half (content-hashing, SRI, the `assets`/`verify-assets` tasks, with two extra requires: `clojure.java.io` and `clojure.java.shell`) in [the asset pipeline chapter](23-asset-pipeline.md):
+Here is the build-hardening portion of `build.clj` -- the strict-compile gate and the uberjar task. The same file later grows a second half (content-hashing, SRI, the `assets`/`verify-assets` tasks, with two extra requires: `clojure.java.io` and `clojure.java.shell`) in [the asset pipeline chapter](24-asset-pipeline.md):
 
 ```clojure
 (ns build
@@ -128,7 +128,7 @@ The hint goes on the argument (or on a `let` binding, or as a `^Type` tag in fro
 
 **`*unchecked-math* :warn-on-boxed`** warns when a math operation forces boxing of primitive values. Boxing means wrapping a primitive `long` or `double` into a `Long` or `Double` object, which means heap allocation on what should be a register operation. In hot loops this is death by a thousand cuts.
 
-These two are the strictness bindings. The repo's `compile-clj` passes one more -- `#'clojure.test/*load-tests* false` -- which has nothing to do with strictness: it strips in-file `deftest` forms out of the compiled artifact so tests never ride into production. We reach for it when the testing strategy needs it, so it is introduced in [the testing chapter](09-unit-testing.md); it lives in the same `:bindings` map only because that is where `compile-clj` takes them.
+These two are the strictness bindings. The repo's `compile-clj` passes one more -- `#'clojure.test/*load-tests* false` -- which has nothing to do with strictness: it strips in-file `deftest` forms out of the compiled artifact so tests never ride into production. We reach for it when the testing strategy needs it, so it is introduced in [the testing chapter](10-unit-testing.md); it lives in the same `:bindings` map only because that is where `compile-clj` takes them.
 
 ### Why `compile-clj` needs `:err :capture`
 
