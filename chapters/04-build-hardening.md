@@ -148,7 +148,7 @@ Here is a subtlety: `b/compile-clj` runs compilation in a subprocess. The warnin
       (throw (ex-info "Performance warnings detected — add type hints to fix." {:warnings hits})))))
 ```
 
-This function scans the captured stderr line by line. It filters for lines that are both a warning (reflection or boxed math) *and* come from our own code (the `myapp/` namespace prefix). That second filter is important -- third-party libraries will emit their own warnings and you cannot fix those. You only fail on warnings you can actually act on.
+This function scans the captured stderr line by line. It filters for lines that are both a warning (reflection or boxed math) *and* come from our own code -- the warning line names a source file under `myapp/`. That second filter is important -- third-party libraries will emit their own warnings and you cannot fix those. You only fail on warnings you can actually act on.
 
 The `(take 50)` is a safety valve. If you somehow accumulate a huge number of warnings (maybe you added a new dependency that triggered transitive compilation), you get the first 50 rather than a wall of text.
 
@@ -296,7 +296,7 @@ kondo_rc=$?
 # Time-as-global check. clj-kondo's :discouraged-var only fires on Clojure
 # vars, not Java static methods, so we grep for forbidden /now invocations.
 # Everything must read time through myapp.time (see the clock chapter).
-forbidden_pattern='(LocalDate/now|LocalDateTime/now|ZonedDateTime/now|OffsetDateTime/now|Instant/now|Year/now|YearMonth/now|System/currentTimeMillis)'
+forbidden_pattern='(LocalDate/now|LocalDateTime/now|ZonedDateTime/now|OffsetDateTime/now|Instant/now|Year/now|YearMonth/now|System/currentTimeMillis|System\.currentTimeMillis)'
 violations=$(grep -rn -E "$forbidden_pattern" src test \
   --include='*.clj' --include='*.cljs' --include='*.cljc' \
   | grep -v '^src/myapp/time\.clj:' \

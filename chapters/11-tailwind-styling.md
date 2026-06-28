@@ -2,7 +2,7 @@
 
 You are about to build the view layer in Hiccup -- vectors of tags and attributes that render to HTML. Those views need to look like something. Before we get into markup, we need a styling system: a way to give every page a consistent look without inventing a parallel vocabulary of class names and a sprawl of CSS files that drift out of sync with the markup they style.
 
-This chapter sets that up. It is deliberately small and self-contained. All it needs is a running web server and the project's `static/` directory. The production story for styles -- content-hashing the stylesheet, immutable caching, the Content-Security-Policy -- belongs to the asset pipeline chapter; here Tailwind produces a stylesheet your views can use as you write them.
+This chapter sets that up. It is deliberately small and self-contained. All it needs is a running web server and the project's `static/` directory. The production story for styles -- content-hashing the stylesheet, immutable caching, the Content-Security-Policy -- belongs to [the asset pipeline chapter](23-asset-pipeline.md); here Tailwind produces a stylesheet your views can use as you write them.
 
 ## Why Tailwind in a server-rendered Clojure app
 

@@ -293,9 +293,10 @@ Tests run against a fresh in-memory Datomic database per test, with a determinis
 
 The `with-test-db` fixture creates a disposable in-memory Datomic database with the full schema loaded, binds it to a dynamic var, and tears it down after each test. No shared state between tests, no cleanup headaches.
 
-The test signing key is a fixed 32-byte string:
+The test signing key is a fixed 32-byte string, defined once in the shared test-helpers namespace (aliased `h` in these tests, which is why every call below reads `h/test-signing-key`):
 
 ```clojure
+;; in myapp.test-helpers
 (def test-signing-key
   (.getBytes "test-signing-key-32-bytes-long!!" "UTF-8"))
 ```
