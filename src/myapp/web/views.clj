@@ -147,6 +147,10 @@
   [locale label-key href icon-key active?]
   [:a
    {:href href
+    ;; The label is hidden below the `sm` breakpoint, leaving an icon-only
+    ;; link; the aria-label keeps the link's accessible name present at every
+    ;; viewport (and matches the visible text on `sm`+).
+    :aria-label (t locale label-key)
     :class
     (if active?
       "flex items-center gap-1.5 text-white border-b-2 border-white px-3 py-3 text-sm font-semibold"

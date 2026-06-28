@@ -192,7 +192,7 @@ wrap-locale › … › recipe-show
 
 ## Step two: the details pane
 
-Now make a click do more than open source: *select* the frame and show its dossier. A persistent pane at the bottom re-renders on every selection change. `fillDetails` lays it out in order of usefulness when something is wrong: a **throw** box first if the frame threw; then where it was **called** and **defined** (both open in the editor); a **lazy** note linking to where it actually ran; the **data source** (the eid-matched reads from `/dev/__source`); the **transforms** morph badge; the **queries** it ran with full Datalog; navigable **args/ret**; the **not-rendered** conditionals (`/dev/__branches`); and the **produced markup** (`/dev/__hiccup`). A representative slice -- the call/def links and the lazy `/dev/__source` fetch:
+Now make a click do more than open source: *select* the frame and show its dossier. A persistent pane at the bottom re-renders on every selection change. `fillDetails` lays it out in order of usefulness when something is wrong: a **throw** box first if the frame threw; then where it was **called** and **defined** (both open in the editor); a **lazy** note linking to where it actually ran; the **data source** (the eid-matched reads from `/dev/__source`); the **transforms** morph badge; the **queries** it ran with full Datalog; navigable **args/ret**; the **not-rendered** conditionals (`/dev/__branches`); and the **produced markup** (`/dev/__hiccup`). Each `/dev/__*` route these read is defined in [The server-side projections](#the-server-side-projections-the-overlay-consumes) below; here we meet them as the overlay consumes them. A representative slice -- the call/def links and the lazy `/dev/__source` fetch:
 
 ```javascript
 function fillDetails(d, s) {

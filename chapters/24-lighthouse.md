@@ -8,6 +8,10 @@ The challenge for a SaaS app is that most pages live behind authentication. Ligh
 
 There is one idea under everything that follows: a 100 is not an achievement, it is a *contract*. The point of the threshold is not the round number -- it is that the number turns every quality property Lighthouse can measure (a `lang` attribute, a meta description, sufficient contrast, a fast first paint) into a regression-guarded invariant instead of a thing someone has to remember. The individual fixes below each look small; what makes them matter is that, once passing, the gate keeps them passing. So read the list not as tips but as the set of audits we are choosing to pin, and the test server as the apparatus that lets us pin the authenticated ones too.
 
+![Lighthouse's four category gauges for the recipes page: Performance 98, Accessibility 100, Best Practices 100, SEO 100.](images/lighthouse-scores.png)
+
+*The contract, made visible -- the recipes page audited through the test server below. Accessibility, Best Practices, and SEO sit at the hard 100 the gate pins; Performance rides just above its 0.95 floor, the small gap being exactly the run-to-run jitter that floor exists to absorb.*
+
 ## The test server
 
 The Lighthouse test server lives on the test classpath -- it is never compiled into the production jar. Its job is simple: start a real instance of the app with a middleware that auto-authenticates every request as a test user.
