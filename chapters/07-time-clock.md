@@ -57,7 +57,7 @@ That is the whole payoff. A token-expiry test can advance the clock past the fif
 
 ## Making the rule enforceable
 
-A convention that says "always go through `myapp.time`" is worth only as much as its weakest moment of discipline -- one stray `(Instant/now)` in a handler and a function silently becomes untestable again. So the rule is enforced, not merely documented. [The build-hardening chapter](04-build-hardening.md)'s `lint` script greps the source for every raw clock call -- `Instant/now`, `LocalDate/now`, `System/currentTimeMillis`, and the rest -- and fails the build if one appears anywhere but this file:
+A convention that says "always go through `myapp.time`" is worth only as much as its weakest moment of discipline -- one stray `(Instant/now)` in a handler and a function silently becomes untestable again. So the rule is enforced, not merely documented. [The strict-compilation chapter](04-build-hardening.md)'s `lint` script greps the source for every raw clock call -- `Instant/now`, `LocalDate/now`, `System/currentTimeMillis`, and the rest -- and fails the build if one appears anywhere but this file:
 
 ```bash
 # Everything must read time through myapp.time (see this chapter).

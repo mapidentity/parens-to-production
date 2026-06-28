@@ -117,10 +117,14 @@ RUN wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-ENV JAVA_HOME=/usr/lib/jvm/temurin-25-jdk-amd64
+# The package lays the JDK down at /usr/lib/jvm/temurin-25-jdk-<arch>, where
+# <arch> is Docker's TARGETARCH (amd64 or arm64). Using it keeps JAVA_HOME
+# correct whether the image builds on an Intel runner or an Apple Silicon laptop.
+ARG TARGETARCH
+ENV JAVA_HOME=/usr/lib/jvm/temurin-25-jdk-${TARGETARCH}
 ```
 
-We install from the Adoptium APT repository rather than downloading a tarball. This way the JDK integrates properly with the system (alternatives, man pages) and gets security updates through `apt-get upgrade`.
+We install from the Adoptium APT repository rather than downloading a tarball. This way the JDK integrates properly with the system (alternatives, man pages) and gets security updates through `apt-get upgrade`. The `JAVA_HOME` path resolves through `TARGETARCH` rather than a hard-coded `amd64`, so the same Dockerfile builds correctly on arm64 -- which matters precisely because Apple Silicon is one of the reasons we reached for a container in the first place.
 
 ### Clojure CLI and tooling
 
@@ -168,6 +172,10 @@ The symlinks from `/usr/local/bin/` are important. `nvm` manages Node through sh
 
 The `playwright install --with-deps` line downloads browser binaries (Chromium, Firefox, WebKit) and their system dependencies. This is a large download, but doing it at build time means browser tests run instantly during development.
 
+### A note on pinning
+
+One honesty is owed here, because this chapter argues for reproducibility and these installs don't fully deliver it. The JDK comes from apt, Babashka and clj-kondo from their `master` install scripts, the Clojure CLI from `latest`, Node from `--lts`, and -- later in `compose.yml` -- Mailpit from an image `:latest` tag. Each pulls *a* current version rather than *a specific* one, so two builds months apart can drift. That is the single place this chapter relaxes the principle it spends its length defending, and it does so deliberately, to keep the listings short and the moving parts legible. To close the gap for an image you can rebuild bit-for-bit, pin every one: pass `--version` to the Babashka and clj-kondo install scripts, install the Clojure CLI and Node at named versions, and tag `axllent/mailpit` with a release instead of `:latest`. The rule is to pin; we are naming the spot where the example chooses brevity over it rather than letting you discover the drift yourself.
+
 ## devcontainer.json
 
 The `devcontainer.json` file tells VS Code how to build and connect to the development container:
@@ -181,7 +189,8 @@ The `devcontainer.json` file tells VS Code how to build and connect to the devel
   "customizations": {
     "vscode": {
       "extensions": [
-        "betterthantomorrow.calva"
+        "betterthantomorrow.calva",
+        "betterthantomorrow.joyride"
       ]
     }
   },
@@ -258,7 +267,7 @@ The certificate setup has three parts.
 This container runs once, creates the certificates in a shared Docker volume, and exits. The script is idempotent -- if the root CA key already exists, it skips everything:
 
 ```bash
-#!/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 HOSTS='myapp.lan mailpit.lan'
@@ -286,10 +295,16 @@ for CN in $HOSTS; do
         -subj "/C=NL/ST=Utrecht/L=Amersfoort/O=MyApp/OU=IT/CN=$CN" \
         -addext "subjectAltName = DNS:$CN"
 
+    # Build the SAN extension file without process substitution: this script
+    # runs under Alpine's /bin/ash (busybox), which does not support <(...).
+    ext="$CN/ext.cnf"
+    cat openssl.cnf > "$ext"
+    printf '\nDNS.1 = %s\n' "$CN" >> "$ext"
+
     openssl x509 -req -in "$CN/$CN.csr" \
         -CA rootCA.crt -CAkey rootCA.key -CAcreateserial \
         -out "$CN/$CN.crt" -days 500 -sha256 \
-        -extfile <(cat openssl.cnf <(printf "\nDNS.1 = $CN"))
+        -extfile "$ext"
 
     openssl verify -CAfile rootCA.crt -verify_hostname $CN "$CN/$CN.crt"
 done

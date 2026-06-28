@@ -2,7 +2,7 @@
 
 Lighthouse is Google's open-source tool for auditing web page quality across four categories: performance, accessibility, best practices, and SEO. Most teams run it manually, glance at the scores, and move on. The scores slowly degrade. Nobody notices until a customer complains about load times or a screen reader user cannot navigate the app.
 
-There is a better approach. Wire Lighthouse into your CI pipeline with hard score thresholds. Every commit gets audited. If any category drops below 100, the build fails. You fix the regression immediately, while the change is fresh, instead of hunting through weeks of commits later.
+There is a better approach. Wire Lighthouse into your CI pipeline with thresholds the build enforces. Every commit gets audited. Accessibility and best-practices are pinned at a hard 100; performance gets a 0.95 floor that absorbs measurement jitter without letting a real regression through (the reasoning is below). A regression trips the gate immediately, while the change is fresh, instead of hiding for weeks until someone happens to run an audit by hand.
 
 The challenge for a SaaS app is that most pages live behind authentication. Lighthouse cannot log in. You need a test server that automatically authenticates every request, seeds realistic data, and serves the same pages your real users see. This chapter shows how to build that in Clojure, configure Lighthouse CI, and hit perfect scores across the board.
 

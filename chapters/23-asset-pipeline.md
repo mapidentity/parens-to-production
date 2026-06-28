@@ -57,7 +57,7 @@ One thing this layout makes explicit: **development produces no hashed CSS.** De
 
 The cache-busting strategy is the same for every served file: embed a content hash in the filename. `styles.css` becomes `styles.2c7c3332.css`; `dispatcher.js` becomes `dispatcher.<hash>.js`. When the content changes, the hash changes, the filename changes, and browsers fetch the new version. When it does not change, the filename is stable and the browser uses its cache. Perfect invalidation with zero revalidation traffic.
 
-The hash is the first eight hex characters of the SHA-256 of the file's bytes. Eight characters give over four billion values -- collision-*resistant* rather than collision-*free*, strictly speaking: by the birthday bound a collision becomes likely only around tens of thousands of distinct files, and a deploy ships a few dozen, so the practical odds are negligible. (If you ever served that many hashed assets, widen the slice.) The helper is shared by both the build and the verifier so the two can never disagree about what "the hash" means.
+The hash is the first eight hex characters of the SHA-256 of the file's bytes. Eight characters give over four billion values -- collision-*resistant* rather than collision-*free*, strictly speaking: by the birthday bound a collision becomes likely only around sixty-five thousand distinct files (roughly the square root of 2³², the 32 bits those eight hex digits carry), and a deploy ships a few dozen, so the practical odds are negligible. (If you ever served that many hashed assets, widen the slice.) The helper is shared by both the build and the verifier so the two can never disagree about what "the hash" means.
 
 ```clojure
 (defn content-hash
@@ -244,6 +244,8 @@ Because the ESM modules are *not* bundled and keep their absolute import specifi
 ```
 
 The map remaps every `/js/*.js` identity URL to its hashed URL and, in production, carries an `integrity` block so the browser checks each resolved module's SRI. In development the imports are identity no-ops and there is no integrity block.
+
+One caveat, since the rest of this chapter is careful to name its limits: the import map's `integrity` key is a recent addition to the spec, and browser support for it is newer and less even than for the `integrity` attribute on a plain `<script>`. Where a browser honors it, the resolved modules are tamper-evident; where it does not, the modules still load -- the `imports` remapping itself is broadly supported -- but without that second check. So treat map-level integrity as defense in depth layered on top of the per-`<script>` SRI and the hash-based CSP, not as the sole guarantee, and confirm it against the browsers you actually target before leaning on it.
 
 The layout emits the map (before any module loads) and then the scripts. A small `script-tag` helper attaches the SRI `integrity` attribute whenever the manifest has one:
 
@@ -434,6 +436,9 @@ The policy is built in `assets.clj`. It is **hash-based, not nonce-based**: inst
 That choice is deliberate, and worth defending because both mechanisms are legitimate. A nonce must be unique per response, so a nonce-based policy is *regenerated on every request*; a hash-based one is a fixed set the app computes once at boot and caches for the life of the process (exactly what the `delay` below does in production). More than the performance, the hash policy *enumerates* its allowances -- it names the precise scripts that may run, and nothing else. A nonce is closer to a per-request wildcard: any inline script carrying it executes. That is the right tool when you *cannot* enumerate your scripts ahead of time -- third-party embeds, or a CMS that emits markup you do not control -- but we can enumerate ours exactly, so we take the stricter, static policy. The price is that introducing a brand-new inline script becomes a code change (it must be registered so its hash joins the policy) rather than a runtime act. For this app that is a feature: there is no path by which an inline script the build did not see can run.
 
 ```clojure
+(def ^:private csp-rest
+  "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+
 (defn- build-csp-header
   []
   (str "default-src 'none'; "
@@ -441,9 +446,6 @@ That choice is deliberate, and worth defending because both mechanisms are legit
        "connect-src 'self'" (if dev? " ws: wss:" "") "; "
        csp-rest
        "; report-uri /csp-report; report-to csp"))
-
-(def ^:private csp-rest
-  "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 ```
 
 Reading it directive by directive:

@@ -217,11 +217,11 @@ The `reformat` script applies zprint across the entire codebase:
 ```bash
 #!/usr/bin/env bash
 cd "$(dirname "$0")"
-find src dev test \( -name '*.clj' -o -name '*.cljc' -o -name '*.edn' \) ! -name 'rgs-data.edn' \
+find src dev test \( -name '*.clj' -o -name '*.cljc' -o -name '*.edn' \) \
   | xargs -P4 -I{} zprint '{:search-config? true}' -w {}
 ```
 
-The parentheses around the `-name` clauses matter: without them, `find`'s `-o` (OR) binds more loosely than the implicit AND, and the predicate matches a different set of files than you intend. The `! -name 'rgs-data.edn'` excludes one large generated data file that zprint would otherwise churn on. The `-P4` runs four parallel zprint processes. The `{:search-config? true}` tells each invocation to walk up the directory tree to find the `.zprintrc` file. The `-w` flag writes the formatted output back to the file in place.
+The parentheses around the `-name` clauses matter: without them, `find`'s `-o` (OR) binds more loosely than the implicit AND, and the predicate matches a different set of files than you intend. (If you ever keep a large generated `.edn` in these trees -- seed data, a fixture dump -- add a `! -name 'that-file.edn'` clause to skip it, since zprint would otherwise churn on it for no benefit.) The `-P4` runs four parallel zprint processes. The `{:search-config? true}` tells each invocation to walk up the directory tree to find the `.zprintrc` file. The `-w` flag writes the formatted output back to the file in place.
 
 (`zprint` is the one tool here that is not a Clojure dependency. The devcontainer from [the devcontainer chapter](03-devcontainer.md) installs its binary on the PATH; outside the container, grab the `zprint` release binary and put it on your PATH before running this script.)
 

@@ -188,6 +188,8 @@ With the conversion functions in place, we wrap Datomic's core API to apply them
 
 The naming convention -- `transact*`, `pull*`, `q*` -- signals that these are enhanced versions of the originals. The rest of the application uses these wrappers exclusively and never touches `java.util.Date`.
 
+One scoping note on `q*`: it assumes a *relation* result -- a set of tuples, the shape a `:find ?e ?email` query returns -- because that is what the application's reads ask for. A scalar find (`:find ?e .`) returns a bare value and a collection find (`:find [?e ...]`) a flat vector, neither of which is a set of tuples; those go straight through `d/q` rather than `q*` (you will see exactly that a few queries down, where a scalar lookup is written against `d/q` directly). The wrapper earns its place for the relation case the app overwhelmingly uses; reach past it for the other find shapes.
+
 Notice that `transact*` returns a future (just like `d/transact`). You deref it with `@` when you need to wait for the transaction to complete. The `(time/now)` it carries is the clock wrapper from [the previous chapter](07-time-clock.md) -- the single source of "now" whose output is the `java.time.Instant` the bridge below converts:
 
 ```clojure

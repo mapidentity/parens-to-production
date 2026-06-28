@@ -39,7 +39,7 @@ Forms are similar -- the dispatcher reads `action` and `method` straight off the
 
 ## The core primitive: fetchAndMorph
 
-Both the click and submit handlers funnel into one exported function, `fetchAndMorph`. It fetches, picks the fragment to apply, morphs, and updates history. The skeleton below shows the shape; the full `static/js/dispatcher.js` in the companion repo fills in the robustness details called out beneath it (in-flight de-duplication via `AbortController`, `formaction`/`formmethod` discovery, re-executing `<script>` tags the morph carried in), which are mechanical once the shape is clear:
+Both the click and submit handlers funnel into one exported function, `fetchAndMorph`. It fetches, picks the fragment to apply, morphs, and updates history. The skeleton below shows the shape; the full `static/js/dispatcher.js` in the companion repo fills in the robustness details called out beneath it (in-flight de-duplication via `AbortController`, `formaction`/`formmethod` discovery, history and `popstate` handling, moving focus to the new `<main>` so screen readers re-announce it), which are mechanical once the shape is clear:
 
 ```javascript
 export async function fetchAndMorph(url, opts = {}) {

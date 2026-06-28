@@ -411,7 +411,7 @@ A token signed with one key cannot be verified with a different key. This matter
   (is (nil? (auth/verify-token h/test-signing-key "abc.def.ghi"))))
 ```
 
-`nil`, empty string, no dot separator, too many dots -- all return `nil`. The `try/catch` in `verify-token` earns its keep here. No matter what garbage comes in, the function returns a clean `nil` rather than throwing.
+`nil`, an empty string, a token with no dot separator, and a token that is dot-shaped but whose signature half is malformed -- all return `nil`. (`"abc.def.ghi"` splits on the first dot into the payload `"abc"` and the signature `"def.ghi"`, which is not valid base64, so the decode throws.) The `try/catch` in `verify-token` earns its keep here. No matter what garbage comes in, the function returns a clean `nil` rather than throwing.
 
 ### User management tests
 

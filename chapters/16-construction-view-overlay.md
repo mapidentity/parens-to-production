@@ -1,6 +1,6 @@
 # The Construction-View Overlay: Projections and the In-Page Tool
 
-The [recording chapter](15-construction-view.md) made `GET /dev/__trace/:id` return a page's whole construction as JSON -- every frame, every Datomic read. That answers *how was this page built?* in the large. This chapter does two things. First it defines the **targeted projections** over that same recording: **flow mode**, which takes one rendered element and traces its value back to the query behind it, and the **dossier**, a set of drill-downs for a single frame (navigate a recorded value, ask "why is this section empty?", find the read that produced an entity, see the markup a component became, thread a value through every frame it touched). Then it builds the in-page tool that renders all of it -- `src/myapp/web/trace-overlay.js`. All of it is data you can `curl`, and we build the overlay the way you'd actually grow it: **get the call tree on screen first**, then make a selected frame open a rich details pane, then add an icicle overview, and finally layer on the projections (flow mode, the dossier), cross-region traces, and the polish. Each step is usable before the next exists.
+The [recording chapter](15-construction-view.md) made `GET /dev/__trace/:id` return a page's whole construction as JSON -- every frame, every Datomic read. That answers *how was this page built?* in the large. This chapter does two things. First it defines the **targeted projections** over that same recording: **flow mode**, which takes one rendered element and traces its value back to the query behind it, and the **dossier**, a set of drill-downs for a single frame (navigate a recorded value, ask "why is this section empty?", find the read that produced an entity, see the markup a component became, thread a value through every frame it touched). Then it builds the in-page tool that renders all of it -- `src/myapp/web/trace-overlay.js`. All of it is data you can `curl`, and we build the overlay the way you'd actually grow it: **get the call tree on screen first**, then make a selected frame open a rich details pane, then add an icicle (flame-graph) overview, and finally layer on the projections (flow mode, the dossier), cross-region traces, and the polish. Each step is usable before the next exists.
 
 ![A `recipe-card` frame selected: the page card highlights, and the details pane shows where it was called, the entity its data came from, the `d/q` and `d/pull` behind that entity, and a `db→map→hiccup` transforms badge.](images/construction-view-details.png)
 
@@ -178,14 +178,15 @@ function openSrc(src) {
 At this point the overlay is already useful: open the inspector, the panel shows the call tree, hovering a row boxes the element it produced (and hovering the page reveals its row), and clicking opens the source. The tree reads like the page being built:
 
 ```
-wrap-locale › … › recipes-index
-  recipe-show
-    recipe-by-id        ⛁ (d/entid …) → 17592186045442   ⛁ pull* (d/pull …) → {n=10} @t1031
-    forks               ⛁ (d/q '[:find [?c ...] …]) → [] @t1031
-    version-history     ⛁ (d/history db) → db   ⛁ (d/as-of db tx) → db   ⛁ (d/pull …) @t1031
-    recipe-detail
-      author-name → "Bob"   text-block → 3   app-layout › base-layout › …
+wrap-locale › … › recipe-show
+  recipe-by-id        ⛁ (d/entid …) → 17592186045442   ⛁ pull* (d/pull …) → {n=10} @t1031
+  forks               ⛁ (d/q '[:find [?c ...] …]) → [] @t1031
+  version-history     ⛁ (d/history db) → db   ⛁ (d/as-of db tx) → db   ⛁ (d/pull …) @t1031
+  recipe-detail
+    author-name → "Bob"   text-block → 3   app-layout › base-layout › …
 ```
+
+(This is the *detail* page -- the `recipe-show` handler for a single recipe; the index page, built from eight `recipe-card` frames, is the running example elsewhere in the chapter.)
 
 ## Step two: the details pane
 

@@ -1,4 +1,4 @@
-#!/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR=$(dirname "$0")
 
@@ -30,7 +30,12 @@ openssl req -new \
 -addext "subjectAltName = DNS:$CN"
 
 echo "Signing certificate with root CA for $CN"
-openssl x509 -req -in "$CN/$CN.csr" -CA rootCA.crt -CAkey rootCA.key -CAcreateserial -out "$CN/$CN.crt" -days 500 -sha256 -extfile <(cat "$SCRIPT_DIR/openssl.cnf" <(printf "\nDNS.1 = $CN"))
+# Build the SAN extension file without process substitution: this script runs
+# under Alpine's /bin/ash (busybox), which does not support <(...).
+ext="$CN/ext.cnf"
+cat "$SCRIPT_DIR/openssl.cnf" > "$ext"
+printf '\nDNS.1 = %s\n' "$CN" >> "$ext"
+openssl x509 -req -in "$CN/$CN.csr" -CA rootCA.crt -CAkey rootCA.key -CAcreateserial -out "$CN/$CN.crt" -days 500 -sha256 -extfile "$ext"
 
 echo "Check generated certificate"
 openssl verify -CAfile rootCA.crt -verify_hostname $CN "$CN/$CN.crt"

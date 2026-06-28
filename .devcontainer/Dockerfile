@@ -59,7 +59,10 @@ RUN wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public | gp
     temurin-25-jdk \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-ENV JAVA_HOME=/usr/lib/jvm/temurin-25-jdk-amd64
+# <arch> is Docker's TARGETARCH (amd64 or arm64); using it keeps JAVA_HOME
+# correct on Intel runners and Apple Silicon alike.
+ARG TARGETARCH
+ENV JAVA_HOME=/usr/lib/jvm/temurin-25-jdk-${TARGETARCH}
 
 # Install babashka
 RUN curl -s https://raw.githubusercontent.com/babashka/babashka/master/install | bash

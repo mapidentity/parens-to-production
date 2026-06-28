@@ -67,6 +67,8 @@ The `:json? true` metadata on the `/stats` route tells `wrap-admin` to return JS
 
 One design decision worth explaining: analytics data lives in a separate Datomic database from operational data. Same transactor, same underlying PostgreSQL storage -- zero new infrastructure. But logically separated so you can delete and recreate the analytics database without touching user data.
 
+One caveat rides on that disposability, and it is worth stating plainly because it couples a security invariant to a database we have just called throwaway: the magic-link nonces that make sign-in single-use (see [the email-flow chapter](20-auth-email-flow.md)) live in this same analytics database. Deleting and recreating it clears the nonce log -- harmless for nonces already consumed, but it resets replay protection for any magic link still outstanding at that instant, so a link minted just before the wipe could be replayed just after. In practice you drop analytics during a maintenance window, not mid-flight, so the exposure is small; the rule is simply to do it when no unexpired links are in the wild, rather than to treat this database as unconditionally safe to discard.
+
 ```clojure
 (ns myapp.analytics.db
   "Analytics database layer.

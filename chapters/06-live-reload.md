@@ -235,7 +235,7 @@ The send itself has a sharp edge worth handling carefully. http-kit's `send!` re
   (swap! websocket-clients disj channel))
 ```
 
-It returns the count of channels actually reached, which is handy for logging and, later, for callers that want to know whether anything was listening.
+It returns the count of channels actually reached, which is handy for logging and, later, for callers that want to know whether anything was listening. (These three are shown caller-first to follow the narrative; in the source file the helpers are defined before `notify-reload!`, so the namespace loads cleanly top to bottom.)
 
 For driving a reload by hand from the REPL, there is a plain trigger:
 

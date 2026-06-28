@@ -28,3 +28,5 @@
 - [The Production Asset Pipeline: Content Hashing, SRI, Import Maps, and CSP](23-asset-pipeline.md)
 - [100% Lighthouse Scores: Automated Performance Audits in CI](24-lighthouse.md)
 - [CI/CD for a Clojure SaaS: Forgejo Actions, Podman, and Automated Deployment](25-ci-cd.md)
+
+[Afterword: What You Built, and Where It Goes](afterword.md)

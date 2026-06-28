@@ -156,6 +156,8 @@ The happy path does four things: create a token (and its nonce), send the email,
 
 Recall from [Part 1](19-auth-tokens.md) that `create-magic-link-token` returns `{:token ... :nonce ...}`. The token goes in the email; the nonce we write to a small server-side store keyed by `:magic-link/nonce`, alongside the email and request time. (This store is the same lightweight event log the admin dashboard reads for analytics -- its schema is defined there; here we only need the nonce field.) When the user clicks the link, verification will look this record up and atomically flip it to "consumed." A second click finds it already consumed and is rejected.
 
+One ordering subtlety follows from doing the send before the record: a nonce write that failed *after* a successful send would leave the user holding a link whose nonce verification cannot find -- it would be rejected as if it had already been used. In practice the send and the record run in the same request against the same transactor and the window is vanishingly small; if you wanted to close it entirely, record the nonce first and send only once that write has committed, trading a slightly slower happy path for a guarantee that no link is ever in an inbox without its nonce already durable.
+
 ### Why Post-Redirect-Get matters
 
 Without PRG, refreshing the "check your email" page would resubmit the form and send another email. The browser would show a "resubmit form data?" dialog. With PRG:
