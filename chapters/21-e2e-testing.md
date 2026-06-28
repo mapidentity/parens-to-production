@@ -155,7 +155,11 @@ The app handler is assembled the same way as production, but using the extended 
                       :cookie-attrs {:http-only true
                                      :same-site :lax}}]
                     [routes/wrap-locale]
-                    [routes/wrap-no-cache-authenticated]]})))
+                    [routes/wrap-no-cache-authenticated]
+                    ;; The strict CSP is part of what production serves, so the
+                    ;; e2e stack must exercise it too — otherwise the tests pass
+                    ;; under a policy real users never get.
+                    [routes/wrap-csp]]})))
 ```
 
 The middleware stack is real. The session handling is real. The cookie store is real (just with a deterministic key). This is important: the E2E server must exercise the same middleware chain as production, or you are not testing what you think you are testing. The only differences should be external integrations (email, databases) and the addition of test control endpoints.
