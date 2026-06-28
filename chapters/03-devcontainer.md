@@ -104,7 +104,7 @@ A handful of these earn their place for reasons that recur later in the book: `r
 
 ### Java (Eclipse Temurin)
 
-Clojure runs on the JVM, so we need a JDK. Eclipse Temurin is the community-driven successor to AdoptOpenJDK and provides production-quality builds:
+Clojure runs on the JVM, so we need a JDK. Eclipse Temurin is the continuation of AdoptOpenJDK under the Eclipse Foundation (renamed in 2021) and provides production-quality builds:
 
 ```dockerfile
 RUN wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public \

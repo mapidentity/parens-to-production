@@ -158,22 +158,7 @@ When any hits are found, it throws an `ex-info` with the warnings attached as da
 
 ### The uberjar pipeline
 
-```clojure
-(defn uber
-  [_]
-  (clean nil)
-  (b/copy-dir
-    {:src-dirs ["src" "resources"]
-     :target-dir class-dir})
-  (compile-strict nil)
-  (b/uber
-    {:class-dir class-dir
-     :uber-file uber-file
-     :basis @basis
-     :main 'myapp.core}))
-```
-
-The uberjar build is four steps: clean, copy sources and resources, compile strictly, then package. The strict compilation is not an optional lint step -- it is part of the build pipeline. You cannot produce a jar without passing the check. This is the key design decision. Making it part of the artifact build means it can never be skipped or forgotten.
+Look back at `uber` in the full listing above: clean, copy sources and resources, compile strictly, then package. The strict compilation is not an optional lint step -- it is part of the build pipeline. You cannot produce a jar without passing the check. This is the key design decision. Making it part of the artifact build means it can never be skipped or forgotten.
 
 Run it with:
 

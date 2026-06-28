@@ -53,7 +53,11 @@ RUN wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public \
     && apt-get install -y --no-install-recommends temurin-25-jdk \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-ENV JAVA_HOME=/usr/lib/jvm/temurin-25-jdk-amd64   # arm64 runners: the path ends in -arm64, not -amd64
+# TARGETARCH is amd64 or arm64; threading it through keeps JAVA_HOME correct on
+# Intel runners and Apple Silicon alike. It goes through a build arg rather than
+# an inline comment because Docker folds a trailing `#` into the ENV value.
+ARG TARGETARCH
+ENV JAVA_HOME=/usr/lib/jvm/temurin-25-jdk-${TARGETARCH}
 
 # Install Clojure CLI
 RUN curl -L -O https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh \

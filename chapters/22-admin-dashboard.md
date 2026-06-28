@@ -2,7 +2,7 @@
 
 An admin dashboard is a tempting target. It reads across every user, exposes operational internals, and -- unlike the rest of the app -- has no legitimate audience but you. So the load-bearing question is not "what does it show" but "who is allowed to see it, and what happens to everyone else." Get the authorization wrong and you have built a single page that leaks the whole tenancy.
 
-This chapter sits in the book's hardening arc, and its real subject is that gate: a `wrap-admin` middleware that restricts the route group to one admin email, the JSON-vs-HTML decision that keeps an expired session from being mis-parsed as data, and the case-insensitive comparison that keeps the gate from locking out the one person it exists to admit. The dashboard it protects -- Datomic queries across two databases, a stat grid, live polling -- is conventional once the gate is right. There is a small presentational nicety at the end (CSS-animated counters) that is polish, not hardening, and is flagged as such.
+This chapter sits in the book's hardening arc, and its real subject is that gate: a `wrap-admin` middleware that restricts the route group to one admin email, the JSON-vs-HTML decision that keeps an expired session from being mis-parsed as data, and the case-insensitive comparison that keeps the gate from locking out the one person it exists to admit. The dashboard it protects -- Datomic queries across two databases, a stat grid, live polling -- is conventional once the gate is right. The chapter closes with a small presentational nicety (CSS-animated counters) that a security-minded reader can skip.
 
 ## The access control layer
 
@@ -276,7 +276,7 @@ The funnel query spans both databases:
      :terms-accepted terms-accepted}))
 ```
 
-Three counts, two databases: links sent and verified from the analytics database, terms accepted from the operational one. Together they trace the full funnel -- requested, clicked, accepted. (Note again that this last count, not `total-users`, is the one that means "completed signup.")
+Three counts, two databases: links sent and verified from the analytics database, terms accepted from the operational one. Together they trace the full funnel -- requested, clicked, accepted -- and `terms-accepted`, not `total-users`, is the count that means "completed signup."
 
 ### The polling endpoint
 
