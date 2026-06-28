@@ -17,6 +17,17 @@ It reuses two things from [the live-reload chapter](06-live-reload.md) -- the fi
 
 ## Part I -- element → code
 
+Part I is a pipeline of several pieces, and it helps to hold the whole shape before the parts arrive. After two sections of groundwork -- *why* Hiccup makes this hard, and the `tools.reader` insight that makes it possible -- we build, in order:
+
+1. **a recognizer** -- spot a Hiccup element and stamp its source file onto it;
+2. **a loader and component layer** -- read view namespaces so every form keeps its line numbers, and wrap each view function;
+3. **call-site tagging** -- so two calls to the same component can be told apart;
+4. **the render boundary** -- turn the accumulated metadata into real HTML attributes as the page serializes;
+5. **the browser overlay** -- hover-to-box and click-to-open, in the page;
+6. **the editor bridge** -- the other end of that click, opening the exact file and line.
+
+Each gets its own section below; if a later one starts to feel unmoored, this is the map back.
+
 ### Why this is hard for Hiccup specifically
 
 Svelte and JSX get element-level source locations for free because a *compiler* owns the template. It parses the template into an AST where every node knows its character offset, and in dev mode it emits that position on the element. The framework hands itself the answer.

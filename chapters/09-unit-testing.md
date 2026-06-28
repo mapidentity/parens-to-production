@@ -174,7 +174,7 @@ The config tests verify that the configuration system works correctly -- loading
 These tests are straightforward, but they catch real problems:
 
 - `dev-profile-loads` ensures all required config keys exist. If someone removes `:smtp` from `config.edn`, this fails immediately.
-- `session-key-is-16-bytes` verifies the crypto key size constraint. Ring session encryption requires exactly 16 bytes. A 15-byte key would cause a cryptic runtime error.
+- `session-key-is-16-bytes` verifies the crypto key size constraint. Ring's default cookie store encrypts with AES-128, which needs a 16-byte key; a 15-byte key would cause a cryptic runtime error.
 - `get-config-nested-path` and `get-config-missing-key` verify the `get-config` accessor works for both present and absent keys. Note how these tests use `with-redefs` directly to set up minimal config -- they do not need the full test fixtures.
 
 ## Example test: routes

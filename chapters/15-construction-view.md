@@ -426,6 +426,36 @@ Three tricks earn their place:
 
 The exception case rides along: the innermost `:fn-unwind` is the throw origin, and its `:coord` pins the throwing expression onto the nearest kept frame, surfaced as `:threw`. The body of the `let` then runs `->span` over every kept index -- attaching args, return, source coordinates, instance rank, db-ops, a `value-morph` (a from→to summary of the primary data arg, with a key-diff when both ends are maps), and the lazy/throw flags -- and assembles the two child maps and two root lists into the final `{:roots :roots-rt :spans}`.
 
+It is worth seeing the output shape concretely, because the next chapter's overlay keys off these field names directly. The top level is two root lists and a span map; one span -- say, the second rendered `recipe-card` -- looks like this:
+
+```clojure
+{:roots    ["3"]   ; root ids in the lexical (re-parented) tree
+ :roots-rt ["3"]   ; root ids in the temporal (where-it-ran) tree
+ :spans
+ {"17" {:id          "17"
+        :name        "myapp.web.views/recipe-card"
+        :ns          "myapp.web.views"
+        :fn          "recipe-card"
+        :short       "recipe-card"
+        :args        [{:kind "map" :type "PersistentArrayMap" ,,,}] ; summarized, never the live value
+        :ret         {:kind "el" :tag "article" ,,,}
+        :children    ["18" "19"]   ; lexical child ids
+        :children-rt ["18" "19"]   ; temporal child ids
+        ;; ...and these keys only when they apply:
+        :src         {:file "myapp/web/views.clj" :line 142 ,,,} ; the defn (home)
+        :call-src    {:file "myapp/web/views.clj" :line 88 ,,,}  ; the call site
+        :call-form   "(recipe-card r)"
+        :instance    1            ; k-th rendered instance (0-based) → k-th matching DOM node
+        :db-ops      ["d/pull ..."]
+        :morph       {:from ,,, :to ,,,}  ; present only when a data arg is transformed
+        :lazy        true               ; realized under the serializer, so re-parented...
+        :realized-by "base-layout"      ; ...and this names where it actually ran
+        :realized-by-id "2"
+        :threw       {:type ,,, :msg ,,, :form ,,, :at ,,,}}}} ; only on the throw origin
+```
+
+Every conditional key above (`:instance`, `:morph`, `:lazy`, `:threw`, the two `:children` lists) is a flag the overlay reads to decide what to draw; keep this shape in mind for the next chapter, where each becomes a projection.
+
 ## N+1 detection, for free
 
 We already have every db-op keyed to its form. A query form that ran two or more times in one request is the classic N+1 signal -- a query inside a `for`, or a redundant lookup across the middleware chain. `detect-repeats` is a pure projection over the spans we just built:
