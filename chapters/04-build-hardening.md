@@ -6,6 +6,8 @@ There is a better way. If you wire up strict compilation from the very first com
 
 The build-hardening setup is three tools: `tools.build` with fail-on-warnings, zprint for consistent formatting, and clj-kondo for static analysis. Together they make the build refuse to produce an artifact with performance problems baked in, and keep the codebase formatted and linted with minimal effort.
 
+You could enforce these checks elsewhere. Leiningen has long flipped `*warn-on-reflection*` from `project.clj`, and many teams park linting in a CI job that fails the pull request rather than the local build. Both work, and both also let a warning sit in the tree for hours -- through a push, a review cycle, a coffee -- before anyone is told. We wire the gate into `tools.build` itself, so the artifact simply will not build with a reflection or boxed-math warning in it, and the feedback lands at the moment of compilation on the machine that introduced the problem. The cost is a build that is stricter than some contributors will expect on their first commit; given the alternative is three hundred warnings discovered in a profiler, that is the trade we want.
+
 ## The `:build` alias
 
 Everything starts in `deps.edn`. You only need one extra alias:

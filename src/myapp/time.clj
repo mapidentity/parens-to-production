@@ -7,9 +7,12 @@
   deterministic testing possible — pin the clock with `with-clock`
   and every downstream `now`/`today` call returns the pinned value.
 
-  A clj-kondo `:discouraged-var` rule (`.clj-kondo/config.edn`) flags
-  the JDK now-functions so the lint catches new bypasses. The wrappers
-  below are the only place those calls are allowed.
+  The `./lint` script greps the source for raw JDK now-calls
+  (`Instant/now`, `LocalDate/now`, `System/currentTimeMillis`, and the
+  rest) and fails the build if one appears outside this namespace —
+  clj-kondo's `:discouraged-var` can't see Java statics, so a grep pass
+  is what enforces it. The wrappers below are the only place those
+  calls are allowed.
 
   See CLAUDE.md § 'Time'."
   (:import

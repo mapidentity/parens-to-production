@@ -462,6 +462,6 @@ Call it with a new email, get a new user. Call it with an existing email, get th
 
 ## Where this leaves us
 
-The chapter has produced a self-contained token primitive, and its size is the point: about 60 lines of Clojure with zero external dependencies beyond `clojure.data.json` and Datomic, the crypto coming entirely from the JDK. That is the payoff of declining the JWT spec's generality -- a format simple enough to explain in one sentence and audit in five minutes, with a test suite weighted, as argued above, toward rejection rather than the happy path.
+The chapter has produced a self-contained token primitive, and its size is the point: about 60 lines of Clojure in all -- the signing-and-verification pair from the start of the chapter is fewer than 40 of them -- with zero external dependencies beyond `clojure.data.json` and Datomic, the crypto coming entirely from the JDK. That is the payoff of declining the JWT spec's generality -- a format simple enough to explain in one sentence and audit in five minutes, with a test suite weighted, as argued above, toward rejection rather than the happy path.
 
 What it does not yet have is everything that makes it a *login*: HTTP routes, email sending, sessions, the server-side recording and one-shot consumption of the nonce, and the flow that ties them together. That is [Part 2](20-auth-email-flow.md).

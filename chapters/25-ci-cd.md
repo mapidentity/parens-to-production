@@ -10,6 +10,8 @@ This final chapter wires everything into a single automated pipeline. Push to ma
 
 Forgejo is a self-hosted Git forge (a fork of Gitea) that includes a built-in CI/CD system called Forgejo Actions. The workflow syntax is compatible with GitHub Actions, which means you get the benefit of a familiar YAML-based pipeline definition without depending on GitHub's infrastructure. For a self-hosted SaaS where you already run your own Git server, this is a natural fit. No external CI service to pay for, no secrets leaving your network, and the CI runner lives on the same infrastructure as everything else.
 
+The cost is worth naming, because it is real. A host runner you own is one more machine to patch, secure, and keep online, and you forgo the elastic, zero-maintenance capacity that a hosted service like GitHub Actions gives you for nothing. The trade pays off precisely when you *already* self-host the forge -- the runner is then marginal infrastructure rather than new infrastructure. If you do not, hosted CI is the lower-effort answer, and the workflow below ports to it almost unchanged, since the syntax is shared.
+
 The key difference from GitHub Actions is the runner model. Instead of ephemeral VMs, Forgejo Actions can run directly on the host machine. We use `runs-on: host` because our pipeline runs each step inside a Podman container anyway -- the host is just the orchestrator. This gives us full control over caching, networking, and the container runtime.
 
 ## The CI container image
@@ -51,7 +53,7 @@ RUN wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public \
     && apt-get install -y --no-install-recommends temurin-25-jdk \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-ENV JAVA_HOME=/usr/lib/jvm/temurin-25-jdk-amd64
+ENV JAVA_HOME=/usr/lib/jvm/temurin-25-jdk-amd64   # arm64 runners: the path ends in -arm64, not -amd64
 
 # Install Clojure CLI
 RUN curl -L -O https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh \
@@ -304,6 +306,8 @@ Every containerized step uses `podman run` instead of `docker run`. Podman is a 
 2. **Rootless capable.** Podman can run containers without root privileges, though in our CI setup we run as root for simplicity.
 3. **CLI-compatible with Docker.** The command-line interface is nearly identical, so if you already know Docker, you know Podman.
 
+Docker would work here too, and the honest cost of choosing Podman is the smaller ecosystem and the occasional rootless-networking quirk you have to look up. What we buy for that is the absence of a daemon and of mandatory root -- the better fit for a single self-hosted runner. A team already standardized on Docker tooling would reasonably keep it; the pipeline does not depend on the choice.
+
 The pattern for every CI step is the same:
 
 ```yaml
@@ -475,6 +479,27 @@ The deployment itself is straightforward:
 1. **Static files** are copied via `scp` from `myapp/static/` -- the *built* tree that `clojure -T:build assets` produced and `verify-assets` just signed off on -- to the directory the reverse proxy serves. That tree contains the content-hashed stylesheet and ESM modules, the version-pinned `idiomorph-0.7.4.min.js` (and its sourcemap), the passed-through fonts and SVGs, and `asset-manifest.edn`. The manifest must travel with the assets: the running application reads it at boot to map each logical asset name to its hashed URL and SRI token, so deploying the hashed files without the manifest would leave the app unable to resolve them.
 
 2. **The uberjar** is copied to `/tmp/` on the server, then a deploy script moves it into place and restarts the application. The deploy script handles the atomic swap: stop the running process, move the new JAR into position, start the new process. This keeps downtime to a few seconds.
+
+That script (`/etc/scripts/deploy-myapp.sh`) is the single highest-stakes line in the whole pipeline -- the one that actually touches production -- so it is worth seeing rather than describing. It is not in the companion repository, which deploys this book rather than the app, but here is the shape it takes, made concrete:
+
+```bash
+#!/usr/bin/env bash
+# /etc/scripts/deploy-myapp.sh — run on the app server, handed the freshly-uploaded jar.
+set -euo pipefail
+
+new_jar="$1"
+target=/opt/myapp/myapp.jar
+
+# Refuse a missing or truncated upload before we stop anything.
+[ -s "$new_jar" ] || { echo "no jar at $new_jar" >&2; exit 1; }
+
+systemctl stop myapp                  # stop the running process
+mv -f "$new_jar" "$target"            # same filesystem → mv is an atomic rename
+systemctl start myapp                 # start the new process
+systemctl is-active --quiet myapp     # non-zero exit if it failed to come up
+```
+
+It is deliberately small: the `systemd` unit owns restart-on-failure, logging, and the JVM flags, so the script's only job is the swap. Because `/tmp` and `/opt/myapp` sit on the same filesystem, the `mv` is an atomic rename rather than a copy, and the closing `systemctl is-active` turns a JAR that boots and immediately dies into a *failed deploy* the pipeline reports, rather than a silent outage. The `deploy` user is granted exactly two `sudo` rights -- stop and start this one unit -- and nothing else.
 
 Static assets are served by Caddy, not by the JVM. In the companion repository's Caddyfile, the proxy applies `Cache-Control: public, max-age=31536000, immutable` to any content-hashed filename (the `\.([a-f0-9]{8})\.(css|js)$` pattern) and to the version-pinned `idiomorph-*.min.js`, and it sets the long-lived security headers (HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, and the `Cross-Origin-Opener-Policy`/`Cross-Origin-Resource-Policy` isolation pair). It deliberately does **not** set a Content-Security-Policy: the per-document CSP carries the SHA-256 hashes of the application's inline scripts and import map, so the *application* must own it. This is why immutable caching and asset integrity are two sides of one coin -- once a hashed file is out, browsers may cache it for a year, so `verify-assets` is the last chance to catch a hash that does not match its bytes.
 

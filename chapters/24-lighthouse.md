@@ -252,6 +252,8 @@ The performance audit docks you on "Ensure text remains visible during webfont l
 
 With `swap`, the browser immediately renders text in a fallback font, then swaps in the custom font when it finishes loading. Users see content instantly. Lighthouse gives you full marks on the "Ensure text remains visible during webfont load" audit.
 
+`swap` is the right default here, but it is a choice with a cost worth naming. Its swap period is unlimited, so a slow font load shows the fallback for a while and then *swaps* -- and if the fallback and the final font have different metrics, that swap is a late layout shift that can *hurt* the CLS score this same performance audit rewards. The stricter alternative, `font-display: optional`, gives the font one brief window to arrive and otherwise keeps the fallback for the life of the page: zero layout shift, at the price of sometimes not showing your font at all on a slow connection. We take `swap` because the fallback stack is metric-close and the brand font is worth showing; a page whose score lives or dies on CLS would reasonably choose `optional`. That is the actual decision behind the one-line fix.
+
 Using a variable font (the `VF` in `GeistVF.woff2`) also helps performance. Instead of loading separate files for each weight (regular, bold, semibold), a single variable font file covers the entire `100 900` weight range. Fewer network requests, smaller total download.
 
 ### Semantic HTML
