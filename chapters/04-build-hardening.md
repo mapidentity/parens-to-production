@@ -128,6 +128,8 @@ The hint goes on the argument (or on a `let` binding, or as a `^Type` tag in fro
 
 **`*unchecked-math* :warn-on-boxed`** warns when a math operation forces boxing of primitive values. Boxing means wrapping a primitive `long` or `double` into a `Long` or `Double` object, which means heap allocation on what should be a register operation. In hot loops this is death by a thousand cuts.
 
+These two are the strictness bindings. The repo's `compile-clj` passes one more -- `#'clojure.test/*load-tests* false` -- which has nothing to do with strictness: it strips in-file `deftest` forms out of the compiled artifact so tests never ride into production. We reach for it when the testing strategy needs it, so it is introduced in [the testing chapter](09-unit-testing.md); it lives in the same `:bindings` map only because that is where `compile-clj` takes them.
+
 ### Why `compile-clj` needs `:err :capture`
 
 Here is a subtlety: `b/compile-clj` runs compilation in a subprocess. The warnings go to stderr of that subprocess. By default they scroll past and disappear. The `:err :capture` option collects them into a string so we can inspect them programmatically.

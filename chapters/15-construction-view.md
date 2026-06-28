@@ -450,7 +450,7 @@ It is worth seeing the output shape concretely, because the next chapter's overl
         :fn          "recipe-card"
         :short       "recipe-card"
         :args        [{:kind "map" :type "PersistentArrayMap" ,,,}] ; summarized, never the live value
-        :ret         {:kind "el" :tag "article" ,,,}
+        :ret         {:kind "hiccup" :tag "article" ,,,}
         :children    ["18" "19"]   ; lexical child ids
         :children-rt ["18" "19"]   ; temporal child ids
         ;; ...and these keys only when they apply:

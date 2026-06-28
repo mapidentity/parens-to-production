@@ -65,7 +65,11 @@
                      {:store session-store
                       :cookie-attrs {:http-only true
                                      :same-site :lax}}]
-                    [wrap-auto-auth] [routes/wrap-locale]]})))
+                    [wrap-auto-auth] [routes/wrap-locale]
+                    ;; Audit the page production actually ships, CSP header and
+                    ;; all — the Lighthouse run would otherwise score a policy
+                    ;; the real app never serves.
+                    [routes/wrap-csp]]})))
 
 (defn start!
   "Start a Lighthouse audit server.

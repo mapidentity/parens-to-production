@@ -17,7 +17,8 @@
   (is (= "Sign in" (i18n/t :fr :home/sign-in))))
 
 (deftest t-falls-back-to-key-name-for-missing-key
-  (is (= "nonexistent" (i18n/t :en :home/nonexistent))))
+  ;; :nl exercises the whole chain: nl miss -> en (default) miss -> key name.
+  (is (= "nonexistent" (i18n/t :nl :home/nonexistent))))
 
 (deftest both-locales-have-same-keys
   (let [nl-keys (set (keys myapp.i18n.nl/translations))

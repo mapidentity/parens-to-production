@@ -80,14 +80,14 @@ Next, base64 encoding and decoding:
 ```clojure
 (defn base64-encode
   "Base64 URL-safe encode."
-  [^bytes data]
+  ^String [^bytes data]
   (-> (Base64/getUrlEncoder)
       (.withoutPadding)
       (.encodeToString data)))
 
 (defn base64-decode
   "Base64 URL-safe decode."
-  [^String data]
+  ^bytes [^String data]
   (-> (Base64/getUrlDecoder)
       (.decode data)))
 ```

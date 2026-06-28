@@ -100,7 +100,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 ```
 
-A few highlights: `ripgrep` and `fd-find` make searching large codebases fast. `inotify-tools` is needed for file-watching (hot reload). `libnss3-tools` provides `certutil`, which we will use later to import our development CA into Chromium's certificate store. `rlwrap` gives readline support to the Clojure REPL.
+A handful of these earn their place for reasons that recur later in the book: `ripgrep` and `fd-find` make searching a large codebase fast, `inotify-tools` backs the file-watching the live-reload chapter depends on, `libnss3-tools` provides the `certutil` that imports our development CA into Chromium's certificate store, and `rlwrap` gives the Clojure REPL readline support. The rest are the ordinary comforts of a shell you have to live in -- the kind you only miss when they are absent at the wrong moment.
 
 ### Java (Eclipse Temurin)
 
@@ -246,7 +246,7 @@ The container joins two networks: `default` (for inter-service communication) an
 
 ### TLS certificate generation
 
-Local HTTPS matters. If your development environment uses plain HTTP while production uses HTTPS, you will hit bugs related to secure cookies, CORS, mixed content, and redirect behavior that only appear after deployment. Better to catch them during development.
+Local HTTPS is not a nicety here; it is what keeps a whole class of bugs from hiding until deploy. An environment that runs plain HTTP under a production that runs HTTPS defers every secure-cookie, CORS, mixed-content, and redirect-behavior bug to the one place they are most expensive to find -- after the thing has shipped. Running real TLS locally moves those failures onto the machine where you can still see them.
 
 The certificate setup has three parts.
 
@@ -499,29 +499,8 @@ From there, you start your Clojure application (typically `clojure -M:dev` or ho
 
 This is the core of Clojure development: a live, running application that you modify interactively through your editor.
 
-## Putting it all together
+## What you have, and what it buys
 
-Here is what happens when you open the project for the first time:
+What all of this purchases is a single answer to the question every contributor otherwise answers differently: *what does it take to run this?* Open the project and the pieces assemble in order on their own -- the `certificates` container mints the CA and per-host certificates and exits, the app container trusts them and waits, Caddy picks them up and serves HTTPS on `myapp.lan` and `mailpit.lan`, Mailpit comes up on SMTP, and VS Code attaches with Calva connected to the running REPL. None of it is a sequence you have to remember, because all of it is defined in files checked into the repository. The next time you -- or anyone else -- open the project, the environment is identical down to the JDK, the Node version, the certificates, and the proxy.
 
-1. VS Code reads `.devcontainer/devcontainer.json`
-2. Docker Compose builds and starts all services
-3. The `certificates` init container generates a root CA and per-host TLS certificates, then exits
-4. The app container starts, runs `importcerts.sh` to trust the CA, and waits
-5. Caddy picks up the certificates and begins serving HTTPS on `myapp.lan` and `mailpit.lan`
-6. Mailpit starts accepting SMTP on port 1025
-7. VS Code attaches to the app container and installs Calva
-
-From this point, you start your Clojure application and begin developing. The environment provides:
-
-- **`https://myapp.lan`** -- your application, served through Caddy with TLS, static file serving, and compression
-- **`https://mailpit.lan`** -- the Mailpit web UI, showing every email your application sends
-- **A fully configured JDK, Clojure CLI, and Node.js** -- ready for application development, CSS builds, and browser testing
-- **Calva in VS Code** -- connected to your running application's REPL for interactive development
-
-And because all of this is defined in files checked into your repository, the next time you (or anyone else) opens the project, you get exactly the same environment: the same JDK, the same Node, the same certificates, the same proxy. No setup guide to follow, no "which version of Java do I need?", no "I can't get the certificates to work" -- the questions a setup script leaves open, the definition answers.
-
-## What comes next
-
-This chapter covered the development environment -- the foundation everything else builds on. The chapters that follow build on this foundation: setting up Datomic, structuring the Clojure application, implementing authentication, and deploying to production.
-
-But for now, you have the foundation everything else rests on: a reproducible development environment that mirrors production from the first commit, so the bugs that only surface under HTTPS, real TLS, and a reverse proxy surface here, on your machine, rather than after deployment.
+That is the gap a setup script never closes. "Which version of Java do I need?", "I can't get the certificates to work" -- the questions a README leaves to the reader, the definition answers in advance. And because it mirrors production from the first commit, the bugs that only surface under HTTPS, real TLS, and a reverse proxy surface here, on your machine, rather than after deployment. That is the foundation the rest of the book rests on: Datomic, the application's structure, authentication, the asset pipeline, and the deploy are each built on an environment that already looks like the one it will ship into.

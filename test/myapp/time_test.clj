@@ -21,6 +21,11 @@
         (< (Math/abs (- (.toEpochMilli t1) (.toEpochMilli wallclock))) 1000)
         "Wrapper agrees with wallclock to within a second"))))
 
+(deftest now-is-pinnable
+  (let [t (Instant/parse "2025-06-15T12:00:00Z")]
+    (time/with-clock (time/fixed-clock t)
+      (is (= t (time/now))))))
+
 (deftest with-clock-pins-time-test
   (testing "with-clock pins now and today to the fixture"
     (let [pinned (Instant/parse "2026-04-15T10:30:00Z")]

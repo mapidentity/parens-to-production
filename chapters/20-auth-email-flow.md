@@ -7,7 +7,7 @@ In the [previous chapter](19-auth-tokens.md), we built the cryptographic foundat
 Six steps make up the round trip, and it is worth holding them in view before the code arrives one handler at a time:
 
 1. User enters their email and submits the login form
-2. Server generates a signed token with a nonce, records the nonce, and sends an email containing the magic link
+2. Server generates a signed token with a nonce, sends an email containing the magic link, and records the nonce
 3. User clicks the link in their email
 4. Server verifies the token, consumes the nonce (one-shot), creates the user if needed, and sets a session cookie
 5. Server checks whether the user has accepted terms of service

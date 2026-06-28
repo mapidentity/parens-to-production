@@ -91,7 +91,11 @@
                       :cookie-attrs {:http-only true
                                      :same-site :lax}}]
                     [routes/wrap-locale]
-                    [routes/wrap-no-cache-authenticated]]})))
+                    [routes/wrap-no-cache-authenticated]
+                    ;; The strict CSP is part of what production serves, so the
+                    ;; e2e stack must exercise it too — otherwise the tests pass
+                    ;; under a policy real users never get.
+                    [routes/wrap-csp]]})))
 
 (defn start!
   "Start the e2e test server.

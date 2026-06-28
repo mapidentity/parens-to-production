@@ -51,11 +51,7 @@ Clojure projects use `deps.edn` to declare dependencies and paths. Here is the r
                      "--middleware" "[cider.nrepl/cider-middleware]"]}}}
 ```
 
-A few things to notice:
-
-- **`:paths`** tells Clojure where to find source code (`src`) and resources like config files (`resources`).
-- **`:deps`** lists your runtime dependencies with explicit Maven versions. No lock files, no version ranges. You pin exactly what you want.
-- **`:aliases`** define optional configurations. The `:dev` alias adds a `dev` directory to the classpath and pulls in development-only dependencies like nREPL and `tools.namespace`. The `:repl` alias configures nREPL to start on port 7888 with CIDER middleware for editor integration.
+Three keys carry this file. `:paths` tells Clojure where to find source code (`src`) and resources like config files (`resources`). `:deps` lists runtime dependencies at explicit Maven versions -- no lock files, no version ranges, you pin exactly what you want. And `:aliases` define optional configurations layered on top: the `:dev` alias puts the `dev` directory on the classpath and pulls in development-only dependencies like nREPL and `tools.namespace`, while `:repl` starts nREPL on port 7888 with CIDER middleware for editor integration.
 
 To start a REPL with both aliases active:
 
@@ -114,7 +110,7 @@ Before we write routes, we need configuration. Aero reads an EDN file and suppor
                      :prod "https://myapp.example.com"}
 
  :smtp {:host #profile {:dev "mailpit" :prod "localhost"}
-        :port #profile {:dev 1025 :prod 25}
+        :port #profile {:dev 1025 :prod 587}
         :from "noreply@myapp.example.com"}
 
  :session-key #env "SESSION_KEY"
@@ -402,14 +398,7 @@ The `dev/user.clj` file is automatically loaded when you start a REPL with the `
   (core/restart-server!))
 ```
 
-The workflow looks like this:
-
-1. Start your REPL: `clj -M:dev:repl`
-2. In the REPL (or from your editor): `(start!)`
-3. The server starts on port 3000
-4. Edit code in your editor, save the file
-5. Evaluate the changed namespace (your editor sends it to the REPL)
-6. Changes take effect immediately -- no restart needed, thanks to the var reference
+The loop this enables is the whole point. Start the REPL once with `clj -M:dev:repl`, call `(start!)`, and the server comes up on port 3000; from then on you edit a file, evaluate the changed namespace from your editor, and the change is live on the very next request -- no restart, because the server holds a var reference rather than a captured value.
 
 This is profoundly different from the edit-compile-restart cycle. You keep the server running, keep your application state, and see changes in milliseconds. Need to test a handler? Call it directly in the REPL with a fake request map:
 
