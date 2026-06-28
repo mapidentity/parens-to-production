@@ -33,7 +33,6 @@ RUN apt-get update && apt-get install -y \
     jq \
     locales \
     libnss3-tools \
-    locales bash-completion \
     lsb-release \
     netcat-openbsd \
     nethogs \
@@ -58,7 +57,6 @@ RUN wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public | gp
     && apt-get update \
     && apt-get install -y --no-install-recommends \
     temurin-25-jdk \
-    rlwrap \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 ENV JAVA_HOME=/usr/lib/jvm/temurin-25-jdk-amd64

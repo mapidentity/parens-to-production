@@ -11,6 +11,7 @@ Admin routes need to be locked down -- not "requires authentication" but "requir
 ```clojure
 (ns myapp.web.routes
   (:require
+    [clojure.string :as str]
     [myapp.config :as config]
     [myapp.web.handler :as handler]
     [ring.util.response :as response]))
@@ -38,7 +39,7 @@ Admin routes need to be locked down -- not "requires authentication" but "requir
         :else (handler request)))))
 ```
 
-The comparison is **case-insensitive**, and that is a deliberate hardening choice, not a stylistic one. A naive `(= user-email admin-email)` is the kind of check that passes every test and then locks you out in production the first time a session carries `Admin@example.com` while config holds `admin@example.com`. Email local parts are case-insensitive in practice for every provider you will meet, so the only correct behavior is to fold both sides to lower case before comparing -- otherwise the gate is one stray capital letter away from excluding the one person it exists to admit. (This needs `[clojure.string :as str]` in the namespace.)
+The comparison is **case-insensitive**, and that is a deliberate hardening choice, not a stylistic one. A naive `(= user-email admin-email)` is the kind of check that passes every test and then locks you out in production the first time a session carries `Admin@example.com` while config holds `admin@example.com`. Email local parts are case-insensitive in practice for every provider you will meet, so the only correct behavior is to fold both sides to lower case before comparing -- otherwise the gate is one stray capital letter away from excluding the one person it exists to admit -- which is why `clojure.string` is required as `str` in the namespace above.
 
 > **How the repo factors this.** The version above does the lookup and the case-fold inline, which keeps this chapter self-contained. In the companion repo the work is split across the middleware stack from [the login-flow chapter](20-auth-email-flow.md): `wrap-current-user` resolves the session once and, via an `admin-email?` helper that does exactly this lower-cased comparison, stamps a boolean `:admin?` onto the request; `wrap-admin` is then the bottom layer that simply reads `(:admin? request)` and chooses redirect-or-JSON. The check is identical -- it has just moved up into the layer that already touched the session, so the gate itself is a one-line flag read. If you have built the auth chapters' middleware, prefer that structure; the standalone form here is the minimal thing that works on its own.
 
@@ -455,41 +456,54 @@ When the poller sets `--stat-value` from 5 to 8, the browser interpolates throug
 
 ## Live polling with vanilla JavaScript
 
-The polling script -- `static/js/admin-stats.js`, the module the base layout loads -- is intentionally simple. No framework, no build step, no dependencies:
+The polling script -- `static/js/admin-stats.js`, the module the base layout loads -- has no framework and no build step. What it does have is a lifecycle, and that is the part worth dwelling on. The dashboard is reached by morphing in, not a full page load (the morph dispatcher, [progressive enhancement](18-progressive-enhancement.md)), so the naive shape -- an IIFE that calls `setInterval(poll, 20000)` at import time -- would start a *new* interval every time the user navigates into `/admin` and never stop the old one. After three visits the endpoint is being polled three times over. The fix is to hang the poller off the controller registry from that same chapter, which gives every enhancer a `connect`/`disconnect` pair tied to whether its element is actually in the live DOM:
 
 ```javascript
-(function() {
-  function poll() {
-    fetch('/admin/stats', {credentials: 'same-origin'})
-      .then(function(r) { return r.ok ? r.json() : null; })
-      .then(function(data) {
-        if (!data) return;
-        var els = document.querySelectorAll('[data-stat]');
-        for (var i = 0; i < els.length; i++) {
-          var el = els[i];
-          var key = el.getAttribute('data-stat');
-          if (!(key in data)) continue;
-          var oldVal = parseInt(el.getAttribute('data-value'), 10);
-          var newVal = data[key];
-          if (oldVal !== newVal) {
-            el.style.setProperty('--stat-value', newVal);
-            el.setAttribute('data-value', newVal);
-            el.classList.remove('changed-up', 'changed-down');
-            void el.offsetWidth;
-            var cls = newVal > oldVal ? 'changed-up' : 'changed-down';
-            el.classList.add(cls);
-            setTimeout(function(e, c) { e.classList.remove(c); }, 3000, el, cls);
-          }
-        }
-      })
-      .catch(function() {});
-  }
+import { register } from '/js/controllers.js';
 
-  setInterval(poll, 20000);
-})();
+let timer = null;
+let liveCards = 0;
+
+function poll() {
+  fetch('/admin/stats', { credentials: 'same-origin' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (data) {
+      if (!data) return;
+      var els = document.querySelectorAll('[data-stat]');
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        var key = el.getAttribute('data-stat');
+        if (!(key in data)) continue;
+        var oldVal = parseInt(el.getAttribute('data-value'), 10);
+        var newVal = data[key];
+        if (oldVal !== newVal) {
+          el.style.setProperty('--stat-value', newVal);
+          el.setAttribute('data-value', newVal);
+          el.classList.remove('changed-up', 'changed-down');
+          void el.offsetWidth;
+          var cls = newVal > oldVal ? 'changed-up' : 'changed-down';
+          el.classList.add(cls);
+          setTimeout(function (e, c) { e.classList.remove(c); }, 3000, el, cls);
+        }
+      }
+    })
+    .catch(function () {});
+}
+
+register('live-stats', {
+  selector: '[data-stat]',
+  connect() {
+    liveCards++;
+    if (!timer) timer = setInterval(poll, 20000);
+  },
+  disconnect() {
+    liveCards = Math.max(0, liveCards - 1);
+    if (liveCards === 0 && timer) { clearInterval(timer); timer = null; }
+  },
+});
 ```
 
-Every 20 seconds it fetches `/admin/stats` and compares each value against the current `data-value`. On a change it updates `--stat-value` (which triggers the tween), writes the new `data-value` as the next baseline, and briefly applies a `changed-up`/`changed-down` class for the directional arrow. The `void el.offsetWidth` between removing and re-adding that class forces a synchronous reflow so the arrow animation restarts rather than no-opping -- a standard CSS-restart trick, called out only so the line is not mistaken for dead code.
+A single shared interval serves every card: a refcount (`liveCards`) starts it on the first `connect` and clears it when the last card disconnects, so navigating in and out of `/admin` never leaks a second poller and the script is wholly inert anywhere the `[data-stat]` cards do not exist. The `poll` body itself is the simple part. Every 20 seconds it fetches `/admin/stats` and compares each value against the current `data-value`. On a change it updates `--stat-value` (which triggers the tween), writes the new `data-value` as the next baseline, and briefly applies a `changed-up`/`changed-down` class for the directional arrow. The `void el.offsetWidth` between removing and re-adding that class forces a synchronous reflow so the arrow animation restarts rather than no-opping -- a standard CSS-restart trick, called out only so the line is not mistaken for dead code.
 
 The `credentials: 'same-origin'` option is the part that matters for this chapter's spine: it ensures the session cookie rides along with the `fetch`, which is exactly what `wrap-admin` reads to authorize the polling endpoint. Without it the poll would arrive unauthenticated and earn the 401 the JSON branch exists to produce.
 

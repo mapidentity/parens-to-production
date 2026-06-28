@@ -48,7 +48,7 @@ RUN wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public \
        $(awk -F= '/^VERSION_CODENAME/{print$2}' /etc/os-release) main" \
        | tee /etc/apt/sources.list.d/adoptium.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends temurin-25-jdk rlwrap \
+    && apt-get install -y --no-install-recommends temurin-25-jdk \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 ENV JAVA_HOME=/usr/lib/jvm/temurin-25-jdk-amd64

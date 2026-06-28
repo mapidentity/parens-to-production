@@ -196,6 +196,8 @@ The watcher knows *that* a file changed. The browser needs to be *told*. That is
   (atom #{}))
 ```
 
+That `jsonista.core` require is the one new dependency this namespace pulls in: jsonista is a fast JSON codec, and because the dev tooling is the first code in the project to serialize JSON it is where the dependency earns its place. Add `metosin/jsonista {:mvn/version "0.3.12"}` to the top-level `:deps` map in `deps.edn` (it is a regular project dependency, not a `:dev`-only one -- the application reaches for it later too). With that in place, `(require '[jsonista.core :as json])` resolves and the namespace compiles.
+
 `websocket-clients` is a set of http-kit channels, one per connected browser tab. It is a `defonce` for the same reason the watcher atom is: reloading the `dev-reload` namespace must keep your live connections, not orphan them into a fresh empty atom and leave every open tab silently disconnected.
 
 The reload notification is a single typed JSON message:

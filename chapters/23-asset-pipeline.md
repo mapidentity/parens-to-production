@@ -276,6 +276,8 @@ And the head of `base-layout`:
 
 The stylesheet link is `(assets/asset "styles.css")`, which renders as `<link rel="stylesheet" href="/styles.<hash>.css">` in production and `<link ... href="/styles.css">` in dev. The import-map JSON is emitted with `h/raw` for a reason we will come back to in the CSP section: the bytes the browser receives must be exactly the bytes the CSP hashed.
 
+> **What the repo head adds.** The listing above is trimmed to the load-bearing pieces. The companion repo's `base-layout` head also carries a few more module `script-tag`s (the island controllers, `sortable`, `confirm`, `tagline`), an inline `<script type="speculationrules">` for prerender hints, and one inline `<style>` block holding a small `@keyframes page-enter` animation. The last two matter for the CSP that follows: the inline `<style>` is the concrete reason `style-src` carries `'unsafe-inline'`, and the speculation-rules script is hashed into `script-src` by the very same mechanism as every other inline script (below). They are omitted here only to keep the head readable -- but it means a reader diffing against the repo will see one extra `'sha256-...'` token in `script-src` and a couple more head tags than this listing shows.
+
 ## `verify-assets`: an integrity gate, not a rebuild
 
 A filename that embeds a content hash is making a promise: "my bytes hash to this." `verify-assets` enforces that promise. It is a gate, not a build step -- it never runs Tailwind or esbuild. It just checks that the generated tree is internally consistent.
@@ -484,16 +486,19 @@ The inline scripts the app emits are defined through a macro, `defn-asset`, whic
 (defn-asset inspector-script "myapp/web/inspector.js")
 ```
 
-The macro records each script's path with `register-inline-script!`, and `csp-script-hashes` then hashes each registered inline script plus the import-map JSON:
+The macro records each script's path with `register-inline-script!`, and `csp-script-hashes` then hashes each registered inline script, the import-map JSON, and the speculation-rules script:
 
 ```clojure
 (defn- csp-script-hashes
   "sha256 CSP tokens for every inline <script> the app may emit (registered inline
-  assets + the import map JSON). Recomputed each call (cheap); in dev the inline
-  content hot-reloads, so the policy self-heals."
+  assets + the import map JSON + the speculation-rules script). Recomputed each
+  call (cheap); in dev the inline content hot-reloads, so the policy self-heals."
   []
-  (conj (mapv (fn [p] (sha256-b64 (slurp (io/resource p)))) (sort @inline-scripts))
-        (sha256-b64 (importmap-json))))
+  (-> (mapv (fn [p] (sha256-b64 (slurp (io/resource p)))) (sort @inline-scripts))
+      (conj (sha256-b64 (importmap-json)))
+      ;; same hash mechanism as defn-asset scripts; carries no executable JS
+      ;; but is still governed by script-src.
+      (conj (sha256-b64 speculation-rules-json))))
 ```
 
 There are two subtleties worth internalizing:

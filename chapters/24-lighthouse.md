@@ -186,9 +186,9 @@ Two blocks do the work: `collect`, which starts the server and produces the audi
 
 **`url`** lists every page to audit. This covers the full range: the public landing page (`/`), the recipe browse page (`/recipes`), the terms-acceptance flow (`/terms/welcome`), the authenticated dashboard, and the admin panel. Because `wrap-auto-auth` is active, Lighthouse accesses all of them without authentication ceremony. (Audit the routes your app actually serves -- pointing Lighthouse at a path with no route loads a 404 page, which will tank the very scores you are trying to enforce.)
 
-**`numberOfRuns`** is set to 1. Lighthouse defaults to multiple runs and takes the median, which is useful for catching performance variance. For CI, a single run keeps the feedback loop fast. If you have flaky scores, increase this.
+**`numberOfRuns`** is set to 1. Lighthouse defaults to multiple runs and takes the median, which is useful for catching performance variance. For CI, a single run keeps the feedback loop fast -- and rather than spend that time re-running to median out the noise, we absorb the variance in the threshold instead (the 0.95 performance floor below). The two are the same trade made at opposite ends: lower the bar a touch, or raise the run count. We pick the cheap end. If you would rather hold performance at a hard 100, raise `numberOfRuns` to 3 and take the median back.
 
-**`chromeFlags`** configures headless Chrome for a CI environment. `--no-sandbox` is required in most Docker/CI environments where Chrome cannot create its sandbox. `--disable-dev-shm-usage` avoids shared memory issues in containers with limited `/dev/shm`.
+**`chromeFlags`** configures headless Chrome for a CI environment. `--no-sandbox` is required in most Docker/CI environments where Chrome cannot create its sandbox; `--disable-dev-shm-usage` avoids shared-memory issues in containers with a small `/dev/shm`; `--headless` runs Chrome with no display, since CI has none; and `--disable-gpu` turns off GPU acceleration, which is absent (and only a source of noise) on a headless CI box.
 
 ### `assert`
 

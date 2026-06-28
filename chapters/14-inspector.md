@@ -462,7 +462,7 @@ The editor agent piggybacks on Joyride over this WebSocket relay, and making it 
 
 ### The browser highlighter
 
-The browser handles `{type: "highlight", component, file, defn-lines, element, callsite}` with **DOM-as-truth precedence**: the server proposes coordinates, but the browser highlights based on what actually rendered. The first line gates the whole reverse direction on the same `enabled` flag as the forward one -- the inspect badge is a single master switch for *both* directions, so a disengaged inspector leaves the page untouched. (Turning it off clears any live boxes; turning it on re-requests the cursor so the current position lights up at once.)
+The browser handles `{type: "highlight", component, file, defn-lines, element, callsite}` with **DOM-as-truth precedence**: the server proposes coordinates, but the browser highlights based on what actually rendered. The first line gates the whole reverse direction on the same `enabled` flag as the forward one -- the inspect badge is a single master switch for *both* directions, so a disengaged inspector leaves the page untouched. (Turning it off clears any live boxes; turning it on re-requests the cursor so the current position lights up at once.) Flipping that switch also broadcasts a `myapp:inspect` document event carrying `{enabled}` -- nothing in *this* chapter consumes it, but it is the hook other dev-only tools subscribe to so they can turn themselves on and off in lockstep with the inspector; the construction-view overlay ([its chapter](16-construction-view-overlay.md)) is the first to use it.
 
 ```javascript
 function handleHighlight(m) {

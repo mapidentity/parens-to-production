@@ -342,12 +342,11 @@ Handlers then read what they need off the request and render:
 (defn home
   "Landing page handler. Redirects authenticated users to the dashboard."
   [request]
-  (let [email (get-in request [:session :user-email])
-        user-exists? (and email (auth/find-user-by-email (d/db (db/get-connection)) email))]
-    (cond
-      user-exists? (response/redirect "/dashboard")
-      email (-> (html (views/home-page (:locale request))) (assoc :session nil))
-      :else (html (views/home-page (:locale request))))))
+  (cond
+    (:user-eid request) (response/redirect "/dashboard")
+    (get-in request [:session :user-email])
+    (-> (html (views/home-page (:locale request))) (assoc :session nil))
+    :else (html (views/home-page (:locale request)))))
 
 (defn dashboard
   "Signed-in home: the user's own recipes."
@@ -357,7 +356,7 @@ Handlers then read what they need off the request and render:
     (html (views/dashboard (:locale request) (:user-email request) (:admin? request) recipes))))
 ```
 
-The pattern is consistent: gather data, render the view, wrap with `html`. No framework magic. The `str` inside `html` realizes the Hiccup output as an HTML string for the response body.
+The pattern is consistent: gather data, render the view, wrap with `html`. No framework magic. The `str` inside `html` realizes the Hiccup output as an HTML string for the response body. (The `:user-eid` and `:admin?` keys these handlers read are not in the raw request -- they are resolved once from the session by `wrap-current-user`, a middleware we build in [the login-flow chapter](20-auth-email-flow.md); until then, read them as "the signed-in user's entity id, or `nil`.")
 
 Importantly, **handlers do not branch on the request type.** There is no "is this a fetch?" check and no separate partial-vs-full code path. A handler renders one thing -- the full page -- and the dispatcher on the client extracts the part it needs. That client dispatcher -- the script that turns these full-page responses into in-place `<main>` morphs, and the reason `data-layout` rides on every `<main>` -- is involved enough to be its own chapter, [The Morph Dispatcher](13-morph-dispatcher.md), which comes next. The rest of *this* chapter finishes the server side of the view layer.
 
