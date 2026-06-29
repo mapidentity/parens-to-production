@@ -36,3 +36,6 @@
 
 # FlowStorm (dev construction-view tracer) debugger cache
 .fsx/
+
+# Talk-proposal / conference material (kept out of the public repo)
+/conj/
