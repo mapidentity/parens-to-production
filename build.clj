@@ -7,17 +7,27 @@
     [clojure.tools.build.api :as b]))
 
 (def lib
+  "The Maven coordinates of the artifact this build produces."
   'com.myapp/myapp)
+
 (def version
+  "The version of the artifact this build produces."
   "0.1.0")
+
 (def class-dir
+  "Directory the AOT compiler writes .class files to. Also the root of the uberjar."
   "target/classes")
+
 (def uber-file
+  "The uberjar file the `uber` task produces. Run: `java -jar target/myapp.jar`."
   "target/myapp.jar")
+
 (def basis
+  "The build basis: the set of source paths, resource paths, and deps.edn files."
   (delay (b/create-basis {:project "deps.edn"})))
 
 (defn clean
+  "Delete the build output tree (target/). Run: clojure -T:build clean."
   [_]
   (b/delete {:path "target"}))
 
@@ -34,8 +44,8 @@
       (throw (ex-info "Performance warnings detected — add type hints to fix." {:warnings hits})))))
 
 (defn compile-strict
-  "AOT-compile src with *warn-on-reflection* and *unchecked-math* :warn-on-boxed,
-  then fail if any warnings from our code were emitted. compile-clj runs in a
+  "AOT-compile src with *warn-on-reflection* and *unchecked-math* :warn-on-boxed.
+  Then fail if any warnings from our code were emitted. compile-clj runs in a
   subprocess, so we capture stderr via :err :capture and scan it."
   [_]
   (let [{:keys [err]} (b/compile-clj
@@ -56,6 +66,7 @@
     (println "compile-strict: OK")))
 
 (defn uber
+  "Build an uberjar with the AOT-compiled classes and resources. Run: clojure -T:build uber."
   [_]
   (clean nil)
   (b/copy-dir
@@ -99,10 +110,11 @@
     (str "sha384-" (.encodeToString (java.util.Base64/getEncoder) bs))))
 
 (defn- insert-hash
-  "\"js/dispatcher.js\" + \"a1b2c3d4\" -> \"js/dispatcher.a1b2c3d4.js\"."
-  [path hash]
+  "Insert a content-hash into a filename before the extension.
+   E.g.: \"js/dispatcher.js\" + \"a1b2c3d4\" -> \"js/dispatcher.a1b2c3d4.js\"."
+  [path hashvalue]
   (let [dot (.lastIndexOf ^String path ".")]
-    (str (subs path 0 dot) "." hash (subs path dot))))
+    (str (subs path 0 dot) "." hashvalue (subs path dot))))
 
 (defn- sh!
   "Run a shell command from the project root; throw with captured output on failure."
@@ -172,10 +184,11 @@
     @assets*))
 
 (defn verify-assets
-  "Integrity gate for the built asset tree. Asserts: a manifest exists; every
-  manifest target file exists; and every content-hashed filename matches the
-  SHA-256 of its own bytes (so a name can never lie about its contents).
-  Run `clojure -T:build assets` first. Run: clojure -T:build verify-assets"
+  "Integrity gate for the built asset tree.
+  Asserts: a manifest exists; every manifest target file exists; and every
+  content-hashed filename matches the SHA-256 of its own bytes
+  (so a name can never lie about its contents). Run `clojure -T:build assets`
+  first. Run: clojure -T:build verify-assets"
   [_]
   (let [mf (io/file asset-out "asset-manifest.edn")]
     (when-not (.exists mf)
@@ -183,12 +196,12 @@
       (System/exit 1))
     (let [m (:assets (read-string (slurp mf)))
           problems
-          (for [[name url] m
+          (for [[n url] m
                 :let [f (io/file asset-out (subs url 1))]    ; url is "/..."
                 :when (or (not (.exists f))
                           (when-let [[_ h] (re-find #"\.([a-f0-9]{8})\.(?:css|js)$" url)]
                             (not= h (content-hash f))))]
-            (str name " -> " url (if (.exists f) " (hash mismatch)" " (missing)")))]
+            (str n " -> " url (if (.exists f) " (hash mismatch)" " (missing)")))]
       (if (seq problems)
         (do (println "FAIL: asset integrity problems:")
             (doseq [p problems] (println "  " p))
