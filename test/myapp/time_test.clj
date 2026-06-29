@@ -23,8 +23,7 @@
 
 (deftest now-is-pinnable
   (let [t (Instant/parse "2025-06-15T12:00:00Z")]
-    (time/with-clock (time/fixed-clock t)
-      (is (= t (time/now))))))
+    (time/with-clock (time/fixed-clock t) (is (= t (time/now))))))
 
 (deftest with-clock-pins-time-test
   (testing "with-clock pins now and today to the fixture"

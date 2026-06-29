@@ -25,10 +25,12 @@
          :user/created-at now
          :user/active? true}])
     (let [db (d/db h/*conn*)
-          eid (d/q '[:find ?e .
-                     :in $ ?email
-                     :where [?e :user/email ?email]]
-                   db "test@example.com")]
+          eid (d/q
+                '[:find ?e .
+                  :in $ ?email
+                  :where [?e :user/email ?email]]
+                db
+                "test@example.com")]
       (is (some? eid)))))
 
 (deftest pull-returns-instants
@@ -40,14 +42,15 @@
          :user/created-at now
          :user/active? true}])
     (let [db (d/db h/*conn*)
-          eid (d/q '[:find ?e .
-                     :in $ ?email
-                     :where [?e :user/email ?email]]
-                   db "pull@example.com")
+          eid (d/q
+                '[:find ?e .
+                  :in $ ?email
+                  :where [?e :user/email ?email]]
+                db
+                "pull@example.com")
           user (db/pull* db [:user/created-at] eid)]
       (is (instance? Instant (:user/created-at user)))
-      (is (= (.toEpochMilli now)
-             (.toEpochMilli ^Instant (:user/created-at user)))))))
+      (is (= (.toEpochMilli now) (.toEpochMilli ^Instant (:user/created-at user)))))))
 
 (deftest q-converts-dates-in-results
   (let [now (Instant/parse "2025-06-15T12:00:00Z")
@@ -71,11 +74,10 @@
 
 (deftest schema-idents-exist
   (let [db (d/db h/*conn*)
-        expected-idents #{:user/id :user/email :user/created-at
-                          :user/active? :user/terms-accepted-at}]
+        expected-idents #{:user/id :user/email :user/created-at :user/active?
+                          :user/terms-accepted-at}]
     (doseq [ident expected-idents]
-      (is (some? (d/entity db ident))
-          (str "Schema ident " ident " should exist")))))
+      (is (some? (d/entity db ident)) (str "Schema ident " ident " should exist")))))
 
 (deftest email-uniqueness-is-identity
   (let [now (time/now)]
@@ -90,9 +92,10 @@
          :user/created-at now
          :user/active? true}])
     (let [db (d/db h/*conn*)
-          n (d/q '[:find (count ?e) .
-                   :in $ ?email
-                   :where [?e :user/email ?email]]
-                 db "unique@example.com")]
-      (is (= 1 n)
-          "Same email should resolve to one entity (upsert)"))))
+          n (d/q
+              '[:find (count ?e) .
+                :in $ ?email
+                :where [?e :user/email ?email]]
+              db
+              "unique@example.com")]
+      (is (= 1 n) "Same email should resolve to one entity (upsert)"))))

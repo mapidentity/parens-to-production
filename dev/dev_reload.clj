@@ -25,12 +25,12 @@
 
 ;; defonce so reloading this ns keeps live connections instead of orphaning them
 ;; (the running channels would otherwise be lost to a fresh empty atom).
-(defonce websocket-clients
-  ;; All connected dev clients (browser tabs + the editor).
+(defonce ^{:doc "All connected dev clients (browser tabs + the editor)."} websocket-clients
   (atom #{}))
 
-(defonce ^:private client-roles
-  ;; Channel -> role (:browser default, :editor). Lets the relay route messages.
+(defonce
+  ^:private
+  ^{:doc "Channel -> role (:browser default, :editor). Lets the relay route messages."} client-roles
   (atom {}))
 
 (defn add-client!
@@ -45,6 +45,7 @@
   (swap! client-roles dissoc channel))
 
 (defn- set-role!
+  "Record the role of a connected client (browser or editor)."
   [channel role]
   (swap! client-roles assoc channel role))
 

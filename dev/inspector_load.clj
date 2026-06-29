@@ -101,6 +101,7 @@
   (str/ends-with? path "views.clj"))
 
 (defn- src-clj-files
+  "All .clj files under src/, recursively. Used to find view namespaces for."
   []
   (->> (file-seq (File. "src"))
        (filter #(.isFile ^File %))

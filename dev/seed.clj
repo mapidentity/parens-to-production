@@ -15,6 +15,8 @@
   (:import
     [java.util UUID]))
 
+(set! *warn-on-reflection* true)
+
 (defn- user!
   "Upsert a user by email with a display name and accepted terms; return eid."
   [conn email display-name]

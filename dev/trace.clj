@@ -39,6 +39,8 @@
     [jsonista.core :as json]
     [myapp.web.inspector :as inspector]))
 
+(set! *warn-on-reflection* true)
+
 ;; ---------------------------------------------------------------------------
 ;; Recording control + thread/timeline helpers
 ;; ---------------------------------------------------------------------------
@@ -58,16 +60,21 @@
 (defonce ^:private last-error (atom nil))
 
 (defn enable-recording!
+  "Turn on FlowStorm recording for the current thread (the page request)."
   []
   (try
     (dbg/set-recording true)
     (catch Throwable _ nil)))
+
 (defn disable-recording!
+  "Turn off FlowStorm recording for the current thread."
   []
   (try
     (dbg/set-recording false)
     (catch Throwable _ nil)))
+
 (defn clear-recordings!
+  "Clear the store and reset the epoch, so the next page starts a fresh visit."
   []
   (try
     (swap! epoch inc)
@@ -77,7 +84,9 @@
        :by-id {}})
     (reset! last-error nil)
     (catch Throwable _ nil)))
+
 (defn setup!
+  "Initialize the store and reset the epoch, so the next page starts a fresh visit."
   []
   ;; Start NOT recording. A page request turns recording on for the duration of
   ;; its own render and off again (see record-page), so boot-time view loading,
@@ -86,6 +95,7 @@
   (disable-recording!))
 
 (defn- recording?
+  "True if FlowStorm recording is currently on for this thread (the page request)."
   []
   (try
     (when-let [f (requiring-resolve 'flow-storm.tracer/recording?)]
@@ -93,9 +103,12 @@
     (catch Throwable _ nil)))
 
 (defn- thread-id
+  "The current thread's id as a long (FlowStorm's timeline key)."
   ^long []
   (.threadId (Thread/currentThread)))
+
 (defn- timeline-len
+  "The number of frames in the current thread's timeline, or 0 if none."
   [tid]
   (if-let [tl (ia/get-timeline tid)]
     (count tl)
@@ -106,13 +119,18 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- tname
+  "The type name of a value, as a string (class simple name)."
   ^String [v]
   (.getName (class v)))
+
 (defn- trunc
+  "Truncate a string to n chars, adding an ellipsis if it was longer."
   [s n]
   (let [s (str s)]
     (if (> (count s) n) (str (subs s 0 n) "…") s)))
+
 (defn- bounded-pr
+  "Pr-str a value, bounded to a few levels and elements so it never explodes."
   [v]
   (binding [*print-level* 3
             *print-length* 8]
@@ -130,18 +148,23 @@
       (vector? x) (str "[" (str/join " " (map form->str x)) "]")
       :else (pr-str x))
     (catch Throwable _ (pr-str x))))
+
 (defn- db?
+  "True if v is a Datomic database value (d/db, d/as-of, d/history)."
   [v]
   (try
     (instance? datomic.Database v)
     (catch Throwable _ false)))
+
 (defn- safe-eid
+  "The :db/id of a map, or nil if it has none (or is not a map)."
   [v]
   (try
     (:db/id v)
     (catch Throwable _ nil)))  ; sorted-map compares can throw
 
 (defn summarize
+  "Summarize a value into a ValueRef: {:kind :type :preview :n :keys :eid}."
   [v]
   (try
     (cond
@@ -199,6 +222,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- short-name
+  "The last segment of a namespaced symbol, or the penultimate segment if the last is a FlowStorm wrapper (fn-/iter-/eval-)."
   [^String nm]
   (let [segs (str/split nm #"/")
         lst (peek segs)]
@@ -210,6 +234,7 @@
   #{"convert-dates" "convert-instants" "as-instant"})
 
 (defn- noise?
+  "True if a frame is a FlowStorm wrapper or a plumbing fn (not a real myapp.* fn)."
   [m]
   (let [ns-str (:fn-ns m)
         nm (str (:fn-name m))]
@@ -231,6 +256,7 @@
   #{"q" "pull" "pull-many" "entid" "as-of" "history" "transact" "datoms" "entity"})
 
 (defn- datomic-call?
+  "True if a sub-form is a Datomic call (a seq whose first symbol is d/q, d/pull, etc)."
   [sf]
   (and
     (seq? sf)
@@ -243,6 +269,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- read-window
+  "Read a timeline window (from start to end) into an indexable shape: {:calls :exprs-by-call :unwinds :at}."
   [tid start end]
   (let [tl (ia/get-timeline tid)
         total (if tl (count tl) 0)
@@ -275,8 +302,8 @@
     {:calls calls
      :exprs-by-call exprs-by-call
      :unwinds unwinds
-     :at (fn [abs]
-           (let [j (- abs start)]
+     :at (fn [absolute]
+           (let [j (- absolute start)]
              (when (and (>= j 0) (< j (count slice))) (nth slice j))))}))
 
 (defn- db-t
@@ -321,6 +348,7 @@
        (sort-by :call-idx)))   ; timeline-ish order (stable within a fn)
 
 (defn- ->db-op
+  "Project a Datomic-call expr into a DBOp: {:op :form :line :basis-t :result}."
   [calls {:keys [call-idx sf e]}]
   (let [op (name (first sf))
         bt (if (and (#{"as-of" "history"} op) (db? (:result e)))
@@ -437,6 +465,7 @@
          :form (trunc (form->str sf) 90)}))))
 
 (defn- frame-name
+  "The frame's name as a string: ns/fn, or ns/fn/arity if multi-arity."
   [m]
   (str (:fn-ns m) "/" (:fn-name m)))
 
@@ -460,6 +489,7 @@
     (boolean (and a (= (frame-name (calls i)) (frame-name (calls a)))))))
 
 (defn- build-spans
+  "Build the construction tree (the 'what / how') for a timeline window, as a seq of spans: {:idx :parent-idx :name :morph :call-site :throw-info :instance-of}."
   [{:keys [calls at]
     :as w}]
   (let [kept? (fn [i]
@@ -668,6 +698,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- result-has-eid?
+  "True if the timeline result contains the given eid (the clicked element's :db/id)."
   [result eid]
   (try
     (let [hit? (fn [x]
@@ -683,6 +714,7 @@
     (catch Throwable _ false)))
 
 (defn- arg-eid
+  "The :db/id of the first map argument in a fn's args, or nil if none."
   [args]
   (some (fn [a] (when (map? a) (safe-eid a))) args))
 
@@ -772,6 +804,7 @@
   256)
 
 (defn- put!
+  "Add a descriptor to the store, evicting the oldest if full."
   [id desc]
   (swap! store
     (fn [{:keys [order by-id]}]
@@ -785,6 +818,7 @@
            :by-id by-id})))))
 
 (defn- get-desc
+  "Return the descriptor for a given id, or nil if unknown/expired."
   [id]
   (let [d (get-in @store [:by-id id])]
     (when (and d (= (:epoch d) @epoch)) d)))
@@ -896,10 +930,12 @@
     :else nil))
 
 (defn- nav-path
+  "Walk a recorded value along a path of child indices, returning the value at that path (or nil if the path is invalid)."
   [v path]
   (reduce child-at v (or path [])))
 
 (defn- expandable?
+  "True if a value is a map or coll with children to enumerate (not a db)."
   [v]
   (boolean (and (some? v) (not (db? v)) (or (map? v) (vector? v) (set? v) (and (seq? v) (seq v))))))
 
@@ -922,11 +958,11 @@
   (let [children (cond
                    (map? v) (vec
                               (map-indexed
-                                (fn [i [k val]]
+                                (fn [i [k value]]
                                   {:i i
                                    :k (trunc (pr-str k) 48)
-                                   :val (summarize val)
-                                   :expandable (expandable? val)})
+                                   :val (summarize value)
+                                   :expandable (expandable? value)})
                                 (take 50 (seq v))))
                    (or (vector? v) (set? v) (seq? v))
                    (vec
@@ -1060,11 +1096,13 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- html?
+  "True if the response is HTML (a page or morph) that should be recorded."
   [resp]
   (some-> (get-in resp [:headers "Content-Type"])
           (str/includes? "text/html")))
 
 (defn- stamp-html
+  "Add a data-myapp-trace-id attribute to the <html> tag so the overlay can fetch the trace."
   [body id]
   (if (string? body)
     (str/replace-first body "<html" (str "<html data-myapp-trace-id=\"" id "\""))
@@ -1171,6 +1209,8 @@
     (json/write-value-as-string (if (and le (get-desc (:id le))) le {}))))
 
 (defn wrap-trace
+  "Ring middleware that records a page/morph render, then stops recording so assets, /dev/ reads, and idle accrete nothing.
+  The overlay fetches the recorded window back via /dev/__trace/:id."
   [handler]
   (fn [req]
     (if (and (not (str/starts-with? (str (:uri req)) "/dev/")) (page-request? req))
