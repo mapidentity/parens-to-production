@@ -92,6 +92,7 @@ RUN apt-get update && apt-get install -y \
     netcat-openbsd \
     ripgrep \
     rlwrap \
+    tcpdump \
     tmux \
     unzip \
     wget \
@@ -100,7 +101,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 ```
 
-A handful of these earn their place for reasons that recur later in the book: `ripgrep` and `fd-find` make searching a large codebase fast, `inotify-tools` backs the file-watching the live-reload chapter depends on, `libnss3-tools` provides the `certutil` that imports our development CA into Chromium's certificate store, and `rlwrap` gives the Clojure REPL readline support. The rest are the ordinary comforts of a shell you have to live in -- the kind you only miss when they are absent at the wrong moment.
+A handful of these earn their place for reasons that recur later in the book: `ripgrep` and `fd-find` make searching a large codebase fast, `inotify-tools` backs the file-watching the live-reload chapter depends on, `libnss3-tools` provides the `certutil` that imports our development CA into Chromium's certificate store, and `rlwrap` gives the Clojure REPL readline support. The rest are the ordinary comforts of a shell you have to live in -- the kind you only miss when they are absent at the wrong moment. (The listing is an excerpt: the repository's list runs longer with more of the same species -- `strace`, `iotop`, `nethogs`, `valgrind`, locale and apt plumbing -- and a later layer installs the `zprint` binary that [the build-hardening chapter](04-build-hardening.md)'s formatter calls. `.devcontainer/Dockerfile` is the full inventory.)
 
 ### Java (Eclipse Temurin)
 
@@ -198,7 +199,7 @@ The `devcontainer.json` file tells VS Code how to build and connect to the devel
 }
 ```
 
-A few details earn a note:
+Five of its fields carry decisions:
 
 **`dockerComposeFile` points to `compose.yml`** at the project root, not a standalone Dockerfile. This is important. When you use Compose, VS Code starts the entire service topology -- your app container plus Caddy, Mailpit, and any other services -- in one operation. You do not need to remember to start supporting services separately.
 
@@ -269,6 +270,7 @@ This container runs once, creates the certificates in a shared Docker volume, an
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
+SCRIPT_DIR=$(dirname "$0")
 
 HOSTS='myapp.lan mailpit.lan'
 
@@ -281,7 +283,7 @@ echo "Creating root CA"
 openssl genrsa -out rootCA.key 4096
 openssl req -x509 -new -nodes -key rootCA.key -sha256 -days 825 \
     -out rootCA.crt \
-    -subj "/C=NL/ST=Utrecht/L=Amersfoort/O=MyApp/OU=IT/CN=MyApp development CA" \
+    -subj "/C=NL/ST=Utrecht/L=Amersfoort/O=myapp/OU=IT/CN=myapp development CA" \
     -addext "basicConstraints = CA:TRUE" \
     -addext "keyUsage = keyCertSign, cRLSign"
 
@@ -292,13 +294,13 @@ for CN in $HOSTS; do
     openssl req -new \
         -newkey rsa:2048 -nodes -keyout "$CN/$CN.key" \
         -out "$CN/$CN.csr" \
-        -subj "/C=NL/ST=Utrecht/L=Amersfoort/O=MyApp/OU=IT/CN=$CN" \
+        -subj "/C=NL/ST=Utrecht/L=Amersfoort/O=myapp/OU=IT/CN=$CN" \
         -addext "subjectAltName = DNS:$CN"
 
     # Build the SAN extension file without process substitution: this script
     # runs under Alpine's /bin/ash (busybox), which does not support <(...).
     ext="$CN/ext.cnf"
-    cat openssl.cnf > "$ext"
+    cat "$SCRIPT_DIR/openssl.cnf" > "$ext"
     printf '\nDNS.1 = %s\n' "$CN" >> "$ext"
 
     openssl x509 -req -in "$CN/$CN.csr" \
@@ -309,6 +311,8 @@ for CN in $HOSTS; do
     openssl verify -CAfile rootCA.crt -verify_hostname $CN "$CN/$CN.crt"
 done
 ```
+
+One line ties the script to the compose service above: `SCRIPT_DIR`. The container's working directory is the certificates *volume*, but `openssl.cnf` is mounted beside the script in `/opt` -- so the config must be read from the script's own directory, not the current one. (The listing is lightly abridged: the repository's copy also dumps each certificate with `x509 -text` for inspection and exports JKS/PKCS12 keystores alongside the PEMs.)
 
 The OpenSSL configuration for the SAN (Subject Alternative Name) extension is minimal:
 
@@ -332,7 +336,7 @@ set -euo pipefail
 CERT_FILE="/certificates/rootCA.crt"
 
 if [ ! -f "$CERT_FILE" ]; then
-    echo "No root CA certificate found, skipping import."
+    echo "No root CA certificate found at $CERT_FILE, skipping import."
     exit 0
 fi
 
@@ -352,7 +356,7 @@ echo "Importing root CA into NSS database (Chromium)..."
 rm -rf "$HOME/.pki/nssdb"
 mkdir -p "$HOME/.pki/nssdb"
 certutil -d "sql:$HOME/.pki/nssdb" -N --empty-password
-certutil -d "sql:$HOME/.pki/nssdb" -A -t 'C,,' -n 'MyApp Dev CA' \
+certutil -d "sql:$HOME/.pki/nssdb" -A -t 'C,,' -n 'myapp Dev CA' \
     -i "$CERT_FILE" -f /dev/null
 
 echo "All certificates imported successfully."
@@ -400,7 +404,7 @@ The `aliases` on the default network are the key detail. They make `myapp.lan` a
 
 We use `expose` (not `ports`) because we access services through the Docker network, not from the host. This avoids port conflicts with anything else running on your machine.
 
-The Caddyfile itself is straightforward:
+The Caddyfile itself is straightforward -- shown here as this chapter creates it; [the asset-pipeline chapter](24-asset-pipeline.md) later adds a block of request-invariant security headers (HSTS, `nosniff`, COOP/CORP) and an immutable-cache rule for the vendored morphing library:
 
 ```caddyfile
 myapp.lan {
@@ -481,23 +485,9 @@ The listings above are the load-bearing services. The repo's `compose.yml` carri
 
 ## VS Code and Calva integration
 
-When you open this project in VS Code, the Remote Containers extension detects `.devcontainer/devcontainer.json` and offers to reopen the project in a container. Accept, and VS Code will:
+When you open this project in VS Code, the Remote Containers extension detects `.devcontainer/devcontainer.json` and offers to reopen the project in a container. Accepting is the whole procedure. Everything that follows -- the image build (cached after the first time), the Compose topology coming up, the certificate init container completing, the CA import, the attach, Calva installing itself inside the container -- happens because the checked-in files say so, in the order their dependencies dictate.
 
-1. Build the Docker image from the Dockerfile (first time only, then cached)
-2. Start all services defined in `compose.yml`
-3. Wait for the certificate init container to complete
-4. Import the development CA into the app container's trust stores
-5. Attach VS Code to the app container
-6. Install the Calva extension inside the container
-
-From there, you start your Clojure application (typically `clojure -M:dev` or however your project is configured), and Calva connects to the nREPL server. Once connected, you can:
-
-- **Evaluate expressions inline** -- put your cursor on an expression and hit `Ctrl+Enter` (or `Cmd+Enter` on macOS) to evaluate it in the running application
-- **Load files** -- save a file and it gets loaded into the running REPL automatically (with a file watcher)
-- **Inspect values** -- evaluate expressions and see results inline in your editor
-- **Navigate code** -- jump to definitions, find references, all powered by clj-kondo's static analysis
-
-This is the core of Clojure development: a live, running application that you modify interactively through your editor.
+Start the REPL (`clojure -M:dev:repl`; [the web-server chapter](05-web-server.md) adds the `(start!)` that brings the app up inside it) and Calva connects to its nREPL server. That connection is the center of Clojure development, and the reason this chapter cares so much about reproducibility: with a live application attached to the editor, evaluation replaces restart. Put the cursor on an expression and it evaluates *in the running app*; redefine a function and the next request uses it; inspect a value where it actually lives. The keystrokes are for Calva's documentation to teach -- the capability is what this book leans on, starting with the live-reload loop of [chapter 6](06-live-reload.md), which exists to carry exactly this immediacy from the editor into the browser.
 
 ## What you have, and what it buys
 

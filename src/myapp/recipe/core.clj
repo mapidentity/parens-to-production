@@ -395,8 +395,9 @@
 
 (defn delete!
   "Retract recipe `id` if owned by `user-eid`.
-  Returns true on success, nil otherwise. (Forks keep their own copies —
-  `:recipe/forked-from` simply dangles, which lineage tolerates.)"
+  Returns true on success, nil otherwise. (Forks keep their copied content,
+  but :db/retractEntity also retracts their inbound :recipe/forked-from refs —
+  in the current db they become originals; the provenance survives in history.)"
   [conn user-eid id]
   (let [db (d/db conn)]
     (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]

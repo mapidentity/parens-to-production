@@ -6,7 +6,7 @@ Production is a different problem. Every served asset needs to be cache-busted o
 
 This chapter covers that pipeline end to end. How every served asset gets a content hash. How the JavaScript modules are minified per-file -- no bundler -- with Subresource Integrity. How the vendored library is built. How the running app resolves a logical asset name to a hashed URL through a manifest, and how an integrity gate keeps a lying filename out of production. Then the two delivery modes -- a stable-URL `no-store` engine for development and immutable content-hashed assets for production -- and why they never drift. Finally the security layer: the escaping renderer, the strict CSP the app emits, the long-lived headers Caddy adds, and the regression tests that pin it all down.
 
-The result is one build that produces a byte-identical artifact for both dev and prod, a manifest the app reads at startup, and a defense-in-depth security posture that starts at output encoding and ends at the browser's CSP enforcement.
+The result is one build whose dev and prod outputs can never drift -- same sources, same pipeline; the CSS bytes are identical, and the JavaScript differs only by minification -- a manifest the app reads at startup, and a defense-in-depth security posture that starts at output encoding and ends at the browser's CSP enforcement.
 
 ## Project layout: sources vs. the generated tree
 

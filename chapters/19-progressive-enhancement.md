@@ -71,6 +71,39 @@ The canonical state behind it is a single new attribute and two pure mutations. 
 
 > **Reordering is not a version.** Because every edit in this app is a Datomic transaction, the recipe's history comes for free -- but that means a position change *would* show up as a version with an empty diff if we let it. `version-history` is restricted to the content attributes ([the recipe-domain chapter](09-recipe-domain.md) defines that set as `versioned-attrs`), so a reorder transaction never pollutes the timeline. The bookkeeping attribute and the content attributes live in the same entity but in different histories. This is the kind of thing that is invisible until you reorder a recipe and find a phantom "version" with nothing in it.
 
+### Where ownership is enforced
+
+`reorder!` quietly answers a question the book has so far only pointed at: the primer promised a *multi-tenant* SaaS, and this is where the isolation actually lives. The model is the one the primer named: the tenant is the user. One schema, one database, every recipe carrying a `:recipe/user` ref; isolation is the guarantee that an id arriving from outside the session -- a path param, a query param, a form field like `reorder!`'s `ids` -- can never be turned into another tenant's entity.
+
+That guarantee has to live somewhere, and *where* is a real decision with three candidates. In middleware: a `wrap-owner` that inspects route params and rejects foreign ids before the handler runs -- centralized, but enforcing at a distance; it must know which param names an id and which attribute names the owner, and it silently protects nothing that arrives in a request body or in a route added after it was written. In each handler: an explicit check before every mutation -- readable, but multiplied by every route, and repeated discipline is exactly the kind that erodes. Or in the data layer, at the single point where an external id becomes a database entity. This app chooses the data layer, because every read and write -- from any handler, present or future -- already has to pass through that conversion. Enforce at the narrowest waist and there is nothing to forget.
+
+The waist is a small family in `myapp.db.core`. Its workhorse:
+
+```clojure
+(defn entid-owned
+  "Resolve a lookup-ref to an entity id, only if owned by `user-eid`.
+
+  Returns nil for both 'no such entity' and 'entity exists but is owned
+  by another user' — those are indistinguishable to the caller, so a
+  handler can 404 in either case without leaking existence.
+
+  `user-attr` defaults to the conventional `:<ns>/user` derived from the
+  lookup-ref's attribute (e.g. [:recipe/id …] → :recipe/user). Pass an
+  explicit `user-attr` only for entities that don't follow the convention.
+
+  Use everywhere a non-session-derived id is converted to an eid."
+  ([db user-eid lookup-ref] (entid-owned db user-eid lookup-ref (infer-user-attr lookup-ref)))
+  ([db user-eid lookup-ref user-attr]
+   (when-let [eid (d/entid db lookup-ref)]
+     (when (= user-eid (entity-owner-eid db eid user-attr)) eid))))
+```
+
+Three properties do the design's work. The owner attribute is *inferred by convention* -- `[:recipe/id …]` implies `:recipe/user` -- so a call site cannot name the wrong attribute by accident, and an entity that breaks the convention must say so explicitly. A foreign entity and a missing entity are *indistinguishable*: both come back nil, the handler 404s either way, and a visitor probing other tenants' ids learns nothing -- not even that an id exists. And the family rounds out an API for each shape a foreign id can take: `pull-owned` for reads that render or prefill from an external id, `eid-owned?` for a raw eid, and `assert-owned!` to throw a tagged `:tenancy/forbidden` from inside a mutation, should a future refactor ever pass an eid through unchecked.
+
+The rule that keeps the waist narrow is stated in the namespace itself: if a request handler ever writes `(d/entid db [:recipe/id …])` or a raw `d/pull` on an external id, it is bypassing tenant isolation -- switch to the `*-owned` form. Half of that rule is even linted: the `:discouraged-var` entry from [the build-hardening chapter](04-build-hardening.md) flags raw `datomic.api/pull` wherever it appears. `reorder!` above shows the idiom under fire -- it maps `entid-owned` over a *list* of user-supplied ids and drops the nils, so a crafted POST that slips someone else's recipe id into the order neither fails nor leaks: the foreign id simply is not part of the transaction. The same gate is what let [the recipe-domain chapter](09-recipe-domain.md)'s `update!` and `delete!` refuse a non-owner in one line. And the public reads -- browsing, the version history, forking itself -- deliberately gate nothing on ownership, because reading and forking other people's recipes is the product. Isolation guards *authority*, not *visibility*, and the fork is exactly where one tenant's data legitimately crosses into another's hands.
+
+One of this section's invariants can even be *watched* rather than trusted: reorder a couple of cards under the `:storm` alias, then open the recipe's history page -- the [construction view](16-construction-view.md)'s recording of that render shows `version-history` running its Datalog with `versioned-attrs` bound, and the reorder transaction appearing nowhere in what it returns. The tooling the book built early is not a separate story from the features; it is how a feature's claims get checked on the day they are written.
+
 ## Layer 1: the platform does more than you think
 
 The last few years quietly moved a large class of interactions out of JavaScript and into HTML and CSS. Things that used to *require* a framework -- positioned menus, modal dialogs, enter/leave animation, "style the parent based on a child" -- are now declarative platform features. Using them means less JavaScript to ship, less state to manage, and no round trip.

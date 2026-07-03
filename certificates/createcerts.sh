@@ -14,7 +14,7 @@ fi
 
 echo "Creating root CA"
 openssl genrsa -out rootCA.key 4096
-openssl req -x509 -new -nodes -key rootCA.key -sha256 -days 825 -out rootCA.crt -subj "/C=CH/ST=Noord Holland/L=Amsterdam/O=myapp/OU=IT/CN=myapp development CA" -addext "basicConstraints = CA:TRUE" -addext "keyUsage = keyCertSign, cRLSign"
+openssl req -x509 -new -nodes -key rootCA.key -sha256 -days 825 -out rootCA.crt -subj "/C=NL/ST=Utrecht/L=Amersfoort/O=myapp/OU=IT/CN=myapp development CA" -addext "basicConstraints = CA:TRUE" -addext "keyUsage = keyCertSign, cRLSign"
 openssl x509 -in rootCA.crt -text -noout
 rm -f rootCA.jks
 keytool -import -file rootCA.crt -alias development -noprompt -trustcacerts -keystore rootCA.jks -storepass changeit
@@ -26,7 +26,7 @@ mkdir -p "$CN"
 openssl req -new \
 -newkey rsa:2048 -nodes -keyout "$CN/$CN.key" \
 -out "$CN/$CN.csr" \
--subj "/C=CH/ST=Utrecht/L=Amersfoort/O=myapp/OU=IT/CN=$CN" \
+-subj "/C=NL/ST=Utrecht/L=Amersfoort/O=myapp/OU=IT/CN=$CN" \
 -addext "subjectAltName = DNS:$CN"
 
 echo "Signing certificate with root CA for $CN"

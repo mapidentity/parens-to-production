@@ -114,17 +114,7 @@ With the primitives in place, signing is straightforward:
     (str payload-b64 "." signature-b64)))
 ```
 
-The flow:
-
-1. Build a map with the email, the expiration as epoch milliseconds, and a
-   one-time **nonce** (a random UUID). We will return to why the nonce is here
-   in a moment -- it is what turns a forgeable-but-replayable token into a
-   single-use credential.
-2. Serialize it to JSON.
-3. Base64-encode the JSON -- this becomes the left side of the token.
-4. Compute the HMAC-SHA256 of the base64-encoded payload using our signing key.
-5. Base64-encode the signature -- this becomes the right side.
-6. Join them with a dot.
+The construction reads left to right: a map of the email, the expiration as epoch milliseconds, and a one-time **nonce** -- a random UUID whose purpose we return to in a moment, because it is what turns a forgeable-but-replayable token into a single-use credential -- serialized to JSON, base64-encoded to become the token's left side, HMAC-SHA256-signed under our signing key, the signature base64-encoded as the right side, and the two joined with a dot.
 
 An important detail: we sign the base64-encoded payload, not the raw JSON. This means verification only needs to split on the dot and compare signatures -- no base64 decoding needed until after the signature check passes. Fail fast on the cheap operation.
 

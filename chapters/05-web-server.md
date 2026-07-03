@@ -107,19 +107,19 @@ Before we write routes, we need configuration. Aero reads an EDN file and suppor
                           :prod "127.0.0.1"}}
 
  :base-url #profile {:dev "https://myapp.lan"
-                     :prod "https://myapp.example.com"}
+                     :prod #env "BASE_URL"}
 
- :smtp {:host #profile {:dev "mailpit" :prod "localhost"}
+ :smtp {:host #profile {:dev "mailpit" :prod #env "SMTP_HOST"}
         :port #profile {:dev 1025 :prod 587}
-        :from "noreply@myapp.example.com"}
+        :from #profile {:dev "no-reply@myapp.lan" :prod #env "SMTP_FROM"}}
 
  :session-key #env "SESSION_KEY"
  :signing-key #env "SIGNING_KEY"}
 ```
 
-The `#profile` reader tag selects a value based on the active profile. In dev, the server binds to `0.0.0.0` (all interfaces); in prod, to `127.0.0.1` (localhost only, behind a reverse proxy). The `#env` tag reads from environment variables.
+The `#profile` reader tag selects a value based on the active profile. In dev, the server binds to `0.0.0.0` (all interfaces); in prod, to `127.0.0.1` (localhost only, behind a reverse proxy). The `#env` tag reads from environment variables, and the division of labor between the two tags is the configuration policy in miniature: dev values are literals, so a fresh checkout runs with zero setup, while anything that varies per deployment comes from the environment the production process manager supplies -- `#env` under `:prod` for the base URL and the SMTP host, bare `#env` for the crypto keys, whose dev fallback is `resolve-keys`' job below.
 
-`:base-url` and `:smtp` are placeholders for now -- we use them later for magic-link emails ([the email login-flow chapter](21-auth-email-flow.md)). They live in config from the start so every environment has them, and so the config test we write in [the testing chapter](10-unit-testing.md) can assert their presence.
+`:base-url` and `:smtp` are placeholders for now -- we use them later for magic-link emails ([the email login-flow chapter](21-auth-email-flow.md)). They live in config from the start so every environment has them, and so the config test we write in [the testing chapter](10-unit-testing.md) can assert their presence. (The repository's `:smtp` map eventually grows `:user` and `:pass` entries -- same pattern, `#env` under `:prod` -- and a `:tls` flag that simply flips to true in production, once the email chapter starts sending.)
 
 Now the configuration namespace:
 
@@ -140,15 +140,34 @@ Now the configuration namespace:
   []
   (keyword (or (System/getenv "MYAPP_PROFILE") "dev")))
 
+(defn- require-prod-key!
+  "Refuse to start when `var-name` is unset in :prod.
+
+  A random fallback would invalidate sessions on every restart and
+  diverge across instances of a load-balanced deployment."
+  [profile var-name]
+  (when (= profile :prod)
+    (throw
+      (ex-info
+        (str var-name " env var is required in :prod — refusing to start with a random key. "
+             "Random keys break multi-instance deployments and silently log out users on restart.")
+        {:profile profile
+         :var var-name}))))
+
 (defn- resolve-keys
-  "Convert string keys to bytes, generate dev keys when not configured."
-  [config]
+  "Convert string keys to bytes, with profile-aware fallback policy.
+
+  In :dev, generate random keys when env vars are unset. In :prod, fail
+  closed — refusing to start beats silently drifting apart across
+  instances or invalidating sessions on each restart."
+  [config profile]
   (-> config
       (update :session-key
               (fn [^String k]
                 (or (when k (.getBytes k "ISO-8859-1"))
-                    (do (println "Warning: Generating random session key (dev mode)")
-                        (println "Warning: Sessions will not survive server restart")
+                    (do (require-prod-key! profile "SESSION_KEY")
+                        (println "⚠️  Generating random session key (dev mode)")
+                        (println "⚠️  Sessions will not survive server restart")
                         (generate-session-key)))))))
 
 (defn load-config
@@ -157,7 +176,7 @@ Now the configuration namespace:
   ([profile]
    (-> (io/resource "config.edn")
        (aero/read-config {:profile profile})
-       resolve-keys)))
+       (resolve-keys profile))))
 
 (def config
   "Delayed config map. Deref triggers a one-time load."
@@ -173,7 +192,7 @@ Key design decisions here:
 
 - **`config` is a `delay`**, not eagerly loaded at compile time. This matters because you don't want configuration loading to happen when the namespace is compiled -- only when it's first needed at runtime.
 - **`get-config` takes a variable path**, so `(get-config :server :port)` drills into nested maps naturally.
-- **Dev mode generates random keys** when environment variables are not set. This means you can start the REPL without configuring anything, but sessions won't survive a restart. Good enough for development, impossible to forget in production (it will fail loudly if `SESSION_KEY` is not set).
+- **Dev generates a random key; prod refuses to start without one.** Both policies live in one function: `resolve-keys` threads the active profile, and `require-prod-key!` throws in `:prod` rather than fall back -- a random key would silently log every user out on restart and diverge across the instances of a load-balanced deployment. So you can start a dev REPL without configuring anything, and you cannot forget the key in production. (The repository's `resolve-keys` later threads the auth signing key through the same policy, once [the auth chapter](20-auth-tokens.md) adds it.)
 
 ## Routing with Reitit
 
@@ -198,12 +217,12 @@ This requires `myapp.web.handler`, which we create in the next section.
 ```clojure
 (def routes
   [[""
-    ["/" {:get handler/home}]
+    ["/" {:get #'handler/home}]
     ["/health"
      {:get (fn [_] (handler/json-response {:status "ok"}))}]]])
 ```
 
-Each route is a vector of `[path data]`. The data map associates HTTP methods with handler functions. Routes nest naturally -- you can group related paths under a common prefix.
+Each route is a vector of `[path data]`. The data map associates HTTP methods with handler functions. Routes nest naturally -- you can group related paths under a common prefix. One character in there is load-bearing: the handler is referenced as a var, `#'handler/home`, not as a bare function. The router is built once and holds whatever it was given; handed the function value, it would keep tonight's definition forever, and re-evaluating `home` at the REPL would change nothing until the router was rebuilt. Handed the var, every request looks up the current definition, so a redefinition -- yours at the REPL, or [the live-reload chapter](06-live-reload.md)'s on every save -- is live on the next request without touching the router.
 
 We start with just two routes, because they are the two we can actually serve today: a home page and a health check. The real application grows this tree substantially -- auth endpoints, a dashboard, the recipe pages, an admin area -- but each of those needs machinery we have not built yet (sessions that mean something, a database, the view layer), so we add them in the chapters that introduce that machinery. Just as important, the *shape* of this tree changes too: the flat list here becomes a set of nested groups, each wrapped in its own middleware (current-user, auth, terms-accepted, admin) once those exist. So treat this as the seed, not the final form.
 
@@ -274,7 +293,7 @@ Two structural choices worth noting:
 - **`app*` is a `delay`**, just like our config. This prevents the middleware stack from being built at compile time (which would try to read config, which might not be available yet). It's built once on the first request.
 - **`app` is a plain function** that derefs the delay. The server receives `#'routes/app` (a var reference), which means you can redefine `app` at the REPL and the server picks up changes without restarting.
 
-Later chapters insert more middleware here -- locale negotiation ([i18n](11-i18n.md)), a no-cache guard for authenticated pages, the current-user/auth/terms/admin gates ([auth](20-auth-tokens.md), [admin](23-admin-dashboard.md)), and a strict Content-Security-Policy ([asset pipeline](24-asset-pipeline.md)) -- and `myapp.config` learns to resolve more keys (a `:signing-key` for magic-link HMAC, `:database-uri`, an `:admin-email`) the same way it resolves `:session-key` here.
+Later chapters insert more middleware here -- locale negotiation ([i18n](11-i18n.md)), a no-cache guard for authenticated pages, the current-user/auth/terms/admin gates ([auth](20-auth-tokens.md), [admin](23-admin-dashboard.md)), a catch-all error boundary that turns an uncaught exception into a logged, generic 500 ([the email-flow chapter](21-auth-email-flow.md)), and a strict Content-Security-Policy ([asset pipeline](24-asset-pipeline.md)) -- and `myapp.config` learns to resolve more keys (a `:signing-key` for magic-link HMAC, `:database-uri`, an `:admin-email`) the same way it resolves `:session-key` here.
 
 Putting the pieces together, here is the whole path a request takes through the parts this chapter built. Each middleware is a layer the request passes *inward* through on the way to a handler, and the response passes back *outward* through on the way to the browser -- which is exactly why order matters, and why the outermost layer is listed first:
 

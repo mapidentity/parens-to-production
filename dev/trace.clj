@@ -29,7 +29,8 @@
     couldn't see.
 
   Structurally absent in prod: dev/ path only, active only under the :storm
-  compiler, reached from prod code solely via requiring-resolve (nil without :dev)."
+  compiler, reached from prod code solely via guarded requiring-resolve calls
+  (the resolve throws without :dev; every caller catches and reads that as absence)."
   (:require
     [clojure.set :as set]
     [clojure.string :as str]

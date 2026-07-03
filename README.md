@@ -1,5 +1,7 @@
 # Building a Clojure/Datomic SaaS from Scratch
 
+**Server-rendered, framework-free, and hardened from the first commit.**
+
 This repository is **two things at once**:
 
 1. **An online book** — 26 chapters (in [`chapters/`](chapters/)) that walk through

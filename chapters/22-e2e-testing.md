@@ -70,9 +70,10 @@ Now Playwright needs a way to retrieve those captured emails. We add two endpoin
      :body (json/write-str emails)}))
 
 (defn- clear-emails-handler
-  "Clear captured emails -- optionally scoped via ?to=<addr> so parallel
-  Playwright workers don't trample each other's state. Without ?to=, clears
-  all (only safe in serial runs)."
+  "Clear captured emails — optionally scoped via ?to=<addr>.
+  With ?to= it drops only that recipient's emails so parallel workers
+  don't trample each other's state. Without it, clears all (only safe
+  in serial runs)."
   [request]
   (let [to (get-in request [:params :to])]
     (if to
@@ -95,7 +96,7 @@ These get mounted alongside the app's real routes:
       :delete clear-emails-handler}]))
 ```
 
-The `/test/emails` endpoint supports a `?to=` query parameter for filtering by recipient. This matters when you have tests running concurrently or multiple emails being sent in a single test. The `DELETE` method clears the atom, which you call in `beforeEach` to ensure test isolation.
+The `/test/emails` endpoint supports a `?to=` query parameter for filtering by recipient. This matters when you have tests running concurrently or multiple emails being sent in a single test. The `DELETE` method can clear the atom -- but the specs never call it, for reasons the isolation section below makes concrete.
 
 This pattern generalizes. Any external service your app depends on -- payment processing, SMS, webhooks -- can be stubbed the same way: replace the side-effecting function, capture the calls in an atom, expose them via a test endpoint.
 
@@ -251,13 +252,7 @@ module.exports = {
 };
 ```
 
-The `webServer` block is the key piece. Playwright will:
-
-1. Run the `command` to start the Clojure server.
-2. Poll the `url` until it returns a 200 response. This is your `/health` endpoint -- a simple route that returns `{"status": "ok"}`.
-3. Wait up to `timeout` milliseconds (300 seconds here -- JVM startup plus Datomic schema transacting can be slow on a cold, CPU-constrained CI runner, and a generous ceiling avoids flaky timeouts; the `stdout`/`stderr: 'pipe'` settings surface any server-side startup error in the logs instead of leaving you with a bare timeout).
-4. Run the tests once the server is healthy.
-5. Kill the server process when tests finish.
+The `webServer` block is the key piece: Playwright owns the server's whole lifecycle. It runs `command` to start the Clojure server, polls `url` -- the `/health` endpoint -- until it answers 200, runs the tests, and kills the process when they finish. The generous `timeout` (300 seconds) is deliberate: JVM startup -- loading the Datomic peer and compiling every required namespace from source -- can be slow on a cold, CPU-constrained CI runner, and a high ceiling avoids flaky timeouts, while the `stdout`/`stderr: 'pipe'` settings surface a server-side startup error in the logs instead of leaving you a bare timeout.
 
 The `reuseExistingServer` flag is useful during development. When not in CI, if a server is already running on port 9876, Playwright will use it instead of starting a new one. This lets you start the E2E server manually in a terminal, make changes, and re-run tests without the JVM startup penalty each time.
 
@@ -319,15 +314,9 @@ This walks through the entire registration: enter email, get the magic link from
 
 ### Test isolation
 
-Each test starts with a clean email inbox:
+The tempting move is a `beforeEach` that wipes the inbox with an unscoped `DELETE /test/emails` before every test. The handler's own docstring warns you off: without `?to=`, a clear is only safe in serial runs -- and this suite is not serial. The config sets neither `workers` nor `fullyParallel`, so Playwright's defaults apply: tests within a file run in order, but separate spec files land in separate workers and run concurrently. One worker's blanket clear can land between another worker's form submission and its `getMagicLink` call, wiping the email it was about to read -- the kind of race that fails one run in twenty and never on your machine.
 
-```javascript
-test.beforeEach(async ({ request }) => {
-  await request.delete('/test/emails');
-});
-```
-
-This calls our `DELETE /test/emails` endpoint to clear the atom. Combined with unique email addresses per test, this ensures complete isolation between tests.
+So the specs clear nothing. Isolation comes from never sharing state in the first place: every test generates a unique address, reads back only that address through the `?to=` filter, and takes the most recent match. The atom only ever grows, and that is fine -- entries from other tests, other workers, or (under `reuseExistingServer`) earlier runs are invisible behind the filter. No test mutates state another test can see, so no interleaving of workers can break one. The `DELETE` endpoint stays available for a suite that does accumulate enough state to care, and its `?to=` scoping keeps even that operation parallel-safe.
 
 ### Test: new user registration
 

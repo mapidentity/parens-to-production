@@ -12,6 +12,8 @@ Forgejo is a self-hosted Git forge (a fork of Gitea) that includes a built-in CI
 
 The cost is worth naming, because it is real. A host runner you own is one more machine to patch, secure, and keep online, and you forgo the elastic, zero-maintenance capacity that a hosted service like GitHub Actions gives you for nothing. The trade pays off precisely when you *already* self-host the forge -- the runner is then marginal infrastructure rather than new infrastructure. If you do not, hosted CI is the lower-effort answer, and the workflow below ports to it almost unchanged, since the syntax is shared.
 
+> **The port, made concrete.** "Almost unchanged" is checkable, so here is the whole diff for running this pipeline on GitHub Actions. Change `runs-on: host` to `runs-on: ubuntu-latest`. Swap Podman for the runner's Docker (`podman run` becomes `docker run`, and the `:Z` volume suffix -- an SELinux label -- simply goes away). Replace the host-mounted `.m2`/`.gitlibs` cache volumes with `actions/cache` steps keyed on `deps.edn`, since a hosted runner keeps nothing between jobs. Move the deploy key -- which the self-hosted runner keeps pre-installed as a file -- into the repository's encrypted secrets, with a step that writes it back to a key file before the `scp`. Everything else -- `on:`, `jobs:`, `steps:`, the container-per-step discipline, the gate order -- is identical, because Forgejo Actions deliberately speaks GitHub's dialect. What does *not* port is the trust model: your source, secrets, and deploy key now transit GitHub's infrastructure, which is exactly the trade the self-hosted runner exists to refuse. Neither answer is wrong; they price privacy and maintenance differently.
+
 The key difference from GitHub Actions is the runner model. Instead of ephemeral VMs, Forgejo Actions can run directly on the host machine. We use `runs-on: host` because our pipeline runs each step inside a Podman container anyway -- the host is just the orchestrator. This gives us full control over caching, networking, and the container runtime.
 
 ## The CI container image
@@ -403,7 +405,7 @@ There is no separate `scripts/verify-css-hash.bb` or `verify-css` task; asset in
     clojure -M:coverage
 ```
 
-Runs the test suite with code coverage tracking via the `:coverage` alias. This executes all unit and integration tests and produces a coverage report. A failing test means a non-zero exit code, which fails the pipeline step.
+The `:coverage` alias is the same command the commit gate runs locally; here it runs as the neutral referee -- a fresh container, no local state, the same 50% coverage floor. A failing test or a drop below the floor exits non-zero, and the pipeline stops at this step rather than shipping past it.
 
 ### Run end-to-end tests
 
@@ -420,7 +422,7 @@ Runs the test suite with code coverage tracking via the `:coverage` alias. This 
 
 This is where the Chromium browser inside the CI image earns its keep. Playwright launches a headless browser, starts the application, and runs through user flows -- clicking buttons, filling forms, verifying page content. The `-e CI=true` environment variable tells the test configuration to adjust timeouts and other settings for CI (where things may be slightly slower than on a developer machine).
 
-These tests catch an entire class of bugs that unit tests miss: broken routes, missing templates, JavaScript errors, form submissions that silently fail. They are slower than unit tests but worth every second.
+These tests catch an entire class of bugs that unit tests miss: broken routes, missing templates, JavaScript errors, form submissions that silently fail. They are slower than unit tests, and they are the first gate that fails when the app breaks in ways only a browser can see.
 
 ### Run Lighthouse CI
 
@@ -499,24 +501,24 @@ target=/opt/myapp/myapp.jar
 
 cp -f "$target" "$target.prev" 2>/dev/null || true  # keep the last-good jar to roll back to
 
-systemctl stop myapp                  # the brief outage window opens here
+sudo systemctl stop myapp             # the brief outage window opens here
 mv -f "$new_jar" "$target"            # same filesystem → mv is an atomic rename
-systemctl start myapp                 # start the new process
+sudo systemctl start myapp            # start the new process
 
 # If the new jar fails to come up, restore the previous one and fail the deploy.
 if ! systemctl is-active --quiet myapp; then
   echo "myapp failed to start — rolling back to previous jar" >&2
   [ -s "$target.prev" ] && mv -f "$target.prev" "$target"
-  systemctl restart myapp
+  sudo systemctl restart myapp
   exit 1
 fi
 ```
 
-It is deliberately small: the `systemd` unit owns restart-on-failure, logging, and the JVM flags, so the script's only job is the swap. Because `/tmp` and `/opt/myapp` sit on the same filesystem, the `mv` is an atomic rename rather than a copy. Two honesty points are worth naming plainly. First, this is **not** zero-downtime: `stop` → `mv` → `start` is a hard restart, so requests in flight during the swap are dropped and the site is unreachable for the second or two the JVM takes to boot. True zero-downtime -- a second app node drained behind the proxy, or a blue-green pair -- is the horizontal-scale work the afterword flags as out of scope; for a single-node SaaS a few seconds of off-hours restart is usually an acceptable trade, named rather than hidden. Second, the closing `is-active` check does more than report: a JAR that boots and immediately dies is rolled back to the previous jar (kept as `myapp.jar.prev`) and surfaced as a *failed deploy*, rather than left as a silent outage. The `deploy` user is granted exactly two `sudo` rights -- stop and start this one unit -- and nothing else.
+It is deliberately small: the `systemd` unit owns restart-on-failure, logging, and the JVM flags, so the script's only job is the swap. Because `/tmp` and `/opt/myapp` sit on the same filesystem, the `mv` is an atomic rename rather than a copy. Two honesty points are worth naming plainly. First, this is **not** zero-downtime: `stop` → `mv` → `start` is a hard restart, so requests in flight during the swap are dropped and the site is unreachable for the second or two the JVM takes to boot. True zero-downtime -- a second app node drained behind the proxy, or a blue-green pair -- is the horizontal-scale work the afterword flags as out of scope; for a single-node SaaS a few seconds of off-hours restart is usually an acceptable trade, named rather than hidden. Second, the closing `is-active` check does more than report: a JAR that boots and immediately dies is rolled back to the previous jar (kept as `myapp.jar.prev`) and surfaced as a *failed deploy*, rather than left as a silent outage. The `deploy` user is granted exactly three passwordless `sudo` rights -- `/usr/bin/systemctl stop myapp`, `start myapp`, and `restart myapp`, the third existing only for the rollback line -- and nothing else; the `is-active` check is a read-only query, so it needs no privilege at all.
 
 Static assets are served by Caddy, not by the JVM. In the companion repository's Caddyfile, the proxy applies `Cache-Control: public, max-age=31536000, immutable` to any content-hashed filename (the `\.([a-f0-9]{8})\.(css|js)$` pattern) and to the version-pinned `idiomorph-*.min.js`, and it sets the long-lived security headers (HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, and the `Cross-Origin-Opener-Policy`/`Cross-Origin-Resource-Policy` isolation pair). It deliberately does **not** set a Content-Security-Policy: the per-document CSP carries the SHA-256 hashes of the application's inline scripts and import map, so the *application* must own it. This is why immutable caching and asset integrity are two sides of one coin -- once a hashed file is out, browsers may cache it for a year, so `verify-assets` is the last chance to catch a hash that does not match its bytes.
 
-The SSH key (`deploy_ed25519`) is pre-installed on the CI runner and grants access to a `deploy` user on the application server. This user has limited permissions -- it can write to the static directory and execute the deploy script, nothing else.
+The SSH key (`deploy_ed25519`) is pre-installed on the CI runner and grants access to a `deploy` user on the application server. This user has limited permissions -- it owns `/opt/myapp`, so the jar swap itself needs no privilege; beyond that it can write to the static directory and run the deploy script under the three `systemctl` sudo rights named above, nothing else.
 
 ## The pipeline order
 

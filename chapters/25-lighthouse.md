@@ -62,7 +62,7 @@ Lighthouse needs to see authenticated pages, but it has no way to perform a logi
   (fn [request] (handler (assoc-in request [:session :user-email] (test-email)))))
 ```
 
-Two things to note here. First, the test email comes from the admin email in config, resolved at request time -- a function, not a top-level `def`, so it tracks whatever profile the server starts under rather than freezing the value when the namespace loads (the same runtime-config discipline as [the web-server chapter](05-web-server.md)'s `delay` and [the email login-flow chapter](21-auth-email-flow.md)'s SMTP config). This means the auto-authenticated user has admin privileges, so Lighthouse can audit admin pages too. Second, `wrap-auto-auth` is trivial -- one line of middleware that sets `:user-email` in the session map. The rest of the application sees a normal authenticated request.
+Two decisions are folded in here. First, the test email comes from the admin email in config, resolved at request time -- a function, not a top-level `def`, so it tracks whatever profile the server starts under rather than freezing the value when the namespace loads (the same runtime-config discipline as [the web-server chapter](05-web-server.md)'s `delay` and [the email login-flow chapter](21-auth-email-flow.md)'s SMTP config). This means the auto-authenticated user has admin privileges, so Lighthouse can audit admin pages too. Second, `wrap-auto-auth` is trivial -- one line of middleware that sets `:user-email` in the session map. The rest of the application sees a normal authenticated request.
 
 This is convenient and dangerous in equal measure, so state the boundary plainly: **this server is an unauthenticated admin bypass by construction.** Anyone who can reach it is the admin -- no token, no login. That is fine for what it is (a throwaway instance the CI job starts, audits, and kills on loopback), but it must *never* bind a non-loopback interface or outlive the audit. It lives on the test classpath precisely so it cannot be reached from the production jar; keep it that way -- do not add it to a deployable alias, and bind it to `127.0.0.1`, never `0.0.0.0`.
 
@@ -262,12 +262,13 @@ Using a variable font (the `VF` in `GeistVF.woff2`) also helps performance. Inst
 
 ### Semantic HTML
 
-With the head and the font handled, the accessibility audit's remaining deductions are structural -- and they only show up once you have real pages, because they are about the *shape* of the markup, not a tag in the head. A `<div>`-soup app fails them; Lighthouse wants the landmarks that let assistive technology navigate. The four that matter here:
+With the head and the font handled, the accessibility audit's remaining deductions are structural -- and they only show up once you have real pages, because they are about the *shape* of the markup, not a tag in the head. A `<div>`-soup app fails them. The three the gate actually scores here:
 
-- Use `<main>` for the primary content area. Lighthouse checks that exactly one `<main>` element exists.
-- Use `<nav>` for navigation sections. This helps screen readers identify and skip navigation.
-- Use proper heading hierarchy (`<h1>`, `<h2>`, etc.) without skipping levels.
-- Use `<label>` elements associated with form inputs via the `for` attribute.
+- Proper heading hierarchy (`<h1>`, `<h2>`, etc.) without skipping levels -- the `heading-order` audit.
+- `<label>` elements associated with form inputs via the `for` attribute -- the `label` audit.
+- An accessible name on every link and button, even when the visible text is gone -- the `link-name` and `button-name` audits. The nav tabs hide their text below the `sm` breakpoint, leaving icon-only links, so each carries an `aria-label`.
+
+And one caveat, stated honestly: use `<main>` for the primary content area and `<nav>` for navigation, but know that the gate does not hold you to it. In the Lighthouse this repo runs (12.x, bundled with `@lhci/cli`), the `<main>`-landmark audit (`landmark-one-main`) carries weight 0 and is hidden from the report, the general landmarks check is a weight-0 manual audit, and no scored audit looks for `<nav>` at all -- a page missing both still scores a clean 1.0, and the `minScore: 1` gate passes it untouched. We keep the landmarks anyway, partly because assistive technology navigates by them whether or not Lighthouse grades them, and partly because in this app `<main>` is enforced by something stricter than any audit: it is the morph target the dispatcher extracts on every navigation ([the morph-dispatcher chapter](14-morph-dispatcher.md)). Drop it and every page breaks, not just a score.
 
 In the app layout, this looks like:
 
@@ -278,11 +279,10 @@ In the app layout, this looks like:
     (base-layout
       locale
       [:div.min-h-screen.flex.flex-col.bg-surface-subtle
-       (top-nav locale user-email active-tab admin?)      ;; renders <nav>
-       [:main.flex-1.pb-16.md:pb-0                        ;; semantic <main>
-        [:div.mx-auto.max-w-7xl.px-4.py-6.sm:px-6.lg:px-8
-         body]]
-       (bottom-tabs locale active-tab admin?)])))          ;; renders <nav>
+       (top-nav locale user-email active-tab admin?)   ;; renders the <nav>
+       [:main.flex-1 {:data-layout "app"}              ;; the single <main>
+        [:div.mx-auto.max-w-5xl.px-4.py-8.sm:px-6
+         body]]])))
 ```
 
 And forms use explicit label associations:
@@ -294,7 +294,7 @@ And forms use explicit label associations:
          :placeholder (t locale :home/email-placeholder)}]
 ```
 
-These are not difficult changes, but they are easy to forget -- and Lighthouse in CI catches the omission before it ships. Re-run, and accessibility is at 100 but for one last class of failure, which is the only one you cannot retrofit with markup.
+These are not difficult changes, but they are easy to forget -- and for the scored ones, Lighthouse in CI catches the omission before it ships; `<main>` rides on the dispatcher's stricter guarantee instead. Re-run, and accessibility is at 100 but for one last class of failure, which is the only one you cannot retrofit with markup.
 
 ### Color contrast
 
@@ -315,7 +315,7 @@ The minimum ratio for normal text is 4.5:1 (AA standard). For large text it is 3
 
 The lesson: pick your grays carefully, and let Lighthouse verify the math. Eyeballing contrast is unreliable.
 
-With those four classes of failure closed -- the head, the font, the landmarks, the palette -- the cold run that started red comes back green across all five URLs. The point of walking them in order is not the list itself but the loop: every score Lighthouse reports traces to a specific audit with a specific reason, and the way you get to 100 is to read the deduction, not to memorize a checklist. Which is exactly why the next step is to make that loop run on every push.
+With those four classes of failure closed -- the head, the font, the markup structure, the palette -- the cold run that started red comes back green across all five URLs. The point of walking them in order is not the list itself but the loop: every score Lighthouse reports traces to a specific audit with a specific reason, and the way you get to 100 is to read the deduction, not to memorize a checklist. Which is exactly why the next step is to make that loop run on every push.
 
 ## How it fits in CI
 
@@ -333,6 +333,6 @@ The Lighthouse audit runs alongside the other verification scripts:
 
 ## Where this leaves us
 
-The apparatus is two files. One Clojure namespace on the test classpath boots the real application behind `wrap-auto-auth` and seeds just enough data for pages to render their true content rather than empty shells; one `lighthouserc.js` audits five real URLs and holds accessibility and best-practices at 100, with a 0.95 performance floor for measurement noise. The fixes that get there -- the head metadata, `font-display: swap`, the semantic landmarks, the contrast-checked palette -- live in the shared layout and the theme, so they apply to every page at once and a new page cannot quietly drop one.
+The apparatus is two files. One Clojure namespace on the test classpath boots the real application behind `wrap-auto-auth` and seeds just enough data for pages to render their true content rather than empty shells; one `lighthouserc.js` audits five real URLs and holds accessibility and best-practices at 100, with a 0.95 performance floor for measurement noise. The fixes that get there -- the head metadata, `font-display: swap`, the heading and labeling structure, the contrast-checked palette -- live in the shared layout and the theme, so they apply to every page at once and a new page cannot quietly drop one.
 
 The total cost is those two files; there is no wrapper script, because `lhci autorun` is the whole command. The ongoing cost is zero -- Lighthouse runs on every commit -- and the value is that performance, accessibility, and SEO regressions are caught the moment they are introduced, not weeks later when someone happens to run an audit by hand. That is the contract the chapter opened with: the 100 is not a trophy you won once, it is an invariant the gate keeps true on every push.

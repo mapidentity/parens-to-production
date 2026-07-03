@@ -30,17 +30,27 @@ Here is the build-hardening portion of `build.clj` -- the strict-compile gate an
     [clojure.tools.build.api :as b]))
 
 (def lib
+  "The Maven coordinates of the artifact this build produces."
   'com.myapp/myapp)
+
 (def version
+  "The version of the artifact this build produces."
   "0.1.0")
+
 (def class-dir
+  "Directory the AOT compiler writes .class files to. Also the root of the uberjar."
   "target/classes")
+
 (def uber-file
+  "The uberjar file the `uber` task produces. Run: `java -jar target/myapp.jar`."
   "target/myapp.jar")
+
 (def basis
+  "The build basis: the set of source paths, resource paths, and deps.edn files."
   (delay (b/create-basis {:project "deps.edn"})))
 
 (defn clean
+  "Delete the build output tree (target/). Run: clojure -T:build clean."
   [_]
   (b/delete {:path "target"}))
 
@@ -57,8 +67,8 @@ Here is the build-hardening portion of `build.clj` -- the strict-compile gate an
       (throw (ex-info "Performance warnings detected — add type hints to fix." {:warnings hits})))))
 
 (defn compile-strict
-  "AOT-compile src with *warn-on-reflection* and *unchecked-math* :warn-on-boxed,
-  then fail if any warnings from our code were emitted. compile-clj runs in a
+  "AOT-compile src with *warn-on-reflection* and *unchecked-math* :warn-on-boxed.
+  Then fail if any warnings from our code were emitted. compile-clj runs in a
   subprocess, so we capture stderr via :err :capture and scan it."
   [_]
   (let [{:keys [err]} (b/compile-clj
@@ -76,6 +86,7 @@ Here is the build-hardening portion of `build.clj` -- the strict-compile gate an
     (println "compile-strict: OK")))
 
 (defn uber
+  "Build an uberjar with the AOT-compiled classes and resources. Run: clojure -T:build uber."
   [_]
   (clean nil)
   (b/copy-dir
@@ -89,7 +100,7 @@ Here is the build-hardening portion of `build.clj` -- the strict-compile gate an
      :main 'myapp.core}))
 ```
 
-Let us break down the important parts.
+Five parts of that listing carry the design.
 
 ### Delayed basis
 
@@ -174,12 +185,14 @@ Consistent formatting eliminates an entire class of review noise. We use [zprint
 {:width 100
  :style [:community :respect-bl :sort-require]
  :map {:comma? false :force-nl? true}
+ :comment {:wrap? false}
  :vector {:respect-nl? true}
  :list {:hang? false :indent 2 :indent-arg 2}
  :pair {:force-nl? true}
  :fn-gt2-force-nl #{:fn}
  :fn-force-nl #{:noarg1-body :noarg1 :force-nl-body :force-nl :flow :flow-body :binding}
  :fn-map {"cond" [:pair-fn {:list {:respect-nl? true}}]
+          "if" :arg1
           "def" :arg1-force-nl-body
           "defn" :arg1-force-nl-body
           "defn-" :arg1-force-nl-body
@@ -194,12 +207,14 @@ Consistent formatting eliminates an entire class of review noise. We use [zprint
           "assoc" [:arg1-pair {:list {:hang? true}}]}}
 ```
 
-A few choices worth calling out:
+Four choices set the file's character:
 
 - **`:style [:community :respect-bl :sort-require]`** -- Start with community defaults, respect intentional blank lines (they carry meaning), and sort `require` clauses alphabetically.
 - **`:map {:comma? false :force-nl? true}`** -- No commas in maps (this is Clojure, not JSON), and every key-value pair on its own line.
 - **`:list {:hang? false :indent 2 :indent-arg 2}`** -- Disable hanging indentation globally. This is opinionated but it means function bodies always indent consistently at 2 spaces rather than aligning to the first argument.
 - **The `:fn-map`** -- Custom formatting for specific forms. Threading macros (`->`, `->>`, etc.) and `assoc` get hanging enabled because they read better that way. `cond` gets pair formatting. Datomic queries (`d/q`) get special vector handling because query vectors have their own structure.
+
+As the application grows, `:fn-map` grows with it: the repository's file adds rows for the `defview` macro from [the views chapter](13-hiccup-views.md), `db/transact*` from [the Datomic chapter](08-datomic.md), and the `log/*` macros. Same shape, more entries.
 
 The `reformat` script applies zprint across the entire codebase:
 
@@ -222,7 +237,7 @@ Run it after every edit:
 
 ## Static analysis with clj-kondo
 
-clj-kondo catches bugs, style issues, and questionable patterns at lint time without running your code. Here is the `.clj-kondo/config.edn`:
+clj-kondo catches bugs, style issues, and questionable patterns at lint time without running your code. Here is the `.clj-kondo/config.edn` as this chapter creates it -- the repository's copy opens with one more block, a `:discouraged-var` rule banning raw `datomic.api/pull` in favor of the wrappers [the Datomic chapter](08-datomic.md) builds, and grows `:lint-as` entries for macros later chapters define:
 
 ```clojure
 {:linters
@@ -268,15 +283,16 @@ The linters fall into four categories.
 
 The `:warn-on-reflection` linter with `:warn-only-on-interop true` is a nice complement to the compile-time check. It flags missing type hints during editing, before you even run the build. The `:warn-only-on-interop true` setting avoids false positives by only warning on actual Java interop calls, not every untyped binding.
 
-The `lint` script does two things: it runs clj-kondo, and it adds a grep-based guard for a rule clj-kondo cannot express. clj-kondo exits `0` for clean, `1` for warnings, `2` for errors -- and we want warnings to be informational (not fail the build) while errors do fail, so the script captures the return code rather than letting a bare invocation decide:
+The `lint` script does two things: it runs clj-kondo, and it adds a grep-based guard for a rule clj-kondo cannot express. clj-kondo's exit code encodes what it found -- `0` for a clean tree, `2` when the worst finding was a warning, `3` for errors -- and since every linter above is enabled at `:warning` precisely because we intend to fix what it flags, the gate treats *any* finding as a failure: `rc >= 2` fails the script. The return code is captured rather than left to a bare invocation so the grep check below can share the same exit:
 
 ```bash
 #!/usr/bin/env bash
 # clj-kondo lint + companion grep checks for things clj-kondo can't see.
 cd "$(dirname "$0")"
 
-# clj-kondo returns: 0 = clean, 1 = warnings, 2 = errors, 3 = bad invocation.
-# Warnings are informational (don't fail); errors fail.
+# clj-kondo returns: 0 = clean, 2 = warnings, 3 = errors.
+# Any finding fails the gate: every linter we enable is one we intend to
+# fix, so a warning here is a defect, not advice.
 clj-kondo --lint src test
 kondo_rc=$?
 
@@ -297,7 +313,7 @@ if [ -n "$violations" ]; then
   time_rc=1
 fi
 
-# Fail on any clj-kondo error (rc>=2) or any time violation.
+# Fail on any clj-kondo finding (rc >= 2: warnings or errors) or any time violation.
 if [ "$kondo_rc" -ge 2 ] || [ "$time_rc" -ne 0 ]; then
   exit 1
 fi

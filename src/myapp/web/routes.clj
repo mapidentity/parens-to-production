@@ -4,6 +4,7 @@
   auth, terms gate, admin gate)."
   (:require
     [clojure.string :as str]
+    [clojure.tools.logging :as log]
     [datomic.api :as d]
     [myapp.auth.core :as auth]
     [myapp.config :as config]
@@ -11,6 +12,7 @@
     [myapp.i18n :as i18n]
     [myapp.web.assets :as assets]
     [myapp.web.handler :as handler]
+    [myapp.web.views :as views]
     [reitit.ring :as ring]
     [ring.middleware.keyword-params :as keyword-params]
     [ring.middleware.params :as params]
@@ -121,8 +123,9 @@
 
 (defn- dev-json-handler
   "Build a dev-only Ring handler for a construction-view tracer JSON endpoint.
-  `sym` is the trace fn's qualified symbol, resolved lazily — nil in prod / non-
-  storm, so the route 404s there. `extract` is called with the resolved fn and the
+  `sym` is the trace fn's qualified symbol, resolved lazily — in prod / non-storm
+  the trace ns is absent, the resolve throws, and the try/catch below turns that
+  into a 404. `extract` is called with the resolved fn and the
   request and returns a JSON string (or nil → 404). Centralizes the
   requiring-resolve + try/catch + 200/404 plumbing every /dev/__* route repeated."
   [sym extract]
@@ -202,7 +205,11 @@
     ["/recipes/:id/diff" {:get #'handler/recipe-diff}]]
    ["/dev/ws"
     {:get (fn [request]
-            (if-let [handler (requiring-resolve 'dev-reload/websocket-handler)]
+            ;; dev-reload is absent in prod: the resolve THROWS there (it does
+            ;; not return nil), and the catch is what turns that into a 404.
+            (if-let [handler (try
+                               (requiring-resolve 'dev-reload/websocket-handler)
+                               (catch Throwable _ nil))]
               (handler request)
               {:status 404}))}]
    ;; Construction-view tracer (dev+storm only): the overlay fetches a page's
@@ -291,10 +298,13 @@
    ["/dev/__last-error"
     {:get (dev-json-handler 'trace/get-last-error-json (fn [f _req] (f)))}]
    ;; On-demand recorder clear: lets a long dev session reclaim memory.
-   ;; requiring-resolve is nil in prod, so this is a harmless no-op there.
+   ;; The trace ns is absent in prod / non-storm: the resolve throws there and
+   ;; the catch makes this a harmless no-op.
    ["/dev/__trace-clear"
     {:get (fn [_]
-            (when-let [c (requiring-resolve 'trace/clear-recordings!)]
+            (when-let [c (try
+                           (requiring-resolve 'trace/clear-recordings!)
+                           (catch Throwable _ nil))]
               (c))
             {:status 200
              :headers {"Content-Type" "application/json"
@@ -323,6 +333,24 @@
             (assoc-in [:headers "Reporting-Endpoints"] "csp=\"/csp-report\""))
         resp))))
 
+(defn wrap-errors
+  "Catch-all: an uncaught exception becomes a logged, generic 500.
+
+  Innermost of the base stack, so the error page still flows out through the
+  CSP/cache layers like any other HTML response, and `wrap-locale` has already
+  run on the way in. The page reveals nothing about the failure — not the
+  class, not the message; the stack trace goes to the log, where it belongs."
+  [handler]
+  (fn [request]
+    (try
+      (handler request)
+      (catch Throwable t
+        (log/error t "Unhandled exception" (select-keys request [:request-method :uri]))
+        (let [locale (:locale request :en)]
+          {:status 500
+           :headers {"Content-Type" "text/html; charset=UTF-8"}
+           :body (str (views/error-page locale (i18n/t locale :error/server-error)))})))))
+
 (def ^:private app*
   "Compiled Ring handler, built lazily to avoid loading config at compile time."
   (delay
@@ -336,7 +364,10 @@
                                     :max-age (* 30 24 60 60)}}]
                    [wrap-locale]
                    [wrap-no-cache-authenticated]
-                   [wrap-csp]]
+                   [wrap-csp]
+                   ;; Innermost: catches what routes/handlers throw; its 500
+                   ;; flows back out through wrap-csp like any other page.
+                   [wrap-errors]]
           ;; DEV + STORM only: the construction-view tracer, OUTERMOST so its
           ;; per-request timeline window spans the whole synchronous handler
           ;; (incl. the myapp middleware below). Gated on the ClojureStorm system

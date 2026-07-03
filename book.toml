@@ -1,5 +1,5 @@
 [book]
-title = "Building a Clojure/Datomic SaaS from Scratch"
+title = "Building a Clojure/Datomic SaaS from Scratch — Server-rendered, framework-free, and hardened from the first commit"
 authors = ["P. de Kruif"]
 language = "en"
 src = "chapters"

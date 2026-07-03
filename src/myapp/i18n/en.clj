@@ -106,4 +106,5 @@
    ;; Errors
    :error/title "Error"
    :error/invalid-magic-link "Invalid or expired magic link. Please request a new one."
-   :error/not-found "Not found."})
+   :error/not-found "Not found."
+   :error/server-error "Something went wrong on our end. Please try again."})

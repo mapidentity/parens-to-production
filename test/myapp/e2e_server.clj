@@ -36,8 +36,8 @@
 (defn- clear-emails-handler
   "Clear captured emails — optionally scoped via ?to=<addr>.
   With ?to= it drops only that recipient's emails so parallel workers
-  don't trample each other's state. Without it, clears all (legacy
-  behavior, only safe in serial runs)."
+  don't trample each other's state. Without it, clears all (only safe
+  in serial runs)."
   [request]
   (let [to (get-in request [:params :to])]
     (if to (swap! sent-emails (fn [es] (vec (remove #(= (:to %) to) es)))) (reset! sent-emails []))

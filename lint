@@ -2,8 +2,9 @@
 # clj-kondo lint + companion grep checks for things clj-kondo can't see.
 cd "$(dirname "$0")"
 
-# clj-kondo returns: 0 = clean, 1 = warnings, 2 = errors, 3 = bad invocation.
-# We want warnings to be informational (don't fail), errors to fail.
+# clj-kondo returns: 0 = clean, 2 = warnings, 3 = errors.
+# Any finding fails the gate: every linter we enable is one we intend to
+# fix, so a warning here is a defect, not advice.
 clj-kondo --lint src test
 kondo_rc=$?
 
@@ -30,7 +31,7 @@ if [ -n "$violations" ]; then
   time_rc=1
 fi
 
-# Fail on any clj-kondo error (rc>=2) or any time violation.
+# Fail on any clj-kondo finding (rc >= 2: warnings or errors) or any time violation.
 if [ "$kondo_rc" -ge 2 ] || [ "$time_rc" -ne 0 ]; then
   exit 1
 fi

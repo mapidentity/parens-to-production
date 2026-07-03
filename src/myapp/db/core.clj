@@ -116,7 +116,7 @@
 ;; Tenant isolation primitives
 ;;
 ;; Every domain entity in this system carries an owning user via a
-;; conventional `:<ns>/user` ref (e.g. :booking/user, :asset/user).
+;; conventional `:<ns>/user` ref (e.g. :recipe/user).
 ;; The helpers below are the ONLY safe way to convert an entity id
 ;; that came from outside the session — a path param, query param,
 ;; form field, htmx hidden input — into a Datomic eid. They refuse to
@@ -130,7 +130,7 @@
 
 (defn- infer-user-attr
   "Derive the conventional `:<ns>/user` ref attribute from a lookup-ref.
-  Example: [:booking/id …] → :booking/user.
+  Example: [:recipe/id …] → :recipe/user.
 
   Throws if the lookup-ref's attribute has no namespace. Reaching this
   branch means a programmer error (a non-namespaced attr was passed),
@@ -163,7 +163,7 @@
   handler can 404 in either case without leaking existence.
 
   `user-attr` defaults to the conventional `:<ns>/user` derived from the
-  lookup-ref's attribute (e.g. [:booking/id …] → :booking/user). Pass an
+  lookup-ref's attribute (e.g. [:recipe/id …] → :recipe/user). Pass an
   explicit `user-attr` only for entities that don't follow the convention.
 
   Use everywhere a non-session-derived id is converted to an eid."

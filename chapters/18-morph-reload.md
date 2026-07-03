@@ -17,7 +17,7 @@ The insight that drives this chapter is that **a save is not one thing.** A view
 
 This chapter rebuilds the watcher's dispatch around that matrix. It assumes the basic file watcher and WebSocket from [the live-reload chapter](06-live-reload.md), the server-rendered Hiccup views from [the Hiccup views chapter](13-hiccup-views.md), the client dispatcher's `fetchAndMorph` (idiomorph) from [the morph-dispatcher chapter](14-morph-dispatcher.md), the source inspector and its `inspector-load` loader from [the source inspector chapter](15-inspector.md), and the Tailwind setup from [the asset pipeline chapter](24-asset-pipeline.md).
 
-> **One artifact, two deliveries.** Dev and production ship *byte-identical* asset files from the same source; they differ only in the HTTP envelope (URL shape, cache headers) and the build cadence (watch vs. one-shot). The dev story below is the "watch" cadence of that single pipeline; [the asset pipeline chapter](24-asset-pipeline.md) covers the production cadence -- content hashing, an import map, and immutable caching. Nothing here changes the *bytes* between dev and prod; it only changes *when* and *how* they are delivered.
+> **One artifact, two deliveries.** Dev and production build from the same committed sources through one pipeline; they differ in the HTTP envelope (URL shape, cache headers) and the build cadence (watch vs. one-shot), not in a second asset tree to reconcile. For CSS the bytes are literally identical -- the dev watch runs the same minified Tailwind build production does. For JavaScript the module graph is identical -- same files, same import specifiers -- but production esbuild-minifies each module, so dev serves the readable source and prod ships the compressed bytes. The dev story below is the "watch" cadence of that pipeline; [the asset pipeline chapter](24-asset-pipeline.md) covers the production cadence -- content hashing, minification, an import map, and immutable caching. Nothing here changes *what* ships between dev and prod; it only changes *when* and *how* it is delivered.
 
 ## Revisiting `load-changed-file`
 
@@ -312,7 +312,51 @@ ws.onmessage = function (event) {
 };
 ```
 
-Three message types, four behaviors (because `reload` forks on `morphable`). Let us take them in turn.
+Three message types, four behaviors -- because `reload` forks on `morphable`.
+
+<svg viewBox="0 0 760 250" role="img" aria-label="The delivery matrix: each kind of edit becomes one message and one browser response" style="width:100%;height:auto;font-family:monospace">
+  <defs>
+    <marker id="dm-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8 z" fill="currentColor" opacity="0.45"/>
+    </marker>
+  </defs>
+  <g font-size="12" fill="currentColor" opacity="0.6">
+    <text x="20" y="26">the edit</text>
+    <text x="270" y="26">the message (/dev/ws)</text>
+    <text x="520" y="26">the browser's answer</text>
+  </g>
+  <g font-size="12.5" fill="currentColor">
+    <text x="20" y="62">a view .clj</text>
+    <text x="20" y="100">any other .clj</text>
+    <text x="20" y="138">a served .js</text>
+    <text x="20" y="176">styles.css rebuilt</text>
+    <text x="20" y="214">a load that threw</text>
+  </g>
+  <g stroke="currentColor" stroke-opacity="0.35" marker-end="url(#dm-arrow)">
+    <path d="M 175 58 H 258"/><path d="M 175 96 H 258"/><path d="M 175 134 H 258"/>
+    <path d="M 175 172 H 258"/><path d="M 175 210 H 258"/>
+  </g>
+  <g font-size="12.5" fill="currentColor">
+    <text x="270" y="62">reload · morphable: true</text>
+    <text x="270" y="100">reload · morphable: false</text>
+    <text x="270" y="138">reload · morphable: false</text>
+    <text x="270" y="176">css</text>
+    <text x="270" y="214">reload-error</text>
+  </g>
+  <g stroke="currentColor" stroke-opacity="0.35" marker-end="url(#dm-arrow)">
+    <path d="M 465 58 H 508"/><path d="M 465 96 H 508"/><path d="M 465 134 H 508"/>
+    <path d="M 465 172 H 508"/><path d="M 465 210 H 508"/>
+  </g>
+  <g font-size="12.5">
+    <text x="520" y="62" fill="#2a9d8f">morph &lt;main&gt; — page state kept</text>
+    <text x="520" y="100" fill="#e07840">full reload — scroll restored</text>
+    <text x="520" y="138" fill="#e07840">full reload — scroll restored</text>
+    <text x="520" y="176" fill="#4a7fb5">hot-swap the &lt;link&gt; — no reload</text>
+    <text x="520" y="214" fill="#c65353">stale-page warning stays up</text>
+  </g>
+</svg>
+
+*The matrix as it runs: one watcher event becomes one of three message types, and the browser answers with the narrowest correct response -- morph, reload, stylesheet swap, or an honest warning that what you see may be stale.*
 
 ### A view edit: morph `<main>` in place
 
@@ -464,7 +508,7 @@ The whole cycle -- from saving a file to seeing the updated page -- typically co
 
 **Why reuse `fetchAndMorph` for the morph path?** Idiomorph and `fetchAndMorph` already ship as the app's production interaction layer. Building a separate dev-only morph would mean a second, divergent code path to maintain and a second set of edge cases. Dev hot-reload is just one more caller of the production dispatcher, so the morph behaves in dev exactly as it does for real navigation.
 
-**Why `requiring-resolve` for dev/prod separation?** The pattern `(requiring-resolve 'dev-reload/websocket-handler)` is a runtime classpath check that returns nil when the namespace is absent. It is structurally impossible to accidentally enable dev reload in production -- the code simply is not there. The base layout uses the same check to decide whether to emit the dev scripts at all, so none of this advanced machinery leaks to a production page.
+**Why `requiring-resolve` for dev/prod separation?** The pattern -- a guarded `requiring-resolve` of `'dev-reload/websocket-handler` -- is a runtime classpath check: the resolve throws when the namespace is absent, and the catch reads that failure as "not present". It is structurally impossible to accidentally enable dev reload in production -- the code simply is not there. The base layout uses the same check to decide whether to emit the dev scripts at all, so none of this advanced machinery leaks to a production page.
 
 ## Where this leaves the loop
 

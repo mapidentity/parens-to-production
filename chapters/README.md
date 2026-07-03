@@ -1,5 +1,7 @@
 # Building a Clojure/Datomic SaaS from Scratch
 
+**Server-rendered, framework-free, and hardened from the first commit.**
+
 A hands-on, chapter-by-chapter guide to building a production-grade SaaS
 application in Clojure and Datomic. From a reproducible development
 environment all the way to automated CI/CD deployment.
@@ -14,8 +16,14 @@ the magnifier to search the full text.
 - **Strict compilation** to catch reflection and boxed math early
 - A **web server** with Ring, http-kit, and Reitit
 - **Live reload**, **DOM-morphing hot reload**, and a **Hiccup source inspector**
+- A ClojureStorm-powered **construction view**: one request's full execution,
+  recorded and projected onto the page it rendered
 - **Datomic** schema and queries, **i18n**, and **Tailwind** styling
-- **Server-rendered views** with Hiccup and **E2E testing** with Playwright
+- **Recipe versioning** -- versions, diffs, and forks read straight from
+  Datomic's history
+- **Server-rendered views** with Hiccup, a **morph dispatcher** for in-place
+  navigation, and **progressive enhancement** from SSR to islands
+- **E2E testing** with Playwright
 - **Passwordless auth** with single-use, HMAC-signed magic links
 - An **admin dashboard**, a hardened **asset pipeline** (hashing, SRI, CSP),
   **Lighthouse** audits, and **CI/CD**

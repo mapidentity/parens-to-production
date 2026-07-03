@@ -108,4 +108,5 @@
    ;; Errors
    :error/title "Fout"
    :error/invalid-magic-link "Ongeldige of verlopen magic link. Vraag een nieuwe aan."
-   :error/not-found "Niet gevonden."})
+   :error/not-found "Niet gevonden."
+   :error/server-error "Er ging iets mis aan onze kant. Probeer het opnieuw."})

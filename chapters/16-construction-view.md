@@ -53,7 +53,7 @@ You could push harder -- instrument more, propagate context across threads, capt
 
 `:classpath-overrides {org.clojure/clojure nil}` drops the normal Clojure jar so ClojureStorm's build provides `clojure.core`; `instrumentOnlyPrefixes=myapp.` keeps the recording to *our* functions (instrumenting `clojure.core` would bury the signal under millions of frames). Production never sees any of this: it resolves `org.clojure/clojure`, sets no storm properties, records nothing. The compiler swap is the heaviest dev affordance in the book -- it slows startup and makes the first hit to a page noticeably slower -- which is precisely why it lives behind an alias you choose to type.
 
-Notice what is *not* in that list: `flowstorm.startRecording=true`. The obvious move is to record from boot and read whatever's there -- and it is the move we made first. It is also the move we backed out of, because it is a memory leak. ClojureStorm's per-thread timelines are append-only; with recording left on, every view-namespace load, every REPL eval, every background tick accretes entries that are never reclaimed, and over a days-long `:storm` session the recording grew to roughly **30 GB**. So recording is **off at boot**, and the tracer turns it on for exactly the span of one page render and off again -- the recorder only ever holds the page currently on screen. The `-Xmx2g` cap is the backstop: if that leak ever creeps back, it surfaces as a fast, loud `OutOfMemoryError` instead of silently eating host RAM for a day. (The per-render gating is the middleware below; the finer question of *which* visit to retain across in-page morphs is a refinement we add in [chapter 17](17-construction-view-overlay.md).)
+Notice what is *not* in that list: `flowstorm.startRecording=true`. The obvious move is to record from boot and read whatever's there -- and it is the move we made first. It is also the move we backed out of, because it is a memory leak. ClojureStorm's per-thread timelines are append-only; with recording left on, every view-namespace load, every REPL eval, every background tick accretes entries that are never reclaimed, and over a days-long `:storm` session the recording grew to roughly **30 GB**. So recording is **off at boot**, and the tracer turns it on for exactly the span of one page render and off again -- the recorder only ever holds the page currently on screen. The `-Xmx2g` cap is the backstop: if that leak ever creeps back, it surfaces as a fast, loud `OutOfMemoryError` instead of silently eating host RAM for a day. (The per-render gating and the evict-on-navigation rule are both part of the middleware below; how the overlay reads a visit's accumulated recordings -- the page plus the morphs since -- is [chapter 17](17-construction-view-overlay.md)'s business.)
 
 When the dev system starts under `:storm`, `hot-reload` calls the tracer's `setup!` through the debugger API, guarded on the same storm property so a plain `:dev` REPL never tries to load FlowStorm:
 
@@ -163,8 +163,9 @@ Where do `start` and `end` come from? A Ring middleware, placed outermost, recor
 
 ```clojure
 (defn- record-page [handler req]
+  (when (full-navigation? req) (clear-recordings!)) ; a full navigation evicts the prior visit
+  (enable-recording!)                               ; ...then record ONLY for this render
   (let [tid (thread-id) start (timeline-len tid) t0 (System/nanoTime)]
-    (enable-recording!)        ; record ONLY for this render...
     (try
       (let [resp (handler req) ms (/ (- (System/nanoTime) t0) 1e6)]
         (if (html? resp)
@@ -192,7 +193,7 @@ Where do `start` and `end` come from? A Ring middleware, placed outermost, recor
       (handler req))))            ; assets, JSON XHR, /dev/ fetches: recording stays off
 ```
 
-Three helpers it leans on. The first decides whether a request is even worth recording -- only a page render is, never a sub-resource or a prefetch:
+Four helpers it leans on. The first decides whether a request is even worth recording -- only a page render is, never a sub-resource or a prefetch:
 
 ```clojure
 (defn- page-request? [req]
@@ -203,7 +204,21 @@ Three helpers it leans on. The first decides whether a request is even worth rec
          (not (some-> (get h "purpose")     (str/includes? "prefetch"))))))
 ```
 
-This is the same `Accept: text/html` distinction the dispatcher already trades on: a full navigation, a form submit, and the dispatcher's fetch-and-morph all ask for `text/html`, while CSS/JS/image sub-resources and JSON XHR do not. Gating on it means the recorder is never even switched on for an asset, an XHR, or a prefetch -- so assets and idle time accrete nothing, and a recorded window is always a page the user actually saw. The other two helpers recognize an HTML response, and weld the trace id onto its `<html>` so the browser can find it:
+This is the same `Accept: text/html` distinction the dispatcher already trades on: a full navigation, a form submit, and the dispatcher's fetch-and-morph all ask for `text/html`, while CSS/JS/image sub-resources and JSON XHR do not. Gating on it means the recorder is never even switched on for an asset, an XHR, or a prefetch -- so assets and idle time accrete nothing, and a recorded window is always a page the user actually saw.
+
+The second decides when a recording's lease is up. A *full* navigation -- address bar, hard refresh, back/forward, a plain form submit -- replaces everything on screen, so the previous visit and all the morphs layered onto it go stale together, and `record-page` evicts them before recording the new page. An in-page morph swaps only a region; the rest of the page and its trace ids are still on screen and must stay readable, so a morph records but never clears. The browser has already made exactly this distinction for us:
+
+```clojure
+(defn- full-navigation? [req]
+  ;; Browsers tag top-level loads `Sec-Fetch-Mode: navigate`; the dispatcher's
+  ;; fetch-and-morph is a fetch(), so its mode is cors/same-origin — NOT
+  ;; navigate. (Non-browser clients omit the header; treat them as full loads
+  ;; so a bare curl still resets.)
+  (let [mode (get-in req [:headers "sec-fetch-mode"])]
+    (or (nil? mode) (= mode "navigate"))))
+```
+
+This is the eviction rule the memory story below leans on -- and one more place the platform hands us a distinction we would otherwise have to invent. The other two helpers recognize an HTML response, and weld the trace id onto its `<html>` so the browser can find it:
 
 ```clojure
 (defn- html? [resp]
@@ -216,6 +231,41 @@ This is the same `Accept: text/html` distinction the dispatcher already trades o
 ```
 
 This is sound for one reason, and it is the same reason the inspector's `for`-row tagging was sound: **our request path is synchronous**. `http-kit` serves each request start-to-finish on one worker thread; every handler calls the domain layer and Datomic *inline*; `hiccup2`'s `html` macro forces its sequences eagerly before the response map is returned. So a request is *exactly* the slice `[start, end)` of one thread's timeline -- no `future`, no `core.async`, no context-propagation machinery to chase a span across threads. (An async handler would break this; the day one appears, the slice boundary is the thing to revisit.)
+
+<svg viewBox="0 0 760 235" role="img" aria-label="A request as a slice of one thread's append-only timeline" style="width:100%;height:auto;font-family:monospace">
+  <text x="40" y="24" fill="currentColor" font-size="13" opacity="0.75">thread 27 — FlowStorm timeline (append-only)</text>
+  <text x="240" y="50" fill="currentColor" font-size="11" opacity="0.6">enable-recording!</text>
+  <text x="566" y="50" fill="currentColor" font-size="11" opacity="0.6" text-anchor="end">disable-recording!</text>
+  <rect x="40" y="58" width="680" height="42" fill="none" stroke="currentColor" stroke-opacity="0.35"/>
+  <g fill="currentColor" opacity="0.15">
+    <rect x="46" y="63" width="14" height="32"/><rect x="64" y="63" width="14" height="32"/>
+    <rect x="82" y="63" width="14" height="32"/><rect x="100" y="63" width="14" height="32"/>
+    <rect x="118" y="63" width="14" height="32"/><rect x="136" y="63" width="14" height="32"/>
+  </g>
+  <g fill="#2a9d8f">
+    <rect x="242" y="63" width="14" height="32"/><rect x="260" y="63" width="14" height="32"/>
+    <rect x="278" y="63" width="14" height="32"/><rect x="296" y="63" width="14" height="32"/>
+    <rect x="314" y="63" width="14" height="32"/><rect x="332" y="63" width="14" height="32"/>
+    <rect x="350" y="63" width="14" height="32"/><rect x="368" y="63" width="14" height="32"/>
+    <rect x="386" y="63" width="14" height="32"/><rect x="404" y="63" width="14" height="32"/>
+    <rect x="422" y="63" width="14" height="32"/><rect x="440" y="63" width="14" height="32"/>
+    <rect x="458" y="63" width="14" height="32"/><rect x="476" y="63" width="14" height="32"/>
+    <rect x="494" y="63" width="14" height="32"/><rect x="512" y="63" width="14" height="32"/>
+    <rect x="530" y="63" width="14" height="32"/><rect x="548" y="63" width="14" height="32"/>
+  </g>
+  <text x="104" y="115" fill="currentColor" font-size="11" opacity="0.5" text-anchor="middle">the visit so far — evicted on</text>
+  <text x="104" y="129" fill="currentColor" font-size="11" opacity="0.5" text-anchor="middle">the next full navigation</text>
+  <text x="655" y="83" fill="currentColor" font-size="11" opacity="0.5" text-anchor="middle">idle — recording off</text>
+  <path d="M 240 104 v 8 M 566 104 v 8" stroke="currentColor" stroke-opacity="0.6" fill="none"/>
+  <text x="240" y="128" fill="currentColor" font-size="11" opacity="0.7" text-anchor="middle">start = 1042</text>
+  <text x="566" y="128" fill="currentColor" font-size="11" opacity="0.7" text-anchor="middle">end = 1199</text>
+  <path d="M 262 158 L 244 132 M 528 158 L 562 132" stroke="currentColor" stroke-opacity="0.35" fill="none"/>
+  <rect x="220" y="160" width="360" height="30" fill="none" stroke="currentColor" stroke-opacity="0.5" rx="4"/>
+  <text x="400" y="180" fill="currentColor" font-size="12.5" text-anchor="middle">{:tid 27 :start 1042 :end 1199 :epoch 3 …}</text>
+  <text x="400" y="215" fill="currentColor" font-size="11" opacity="0.6" text-anchor="middle">the descriptor is the only thing we store (a ring of ≤ 256) — the entries stay in FlowStorm's recorder</text>
+</svg>
+
+*A request is a slice: `record-page` flips recording on, notes the timeline length before and after the handler, and stores a small descriptor. Everything heavy stays where it already lives.*
 
 We also stamp `X-Myapp-Trace` on *every* HTML response, not just the full-page load. That header is what lets the overlay re-attach a trace to a region the dispatcher morphs in later -- the third chapter collects on it.
 
@@ -251,7 +301,7 @@ The descriptors live in a small bounded ring buffer -- newest-wins, capped -- ke
     (catch Throwable _ nil)))
 ```
 
-> **What bounds memory -- two caps, on two different things.** FlowStorm's per-thread timeline is append-only: while recording is on, it only grows. The fix is not to cap the timeline but to *stop writing to it* -- recording is on only for the span of a render (the `enable`/`disable` pair above), so between requests the recorder is idle and accretes nothing. A full navigation additionally calls `clear-recordings!` to evict the previous visit, so the recorder holds at most the current page-visit (the page load plus any morphs layered onto it since -- the morph refinement is [chapter 17](17-construction-view-overlay.md)). That is the cap that matters, and it is what replaced an earlier "record from boot" build whose timeline grew to ~30 GB. Our descriptor ring buffer is a *second*, independent cap on a much smaller thing -- the four-field `{:tid :start :end}` descriptors, of which we keep the newest 256. The `clear-recordings!` handle and its `/dev/__trace-clear` endpoint still exist as an escape hatch, but they are no longer a discipline you have to remember: the per-render gating and the per-navigation clear keep memory flat on their own, and `-Xmx2g` is there only to make any regression fail loudly.
+> **What bounds memory -- two caps, on two different things.** FlowStorm's per-thread timeline is append-only: while recording is on, it only grows. The fix is not to cap the timeline but to *stop writing to it* -- recording is on only for the span of a render (the `enable`/`disable` pair above), so between requests the recorder is idle and accretes nothing. A full navigation additionally calls `clear-recordings!` to evict the previous visit, so the recorder holds at most the current page-visit (the page load plus any morphs layered onto it since; `full-navigation?` above is the deciding rule). That is the cap that matters, and it is what replaced an earlier "record from boot" build whose timeline grew to ~30 GB. Our descriptor ring buffer is a *second*, independent cap on a much smaller thing -- the four-field `{:tid :start :end}` descriptors, of which we keep the newest 256. The `clear-recordings!` handle and its `/dev/__trace-clear` endpoint still exist as an escape hatch, but they are no longer a discipline you have to remember: the per-render gating and the per-navigation clear keep memory flat on their own, and `-Xmx2g` is there only to make any regression fail loudly.
 
 Everything else in `trace.clj` is a *projection*: a pure function from a stored descriptor to JSON. They all start the same way -- resolve the descriptor, `read-window` its slice, build something, serialize. The top-level one is `project`, which we assemble piece by piece over the next sections; here is the endpoint wrapper that serializes it:
 
@@ -468,6 +518,40 @@ It is worth seeing the output shape concretely, because the next chapter's overl
 
 Every conditional key above (`:instance`, `:morph`, `:lazy`, `:threw`, the two `:children` lists) is a flag the overlay reads to decide what to draw; keep this shape in mind for the next chapter, where each becomes a projection.
 
+<svg viewBox="0 0 760 250" role="img" aria-label="The same recording under temporal and lexical parenting" style="width:100%;height:auto;font-family:monospace">
+  <defs>
+    <marker id="cv-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 8 4 L 0 8 z" fill="currentColor" opacity="0.5"/>
+    </marker>
+  </defs>
+  <text x="20" y="28" fill="currentColor" font-size="13" opacity="0.75">temporal — where it ran (:children-rt)</text>
+  <g font-size="12.5" fill="currentColor">
+    <text x="20" y="58">admin-dashboard</text>
+    <text x="20" y="80">├─ users-table</text>
+    <text x="160" y="80" opacity="0.5">(writes the (for …))</text>
+    <text x="20" y="102">└─ base-layout</text>
+    <text x="43" y="124">└─ iter--</text>
+    <text x="160" y="124" opacity="0.5">(lazy seq, realized here)</text>
+    <text x="66" y="146">└─</text>
+    <text x="88" y="146" fill="#e07840">fmt-instant</text>
+  </g>
+  <text x="430" y="28" fill="currentColor" font-size="13" opacity="0.75">lexical — where it was written (:children)</text>
+  <g font-size="12.5" fill="currentColor">
+    <text x="430" y="58">admin-dashboard</text>
+    <text x="430" y="80">├─ users-table</text>
+    <text x="430" y="102">│  └─ </text>
+    <text x="478" y="102" fill="#e07840">fmt-instant</text>
+    <text x="568" y="102" opacity="0.6">:lazy</text>
+    <text x="430" y="124">└─ base-layout</text>
+    <text x="446" y="146" opacity="0.5">↑ :realized-by "base-layout"</text>
+  </g>
+  <path d="M 196 152 C 290 200, 380 170, 496 108" stroke="currentColor" stroke-opacity="0.5" fill="none" marker-end="url(#cv-arrow)"/>
+  <text x="380" y="210" fill="currentColor" font-size="11" opacity="0.6" text-anchor="middle">re-parented: the runtime path crosses an iter-- frame, and the for-body's owning fn appears exactly once,</text>
+  <text x="380" y="226" fill="currentColor" font-size="11" opacity="0.6" text-anchor="middle">so the move is unambiguous — both trees are kept, and the overlay's toggle switches between them</text>
+</svg>
+
+*One recording, two parentings: temporally, `fmt-instant` ran during HTML serialization under `base-layout`; lexically, it belongs to `users-table`, where it was written. The tree that reads the way a human expects is the one that would be a lie without the `:lazy` flag pointing back at the truth.*
+
 ## N+1 detection, for free
 
 We already have every db-op keyed to its form. A query form that ran two or more times in one request is the classic N+1 signal -- a query inside a `for`, or a redundant lookup across the middleware chain. `detect-repeats` is a pure projection over the spans we just built:
@@ -485,9 +569,9 @@ We already have every db-op keyed to its form. A query form that ran two or more
        vec))
 ```
 
-`:where` lists the spans that ran the query, so the overlay can turn each into a clickable chip. In this app it immediately surfaces a real one: `/admin` and `/dashboard` run `find-user-by-email` twice, because the auth middleware chain looks the user up more than once.
+`:where` lists the spans that ran the query, so the overlay can turn each into a clickable chip. The recipe index in the screenshot wears one such flag honestly: `all-recipes` maps `pull*` over the ids its `d/q` returned, so the same pull form runs once per card -- the classic read shape of a Datomic peer, where each "query" is a local index walk and the chip is information, not an indictment. The detector earned its keep on a real one, though: `/admin` and `/dashboard` used to run `find-user-by-email` twice per request, because each auth gate in the middleware chain looked the user up for itself. The repeated-query chip is what made that visible, and the fix is the shape `wrap-current-user` has today -- resolve the user once, put `:user-eid` and `:admin?` on the request, and let the later gates read the request instead of the database. Run the detector now and that chip is gone, which is the correct output: its job is to make every repeated read a decision instead of an accident.
 
-## project: the whole trace
+## `project`: the whole trace
 
 `project` assembles the response the overlay first fetches -- request metadata, the recording flag, the span tree, and the repeats. (`recording?` just asks FlowStorm whether the recorder is on, so the overlay can warn if it isn't.)
 
@@ -506,14 +590,14 @@ We already have every db-op keyed to its form. A query form that ran two or more
 
 ## Serving it, and the middleware gate
 
-The trace is reached through a dev-gated route in `routes.clj`. Its shape is the whole production-safety story for the server: **resolve the handler through `requiring-resolve`, which is `nil` without the `:dev` `trace` namespace, so the route 404s in production.**
+The trace is reached through a dev-gated route in `routes.clj`. Its shape is the whole production-safety story for the server: **resolve the handler through a guarded `requiring-resolve` -- without the `:dev` `trace` namespace the resolve throws, the catch turns that throw into nil, and the route 404s in production.**
 
 ```clojure
 ;; The recorded trace for a page, by the id the overlay reads from <html>.
 ["/dev/__trace/:id"
  {:get (fn [request]
          (or (try
-               (when-let [gj (requiring-resolve 'trace/get-trace-json)]   ; nil in prod → 404
+               (when-let [gj (requiring-resolve 'trace/get-trace-json)]   ; prod: throws → catch → 404
                  (when-let [j (gj (get-in request [:path-params :id]))]
                    {:status 200
                     :headers {"Content-Type" "application/json" "Cache-Control" "no-store"}

@@ -2,13 +2,15 @@
 
 Most SaaS applications reach for PostgreSQL or MySQL without a second thought. They are battle-tested, well-documented, and familiar. But for an application where the history of data matters -- think accounting, compliance, audit trails -- you quickly find yourself bolting on soft deletes, history tables, and temporal queries. You end up reimplementing, badly, what Datomic gives you out of the box.
 
-Datomic treats data as immutable facts over time. Every transaction is recorded. Every past state of the database is queryable. Nothing is ever truly deleted -- it is retracted, and the retraction itself is a fact. For a SaaS that handles financial data, this is not a nice-to-have. It is the correct data model.
+Datomic treats data as immutable facts over time. Every transaction is recorded. Every past state of the database is queryable. Nothing is ever truly deleted -- it is retracted, and the retraction itself is a fact. For a SaaS whose product is the history of its data -- ours versions recipes -- this is not a nice-to-have. It is the correct data model.
+
+> **If you are on PostgreSQL.** The cost of this chapter's choice, priced for the reader who cannot make it. Everything [the recipe-domain chapter](09-recipe-domain.md) will read out of Datomic for free, you build: version history becomes a `recipe_versions` table plus a write to it on every edit (application code or trigger -- both work, both can drift from the live row); "as of" becomes temporal tables where your tooling supports them, or timestamp predicates against the versions table; the stable version *address* (our basis-t in a URL) becomes a version id you mint and index; and the guarantee that the audit trail cannot disagree with the data -- because they are the same thing -- becomes a discipline your tests enforce instead of a property the store provides. What survives the swap in shape: the domain functions' signatures and the scenarios their tests pin down, the line-diff (pure data in, pure data out), the web layer's structure, and the tenancy waist -- `entid-owned` becomes the `WHERE user_id = ?` you refuse to omit. The trade in the other direction is real too: a mainstream database buys operational maturity, hosting everywhere, and a hiring pool. This book judges a history-shaped domain worth the niche store; your domain may judge differently, and now the bill is itemized.
 
 Setting up Datomic in a Clojure SaaS application has four parts: the Peer library, schema design, a wrapper layer that bridges `java.time` and Datomic's `java.util.Date`, and a test fixture that gives you a fresh database per test.
 
 ## The Datomic peer library
 
-Datomic offers different deployment models. We use the Peer library, where the application process itself contains the query engine. There is no separate query server to manage -- your app connects directly to the storage backend and runs queries in-process.
+Datomic offers different deployment models. We use the Peer library, where the application process itself contains the query engine. There is no separate query server to manage -- your app reads the storage backend directly and runs queries in-process; only writes pass through Datomic's transactor, a piece of the production topology named honestly below.
 
 In `deps.edn`:
 
@@ -34,6 +36,8 @@ Here is how we configure it:
 ```
 
 In development, `datomic:mem://myapp-dev` creates an in-memory database that disappears when the process stops. Fast startup, zero infrastructure. In production, the `DATABASE_URI` environment variable points to something like `datomic:sql://myapp?jdbc:postgresql://db-host:5432/datomic`, backed by PostgreSQL.
+
+One honest word about what that URI implies, because no other chapter stops to explain it: production Datomic Pro is not just PostgreSQL. A **transactor** -- one small JVM process -- sits between every write and the storage, serializing transactions; the Peer reads storage directly and never queues behind it, but the transactor must be provisioned, supervised, and pointed at the same storage the peers read. Development never meets it (`datomic:mem` is transactor-free), which is exactly why it is worth naming here: it is a piece of production infrastructure the dev loop cannot rehearse. The [afterword](afterword.md)'s horizontal-scale caveat -- a single process against a single transactor -- is about exactly this piece.
 
 The code that connects to the database does not know or care which backend it is talking to:
 
@@ -290,12 +294,7 @@ Testing database code well requires isolation. Each test should start with a cle
       (d/delete-database uri))))
 ```
 
-This fixture does four things:
-
-1. Creates a uniquely-named in-memory database using `System/nanoTime` to avoid collisions.
-2. Installs the full schema.
-3. Binds the connection to a dynamic var and redefines `db/get-connection` to return it, so all application code that calls `get-connection` gets the test database.
-4. Deletes the database after the test completes.
+The fixture pays for itself in two of its four moves. The uniquely-named database (`System/nanoTime` in the URI) means no test ever inherits a leftover `datomic:mem` database from an earlier run in the same JVM, and rebinding `db/get-connection` is what points *all* application code -- not just code that happens to take a connection parameter -- at the test database for the fixture's extent. The other two moves are the obvious bookends: install the schema on the way in, delete the database on the way out.
 
 Using it in a test namespace is one line:
 

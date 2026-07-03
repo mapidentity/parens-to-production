@@ -74,7 +74,7 @@ The keystone is this: a Hiccup element's source position can ride on the runtime
 
 (let [form (tr/read (rt/indexing-push-back-reader "[:div [:span \"hi\"]]"))]
   {:outer (meta form) :inner (meta (nth form 1))})
-;;=> {:outer {:line 1 :column 1 :end-line 1 :end-column 21}
+;;=> {:outer {:line 1 :column 1 :end-line 1 :end-column 20}
 ;;    :inner {:line 1 :column 7 :end-line 1 :end-column 19}}
 ```
 

@@ -31,7 +31,7 @@ All of the dev tooling lives in a `dev/` directory that is on the classpath *onl
 
 Two of those deps serve later code. `tools.reader` is not used by the watcher -- it feeds the source inspector's loader ([the inspector](15-inspector.md)), which reads view files form-by-form. `tools.namespace` is the full-refresh library from option (b) above: the reload loop does not use it, but it stays available for the occasional manual `refresh` at the REPL. Neither ships in production.
 
-Because `dev/` is an extra path, the namespaces in it -- `hot-reload`, `dev-reload`, `user` -- exist on the classpath when you develop with the `:dev` alias and do not exist at all in a production build. This is not a convention or a runtime flag; it is a structural fact about what code is present. We will lean on it twice: the WebSocket route and the browser-side script both check, at runtime, whether the dev namespace can be resolved, and both become inert when it cannot. `requiring-resolve` returning nil in production is the same guarantee viewed from the calling side.
+Because `dev/` is an extra path, the namespaces in it -- `hot-reload`, `dev-reload`, `user` -- exist on the classpath when you develop with the `:dev` alias and do not exist at all in a production build. This is not a convention or a runtime flag; it is a structural fact about what code is present. We will lean on it twice: the WebSocket route and the browser-side script both check, at runtime, whether the dev namespace can be resolved, and both become inert when it cannot. A guarded `requiring-resolve` -- resolve, and treat failure as absence -- is the same guarantee viewed from the calling side.
 
 ## The file watcher
 
@@ -175,7 +175,7 @@ Stopping the watcher is the mirror image:
     (log/info "File watcher stopped")))
 ```
 
-Closing the WatchService makes the daemon thread's blocking `.take` throw the `ClosedWatchServiceException` we catch, so the thread unwinds on its own. Clean and simple.
+Closing the WatchService makes the daemon thread's blocking `.take` throw the `ClosedWatchServiceException` we catch, so the thread unwinds on its own.
 
 ## WebSocket browser refresh
 
@@ -275,18 +275,19 @@ The socket endpoint itself accepts a connection, registers it, and forgets it on
 
 ### Wiring the route -- and keeping it out of production
 
-The `/dev/ws` route is registered with `requiring-resolve`, which returns nil when the `dev-reload` namespace is not on the classpath:
+The `/dev/ws` route resolves its handler at request time with `requiring-resolve`. One sharp edge matters here: for a namespace that is not on the classpath, `requiring-resolve` does not return nil -- the `require` inside it throws -- so the guard must catch, and read the failure as absence:
 
 ```clojure
 ;; In the route definitions
 ["/dev/ws"
  {:get (fn [request]
-         (if-let [handler (requiring-resolve 'dev-reload/websocket-handler)]
+         (if-let [handler (try (requiring-resolve 'dev-reload/websocket-handler)
+                               (catch Throwable _ nil))]
            (handler request)
            {:status 404}))}]
 ```
 
-The route entry exists in the route table in every build, but in production the `dev-reload` namespace is absent, `requiring-resolve` yields nil, and the endpoint returns 404. There is no dev WebSocket server in production because there is no handler to run.
+The route entry exists in the route table in every build, but in production the `dev-reload` namespace is absent, the resolve fails, the catch converts the failure to nil, and the endpoint returns 404. There is no dev WebSocket server in production because there is no handler to run.
 
 The same guard governs whether the browser even loads the dev script. The base layout emits the `dev-reload.js` `<script>` only when the dev namespace resolves:
 

@@ -9,6 +9,7 @@
     [clojure.test :refer [deftest is testing]]
     [myapp.web.assets :as assets]
     [myapp.web.markdown :as markdown]
+    [myapp.web.routes :as routes]
     [myapp.web.views :as views]))
 
 (set! *warn-on-reflection* true)
@@ -109,3 +110,23 @@
           (is (str/includes? im "integrity") "integrity block present when SRI exists")
           (is (str/includes? im "sha384-MODHASH")))
         (finally (reset! a saved))))))
+
+(deftest wrap-errors-returns-generic-500
+  (testing "an uncaught handler exception becomes a styled, generic 500"
+    ;; The ERROR line this logs is expected — it proves the log path runs.
+    (let [handler (routes/wrap-errors (fn [_] (throw (RuntimeException. "secret internal detail"))))
+          resp (handler
+                 {:request-method :get
+                  :uri "/boom"
+                  :locale :en})]
+      (is (= 500 (:status resp)))
+      (is (str/includes? (get-in resp [:headers "Content-Type"]) "text/html"))
+      (is (str/includes? (:body resp) "Something went wrong"))
+      (testing "the failure's internals never reach the body"
+        (is (not (str/includes? (:body resp) "secret internal detail")))
+        (is (not (str/includes? (:body resp) "RuntimeException"))))))
+  (testing "a healthy response passes through untouched"
+    (let [resp {:status 200
+                :headers {}
+                :body "ok"}]
+      (is (= resp ((routes/wrap-errors (fn [_] resp)) {}))))))

@@ -92,7 +92,7 @@ For testing Ring handlers, you need request maps. Writing them by hand every tim
     params (assoc :params params)))
 ```
 
-Usage in tests:
+In a test it reads like the request it fakes:
 
 ```clojure
 ;; Simple GET
@@ -205,7 +205,9 @@ Rather than testing each route individually, a data-driven approach lists all ex
 ```clojure
 (def ^:private router
   "The application router, built once for path-resolution tests."
-  (ring/router routes/routes))
+  ;; `:conflicts nil` mirrors prod -- tolerates static-vs-dynamic
+  ;; route overlaps (static path wins, dynamic ids fall through).
+  (ring/router routes/routes {:conflicts nil}))
 
 (defn- match
   "Resolve a path against the app router (method is checked by the test).
@@ -237,7 +239,7 @@ Rather than testing each route individually, a data-driven approach lists all ex
         (str "Route " method " " path " should have a handler")))))
 ```
 
-The `match` helper resolves a path against the same router the app uses (`reitit.core/match-by-path`), and the test then checks that the resolved match has a handler for the expected method.
+The `match` helper resolves a path against the same router the app uses (`reitit.core/match-by-path`), and the test then checks that the resolved match has a handler for the expected method. The `{:conflicts nil}` is not decoration: the route tree deliberately overlaps static paths (`/recipes/new`, `/recipes/reorder`) with the dynamic `/recipes/:id`, and without that option reitit refuses to build the router at all -- the namespace would fail to load before a single test ran.
 
 This is one of those tests that seems almost too simple to be useful. It is not. Here is what it catches:
 
@@ -309,7 +311,7 @@ The coverage configuration lives in the `:coverage` alias in `deps.edn`:
                        "--fail-threshold" "50"]}
 ```
 
-The key flags:
+The flags fall three ways:
 
 - `--src-ns-path "src"` and `--test-ns-path "test"` tell Cloverage where to find source and test code.
 - `--text --summary` outputs a human-readable summary to the terminal.
@@ -344,7 +346,7 @@ For running tests without coverage (faster feedback during development), there i
        :exec-fn cognitect.test-runner.api/test}
 ```
 
-This uses Cognitect's test runner, which discovers and runs all `_test.clj` files under `test/`. You can run it with:
+This uses Cognitect's test runner, which discovers and runs all `_test.clj` files under `test/`:
 
 ```bash
 clojure -M:test
@@ -442,9 +444,9 @@ The same caveat applies to the commit gate. The coverage gate runs `clojure -M:c
 
 Co-location is convenient -- the test sits where you edit, and reads as documentation for the next person. That convenience is not free: it puts a test concern into a source file, and while the `tests` macro keeps the *dependency* out of the artifact, it cannot make discovery automatic. The trade is worth it for short, doc-style, and private-function checks. For anything heavier -- standalone or integration -- the separate `test/` file stays simpler, and discovery stays free. Keep it there.
 
-## The first movement, whole
+## The scaffold, whole
 
-This chapter closes the book's first movement. Six chapters in, before a single feature exists, you have built the scaffold every later chapter stands on -- and it is worth pausing to see it whole, because from here the book turns from *infrastructure* to *the application itself*.
+This chapter completes the book's scaffold. Everything so far except the [recipe domain](09-recipe-domain.md) -- which jumped the queue by one chapter so the Datomic argument could be spent while it was fresh -- has been infrastructure, and it is worth pausing to see that infrastructure whole, because from here the book turns from the scaffold to the application it exists to carry.
 
 Here is what is running when you start the app in development:
 
@@ -459,7 +461,7 @@ devcontainer (Ch. 3)
     └── Datomic Peer (in-mem) .. schema transacted on boot       (Ch. 8)
 ```
 
-That diagram is the running system; the checklist is what it guarantees -- everything below is true before we render our first real page:
+That diagram is the running system; the checklist is what it guarantees -- and everything built from here stands on all of it, as the recipe domain already does:
 
 - [x] Reproducible environment, identical for every developer and for CI
 - [x] Strict compilation, formatting, and lint enforced as build gates
@@ -468,4 +470,4 @@ That diagram is the running system; the checklist is what it guarantees -- every
 - [x] A time-aware database with isolated, instant test instances
 - [x] Test infrastructure that every feature from here inherits for free
 
-What is *not* here yet is the application: no views, no styling, no authentication, no real domain. That is the rest of the book. The next movement puts content on the screen -- internationalization, Tailwind, and the server-rendered Hiccup views that the live-reload loop above was built to make a pleasure to write.
+What is *not* here yet is the application above the domain: the recipe model exists and is tested, but nothing renders it -- no views, no styling, no authentication. That is the rest of the book. The next movement puts content on the screen -- internationalization, Tailwind, and the server-rendered Hiccup views that the live-reload loop above was built to make a pleasure to write.

@@ -209,7 +209,7 @@ For the users table, we need more detail:
                      (update :user/terms-accepted-at convert)))))))
 ```
 
-A few details here are worth calling out:
+Four details do quiet work here:
 
 - The `[... ...]` collection find spec returns a flat vector of results instead of nested tuples.
 - `pull` fetches multiple attributes in one shot, avoiding N+1 queries.
@@ -277,6 +277,8 @@ The funnel query spans both databases:
 ```
 
 Three counts, two databases: links sent and verified from the analytics database, terms accepted from the operational one. Together they trace the full funnel -- requested, clicked, accepted -- and `terms-accepted`, not `total-users`, is the count that means "completed signup."
+
+Three counts across two databases is also exactly the shape that gets hard to debug from the outside: when a funnel number looks wrong, the first question is which database the count came from and at which basis it was read. Under the `:storm` alias that question stops being archaeology. Load `/admin` with the [construction view](16-construction-view.md) recording and the call tree shows `funnel-stats` with each `d/q` as real Datalog, each against its own database value, each carrying the basis-t it read at -- the wrong number is one click from the query that produced it -- the promised payoff of building the tooling before the features that need it.
 
 ### The polling endpoint
 
@@ -458,7 +460,7 @@ When the poller sets `--stat-value` from 5 to 8, the browser interpolates throug
 
 ## Live polling with vanilla JavaScript
 
-The polling script -- `static/js/admin-stats.js`, the module the base layout loads -- has no framework and no build step. What it does have is a lifecycle, and that is the part worth dwelling on. The dashboard is reached by morphing in, not a full page load (the morph dispatcher, [progressive enhancement](19-progressive-enhancement.md)), so the naive shape -- an IIFE that calls `setInterval(poll, 20000)` at import time -- would start a *new* interval every time the user navigates into `/admin` and never stop the old one. After three visits the endpoint is being polled three times over. The fix is to hang the poller off the controller registry from that same chapter, which gives every enhancer a `connect`/`disconnect` pair tied to whether its element is actually in the live DOM:
+The polling script -- `static/js/admin-stats.js`, the module the base layout loads -- has no framework and no build step. What it does have is a lifecycle, and that is the part worth dwelling on. The dashboard is reached by morphing in, not a full page load (the morph dispatcher, [progressive enhancement](19-progressive-enhancement.md)), and an ES module evaluates once per document -- the dispatcher never re-executes scripts in morphed fragments. So the naive shapes fail in two distinct ways. An IIFE that calls `setInterval(poll, 20000)` at import time starts its interval on the first page the user loads -- any page -- and, since morph navigation never unloads the document, keeps polling the privileged `/admin/stats` endpoint from every page forever after. Wire the interval on each `dispatcher:morphed` event instead and it stacks: without a matching teardown, three visits to `/admin` leave the endpoint being polled three times over. The fix is to hang the poller off the controller registry from that same chapter, which gives every enhancer a `connect`/`disconnect` pair tied to whether its element is actually in the live DOM:
 
 ```javascript
 import { register } from '/js/controllers.js';
@@ -613,13 +615,7 @@ The duration formatter covers the useful range -- seconds, then minutes and seco
 
 ## How it all fits together
 
-The data flow is:
-
-1. User hits `/admin` -- `wrap-admin` checks the session, confirms the admin email.
-2. The handler queries both databases (operational for users, analytics for magic links).
-3. Hiccup renders the stat grid with `data-stat` attributes and `--stat-value` CSS properties.
-4. The browser renders the page, CSS counter shows the initial values.
-5. Every 20 seconds, JavaScript polls `/admin/stats` for fresh numbers and updates the CSS custom property on any card whose value changed; the counter tweens to the new figure.
+The data flow is one straight line: `wrap-admin` checks the session at the door; the handler queries both databases -- operational for users, analytics for magic links; Hiccup renders the stat grid with its `data-stat` attributes and `--stat-value` custom properties; the browser paints the initial numbers with CSS counters; and every 20 seconds the poller fetches `/admin/stats` and updates the custom property on any card whose value changed, letting the counter tween to the new figure.
 
 No WebSockets, no server-sent events, no client-side state management. The page is server-rendered, the polling is a simple `setInterval` with `fetch`, and the presentation is pure CSS.
 

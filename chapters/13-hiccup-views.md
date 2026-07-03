@@ -133,7 +133,7 @@ Several things in that shell carry weight worth drawing out:
 - **`(script-tag "js/controllers.js" {:type "module"})`** loads the controller registry -- the single listener that attaches every behavior module to the elements it enhances, on first load and after each morph ([the dispatcher chapter](14-morph-dispatcher.md) builds it). The behavior modules below (`live-form`, `defer-details`, and the rest) each register themselves with it. This listing shows a representative few; like the dev-only block below, this `<head>` is the one place they mount, so each later behavior chapter adds its module here.
 - **`(toast-script)`** inlines a small toast helper. The `defn-asset` macro and inline scripts are covered later in this chapter.
 - **`(tag-root body)`** wraps the page body for the development source inspector. In production it is the identity function; the body is unchanged.
-- **The final body block is dev-only.** `(when (requiring-resolve 'dev-reload/websocket-handler) (list (dev-reload-script) (inspector-script) (trace-overlay-script)))` emits three small scripts -- the live-reload client ([live reload](06-live-reload.md)), the source inspector ([the inspector](15-inspector.md)), and the construction-view overlay ([the construction-view overlay](17-construction-view-overlay.md)) -- and nothing else. This is the single place those overlays mount, so as you build each of those chapters you add its script to this list. The `requiring-resolve` check returns `nil` when the dev namespace is not on the classpath, so the whole block is *structurally absent* in production; the `defn-asset` declarations behind `dev-reload-script`/`inspector-script`/`trace-overlay-script` arrive with [the asset pipeline](24-asset-pipeline.md). (If you are following along before those chapters exist, drop the names you have not built yet -- the block renders nothing until the dev namespace is present anyway.)
+- **The final body block is dev-only.** The guarded `requiring-resolve` gate emits three small scripts -- the live-reload client ([live reload](06-live-reload.md)), the source inspector ([the inspector](15-inspector.md)), and the construction-view overlay ([the construction-view overlay](17-construction-view-overlay.md)) -- and nothing else. The `try`/`catch` is not decoration: `requiring-resolve` *throws* for a namespace that is not on the classpath, and catching that is what turns production's missing dev namespace into `nil` and leaves the block *structurally absent*. This is the single place those overlays mount, so as you build each of those chapters you add its script to this list; the `defn-asset` declarations behind `dev-reload-script`/`inspector-script`/`trace-overlay-script` arrive with [the asset pipeline](24-asset-pipeline.md). (If you are following along before those chapters exist, drop the names you have not built yet -- the block renders nothing until the dev namespace is present anyway.)
 - **The `page-enter` keyframes** give each freshly rendered `<main>` a subtle entrance; it pairs with the DOM-morphing reload in [the morph-reload chapter](18-morph-reload.md).
 - **`body` uses `& body` (rest args)** so callers can pass multiple elements naturally without wrapping them in a container.
 
@@ -393,7 +393,7 @@ Some content we *do* want emitted verbatim, and only those places use `h/raw`:
 
 - **The doctype.** `(h/raw "<!DOCTYPE html>")` -- a fixed literal we control.
 - **The import map and inline scripts/styles.** These are our own bytes, and (as the [asset pipeline chapter](24-asset-pipeline.md) explains) they must be emitted exactly so the Content-Security-Policy hash matches what the browser sees: `[:script {:type "importmap"} (h/raw (assets/importmap-json))]`.
-- **Markdown-rendered HTML.** Recipe descriptions and legal documents are authored in Markdown and rendered to HTML by CommonMark; that HTML is inserted with `h/raw`:
+- **Markdown-rendered HTML.** Recipe descriptions are authored in Markdown and rendered to HTML by CommonMark; that HTML is inserted with `h/raw`:
 
   ```clojure
   (when-not (str/blank? (:recipe/description recipe))
@@ -408,7 +408,7 @@ A correctly-escaped output layer is the primary defense here. (The app also ship
 
 ## CommonMark for Markdown content
 
-Recipe descriptions and legal documents (terms of service, privacy policy) are written in Markdown and rendered to HTML. We use [CommonMark](https://commonmark.org/) via the `commonmark-java` library:
+Recipe descriptions are written in Markdown and rendered to HTML. We use [CommonMark](https://commonmark.org/) via the `commonmark-java` library:
 
 ```clojure
 (ns myapp.web.markdown
@@ -438,26 +438,11 @@ Recipe descriptions and legal documents (terms of service, privacy policy) are w
        (.render renderer)))
 ```
 
-The parser and renderer are created once and reused (they are thread-safe). We enable the GFM tables extension because legal documents sometimes need tables (e.g., data processing categories, retention periods).
+The parser and renderer are created once and reused (they are thread-safe). We enable the GFM tables extension so a description can carry a table -- yield conversions, substitution charts -- without falling back to preformatted text.
 
 The two security settings are not optional here. By default CommonMark passes raw inline HTML straight through, so a recipe description containing `<script>steal()</script>` or `<img src=x onerror=…>` would render as live markup -- and we insert that output with `h/raw`, which means the escaping renderer never gets a chance to neutralize it. `escapeHtml` makes CommonMark emit such fragments as text; `sanitizeUrls` drops `javascript:` (and similar) link targets so `[click](javascript:…)` can't smuggle a handler through a perfectly legitimate Markdown link. With both on, the renderer's output is safe to emit raw, which is exactly the property the previous section relied on. A regression test (`markdown-render-sanitizes-stored-xss`) locks this in so the settings can't be quietly dropped. The strict CSP still sits behind all of this as defense-in-depth, but it is not the thing standing between a recipe description and a stored XSS -- the sanitizing renderer is.
 
-The rendered HTML is inserted into a styled container with `h/raw` (the deliberate raw-output decision from the previous section):
-
-```clojure
-(defn legal-page
-  "Render a legal document as a styled HTML page."
-  [locale title html-content]
-  (base-layout
-    locale
-    [:div.min-h-screen.bg-surface-subtle
-     [:div.max-w-3xl.mx-auto.py-8.px-4
-      [:div.bg-surface.border.border-border.rounded-lg.p-8
-       [:h1.text-3xl.font-bold.text-text-primary.mb-8 title]
-       [:div.legal-content (h/raw html-content)]]]]))
-```
-
-The `.legal-content` class applies typography styles to the rendered HTML -- heading sizes, paragraph spacing, list styles, table formatting -- in CSS. This is a clean separation: the Markdown is pure content, the renderer converts to semantic HTML, and the CSS handles presentation.
+The rendered HTML lands in the `.legal-content` container we already saw at the call site. The class applies typography styles to whatever the renderer emits -- heading sizes, paragraph spacing, list styles, table formatting -- in CSS. This is a clean separation: the Markdown is pure content, the renderer converts to semantic HTML, and the CSS handles presentation. None of it is recipe-specific -- the same renderer and the same typography class would serve a Markdown-authored terms-of-service or privacy page unchanged, which is what the class name anticipates -- but the only Markdown flowing through them today is recipe descriptions.
 
 ## Inline scripts via defn-asset
 

@@ -72,7 +72,7 @@ A few decisions here are worth drawing out:
 
 **`@theme` block** -- Design tokens as CSS custom properties. Once declared, you use them directly in utilities: `bg-primary`, `text-text-secondary`, `border-border`. The naming is deliberately semantic -- `surface`, `chrome`, `accent` -- rather than color scales like `indigo-600`. A focused app has a small, fixed palette; you do not need eleven shades of every color.
 
-Below `@theme` the file carries plain CSS that does not map cleanly to utilities: a `.legal-content` block for rendering markdown documents (privacy policy, terms) with proper typography, interaction transitions (press feedback, card hover lift, a `details[open]` chevron rotation), focus-visible outlines for keyboard navigation, and the `.diff-add` / `.diff-del` styles used by the recipe version diff. It is worth seeing a slice of it, because "Tailwind for everything" is not the claim -- the claim is Tailwind for the *utility-shaped* styling, and a small amount of hand-written CSS for the rest:
+Below `@theme` the file carries plain CSS that does not map cleanly to utilities: a `.legal-content` block for rendering markdown content (recipe descriptions today; named for the legal pages it could also serve) with proper typography, interaction transitions (press feedback, card hover lift, a `details[open]` chevron rotation), focus-visible outlines for keyboard navigation, and the `.diff-add` / `.diff-del` styles used by the recipe version diff. It is worth seeing a slice of it, because "Tailwind for everything" is not the claim -- the claim is Tailwind for the *utility-shaped* styling, and a small amount of hand-written CSS for the rest:
 
 ```css
 /* Press feedback and hover lift -- one rule each, applied by selector rather
@@ -132,7 +132,7 @@ That scans `./src`, finds the utility classes you have used, and writes a single
 
 That plain `/styles.css` is all dev needs. (The asset pipeline chapter swaps this href for `(assets/asset "styles.css")`, which returns `/styles.css` unchanged in dev but a content-hashed URL in production.) That is the entire dev styling loop: edit a view, regenerate `static/styles.css`, the browser picks up the new CSS.
 
-To confirm it works, start the server, open any page, and check that the font and colors apply -- or just `grep` the output for a token you used (`grep bg-primary static/styles.css`) to see Tailwind emitted it.
+The proof is observable two ways: start the server and the font and colors apply, or `grep` the output for a token you used (`grep bg-primary static/styles.css`) and see that Tailwind emitted it.
 
 `static/styles.css` is a *generated* file, so it is git-ignored -- the sources are `input.css` and the `static/` tree, and the stylesheet is rebuilt from them. You do not commit it.
 
