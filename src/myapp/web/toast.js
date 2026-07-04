@@ -1,6 +1,5 @@
 // Toast notifications. Triggers come from:
 // - URL ?toast=key params (server redirects after a successful save).
-// - dispatcher:morphed events on the uncategorized section.
 // - Server-rendered toasts with [data-toast-ttl] (auto-dismissed below).
 (function () {
   function showToast(msg) {
@@ -20,11 +19,6 @@
       setTimeout(function () { t.remove(); }, 300);
     }, 2000);
   }
-
-  // Note: the "Verwerkt ✓" confirmation toast that used to fire on
-  // every htmx swap of #uncategorized-section is now handled via the
-  // ?toast=tx-saved URL-param redirect pattern, the same way other
-  // post-save confirmations work. Keeps the toast logic in one place.
 
   // Server-rendered toasts: auto-dismiss after data-toast-ttl ms.
   // Used by the undo-toast pattern — the server includes a toast div
@@ -58,13 +52,11 @@
   // re-fire. Keys map to messages here so the i18n choice stays simple
   // (the handler decides which key, the page just renders).
   var TOASTS = {
-    'tx-saved': 'Verwerkt ✓',
-    'tx-updated': 'Bijgewerkt ✓',
-    'btw-filed': 'Aangifte gemarkeerd als ingediend ✓',
-    'btw-unfiled': 'Markering ongedaan gemaakt',
-    'asset-updated': 'Bedrijfsmiddel bijgewerkt ✓',
-    'linked': 'Bedrijfsmiddel gekoppeld aan banktransactie ✓',
-    'booking-discarded': 'Boeking verwijderd ✓'
+    'recipe-saved': 'Recipe saved ✓',
+    'recipe-published': 'New version published ✓',
+    'fork-created': 'Fork created ✓',
+    'recipe-deleted': 'Recipe deleted',
+    'version-restored': 'Version restored ✓'
   };
 
   function processToastParam() {

@@ -6,7 +6,7 @@ Production is a different problem. Every served asset needs to be cache-busted o
 
 This chapter covers that pipeline end to end. How every served asset gets a content hash. How the JavaScript modules are minified per-file -- no bundler -- with Subresource Integrity. How the vendored library is built. How the running app resolves a logical asset name to a hashed URL through a manifest, and how an integrity gate keeps a lying filename out of production. Then the two delivery modes -- a stable-URL `no-store` engine for development and immutable content-hashed assets for production -- and why they never drift. Finally the security layer: the escaping renderer, the strict CSP the app emits, the long-lived headers Caddy adds, and the regression tests that pin it all down.
 
-The result is one build whose dev and prod outputs can never drift -- same sources, same pipeline; the CSS bytes are identical, and the JavaScript differs only by minification -- a manifest the app reads at startup, and a defense-in-depth security posture that starts at output encoding and ends at the browser's CSP enforcement.
+The result: dev and prod outputs stay in lockstep because they come from the same sources through the same pipeline, with the CSS bytes identical and the JavaScript differing only by minification. The app reads a manifest at startup to resolve every asset, and a defense-in-depth security posture runs from output encoding through to the browser's CSP enforcement.
 
 ## Project layout: sources vs. the generated tree
 
@@ -57,7 +57,7 @@ One thing this layout makes explicit: **development produces no hashed CSS.** De
 
 The cache-busting strategy is the same for every served file: embed a content hash in the filename. `styles.css` becomes `styles.2c7c3332.css`; `dispatcher.js` becomes `dispatcher.<hash>.js`. When the content changes, the hash changes, the filename changes, and browsers fetch the new version. When it does not change, the filename is stable and the browser uses its cache. Perfect invalidation with zero revalidation traffic.
 
-The hash is the first eight hex characters of the SHA-256 of the file's bytes. Eight characters give over four billion values -- enough that an *accidental* collision is vanishingly unlikely rather than impossible: by the birthday bound a collision becomes likely only around sixty-five thousand distinct files (roughly the square root of 2³², the 32 bits those eight hex digits carry), and a deploy ships a few dozen, so the practical odds are negligible. (If you ever served that many hashed assets, widen the slice.) The helper is shared by both the build and the verifier so the two can never disagree about what "the hash" means.
+The hash is the first eight hex characters of the SHA-256 of the file's bytes. Eight characters give over four billion values, enough that an *accidental* collision is vanishingly unlikely rather than impossible. By the birthday bound, a collision becomes likely only at around sixty-five thousand distinct files (roughly the square root of 2³², the 32 bits those eight hex digits carry); a deploy ships a few dozen, so the practical odds are negligible. (If you ever served that many hashed assets, widen the slice.) The helper is shared by both the build and the verifier so the two can never disagree about what "the hash" means.
 
 ```clojure
 (defn content-hash
@@ -209,8 +209,8 @@ The lookups themselves are tiny:
 (defn asset
   "Resolve a logical asset name (e.g. \"styles.css\", \"js/dispatcher.js\",
   \"idiomorph\") to its served URL. Falls back to an identity URL if unmapped."
-  [name]
-  (or (get-in @manifest [:assets name]) (str "/" name)))
+  [asset-name]
+  (or (get-in @manifest [:assets asset-name]) (str "/" asset-name)))
 
 (defn asset-sri
   "SRI token for a served URL, or nil (e.g. always nil in dev)."
@@ -218,7 +218,7 @@ The lookups themselves are tiny:
   (get-in @manifest [:sri url]))
 ```
 
-There is one source of truth -- the manifest the build emitted -- and two ways to obtain it: read the file in prod, derive it from source in dev. No globbing for `styles.<hash>.css`, no probing of multiple candidate directories, no atom poked by the hot-reload loop.
+There is one resolution mechanism, a single manifest atom the whole app reads through, filled two ways: read the build's `asset-manifest.edn` in prod, derive an identity manifest from source in dev. No globbing for `styles.<hash>.css`, no probing of multiple candidate directories, no atom poked by the hot-reload loop.
 
 ## The import map and SRI-aware script tags
 
@@ -278,7 +278,7 @@ And the head of `base-layout`:
 
 The stylesheet link is `(assets/asset "styles.css")`, which renders as `<link rel="stylesheet" href="/styles.<hash>.css">` in production and `<link ... href="/styles.css">` in dev. The import-map JSON is emitted with `h/raw` for a reason we will come back to in the CSP section: the bytes the browser receives must be exactly the bytes the CSP hashed.
 
-> **What the repo head adds.** The listing above is trimmed to the load-bearing pieces. The companion repo's `base-layout` head also carries a few more module `script-tag`s (the island controllers, `sortable`, `confirm`, `tagline`), an inline `<script type="speculationrules">` for prerender hints, and one inline `<style>` block holding a small `@keyframes page-enter` animation. The last two matter for the CSP that follows: the inline `<style>` is the concrete reason `style-src` carries `'unsafe-inline'`, and the speculation-rules script is hashed into `script-src` by the very same mechanism as every other inline script (below). They are omitted here only to keep the head readable; the CSP section below already accounts for both -- `csp-script-hashes` folds the speculation-rules script into `script-src`, and the inline `<style>` is exactly what `style-src`'s `'unsafe-inline'` is there for -- so neither is a surprise. What a reader diffing against the repo will find is a couple more module `script-tag`s in the head than this trimmed listing shows.
+> **What the repo head adds.** The listing above is trimmed to the pieces this chapter reasons about. The companion repo's `base-layout` head also carries a few more module `script-tag`s (the island controllers, `sortable`, `confirm`, `tagline`), an inline `<script type="speculationrules">` for prerender hints, and one inline `<style>` block holding a small `@keyframes page-enter` animation. The last two matter for the CSP that follows: the inline `<style>` is the concrete reason `style-src` carries `'unsafe-inline'`, and the speculation-rules script is hashed into `script-src` by the very same mechanism as every other inline script (below). They are omitted here only to keep the head readable, so neither is a surprise when the CSP section accounts for both. What a reader diffing against the repo will find is a couple more module `script-tag`s in the head than this trimmed listing shows.
 
 ## `verify-assets`: an integrity gate, not a rebuild
 
@@ -297,12 +297,12 @@ A filename that embeds a content hash is making a promise: "my bytes hash to thi
       (System/exit 1))
     (let [m (:assets (read-string (slurp mf)))
           problems
-          (for [[name url] m
+          (for [[n url] m
                 :let [f (io/file asset-out (subs url 1))]    ; url is "/..."
                 :when (or (not (.exists f))
                           (when-let [[_ h] (re-find #"\.([a-f0-9]{8})\.(?:css|js)$" url)]
                             (not= h (content-hash f))))]
-            (str name " -> " url (if (.exists f) " (hash mismatch)" " (missing)")))]
+            (str n " -> " url (if (.exists f) " (hash mismatch)" " (missing)")))]
       (if (seq problems)
         (do (println "FAIL: asset integrity problems:")
             (doseq [p problems] (println "  " p))
@@ -385,15 +385,15 @@ myapp.lan {
 
 **Caching tiers.** Content-hashed files (`styles.<hash>.css`, `dispatcher.<hash>.js`) get a one-year `immutable` lifetime -- the browser never revalidates, and a content change means a new filename. The vendored library gets the same immutable treatment because its version is pinned in the filename. Fonts, icons, and images -- which keep their plain names -- get a one-week TTL.
 
-**Long-lived security headers.** Caddy owns the request-invariant headers, applied to every response: HSTS (`Strict-Transport-Security`), `X-Content-Type-Options: nosniff`, `Referrer-Policy`, a restrictive `Permissions-Policy`, and the cross-origin isolation pair `Cross-Origin-Opener-Policy` / `Cross-Origin-Resource-Policy` (both `same-origin`). It also strips the `Server` header. These are static -- they do not depend on the page being rendered -- so the proxy is the right place for them.
+**Long-lived security headers.** Caddy owns the request-invariant headers, applied to every response: HSTS (`Strict-Transport-Security`), `X-Content-Type-Options: nosniff`, `Referrer-Policy`, a restrictive `Permissions-Policy`, and the cross-origin isolation pair `Cross-Origin-Opener-Policy` / `Cross-Origin-Resource-Policy` (both `same-origin`). It also strips the `Server` header. Two of these families earn a threat model in a chapter that justifies every CSP directive. HSTS (`max-age=31536000; includeSubDomains`) pins the origin to HTTPS for a year: once the browser has seen the header, an SSL-stripping attacker on the network can no longer downgrade a navigation to plain `http` and read or rewrite it in transit. The cross-origin pair isolates our browsing context. `Cross-Origin-Opener-Policy: same-origin` severs the `window.opener` link, so a page we open (or one that opened us) cannot reach into our window and script it; `Cross-Origin-Resource-Policy: same-origin` tells the browser to refuse cross-origin attempts to embed our responses as resources. These headers are static -- they do not depend on the page being rendered -- so the proxy is the right place for them.
 
 **Caddy does NOT set the Content-Security-Policy.** That is the one security header Caddy must stay out of. The CSP is per-document -- it embeds the hashes of the inline scripts the app emits -- so only the app can build it. The `@static file` matcher checks that a file exists on disk before serving it; everything else falls through to `reverse_proxy` and reaches the Clojure app, which attaches the CSP to its HTML responses.
 
 ## Output escaping: the primary XSS defense
 
-Before the CSP, the more fundamental fix. The base layout used to render through a non-escaping HTML helper, so user-supplied fields -- recipe titles, descriptions -- were written into the page verbatim. A title of `<script>steal()</script>` would execute. A stored XSS.
+Before the CSP, the more fundamental defense. Recipes carry user-supplied text (titles, ingredient lines, step text) that gets rendered straight into pages, and that is exactly where stored XSS lives: a title of `<script>steal()</script>` written into the page verbatim would execute for every visitor. (The one field that is *not* escaped this way is the markdown description, emitted through `h/raw` and sanitized by the renderer itself; the note below returns to it.) The base layout forecloses that by rendering through the **escaping** hiccup2 renderer, the decision [the views chapter](13-hiccup-views.md#output-encoding-escaping-is-the-primary-xss-defense) took when it first built the layout.
 
-The layout now renders through the **escaping** hiccup2 renderer. `h/html` HTML-escapes every string by default; the only content emitted verbatim is what is explicitly wrapped in `h/raw` -- rendered markdown, intentional inline scripts and styles, the import map.
+`h/html` HTML-escapes every string by default; the only content emitted verbatim is what is explicitly wrapped in `h/raw` -- rendered markdown, intentional inline scripts and styles, the import map.
 
 ```clojure
 (defn- base-layout
@@ -446,13 +446,23 @@ That choice is deliberate, and worth defending because both mechanisms are legit
        "connect-src 'self'" (if dev? " ws: wss:" "") "; "
        csp-rest
        "; report-uri /csp-report; report-to csp"))
+
+(def ^:private csp-cached
+  (delay (build-csp-header)))
+
+(defn csp-header
+  "The strict CSP header value.
+  Static in prod (computed once); recomputed in dev
+  so it tracks hot-reloaded inline scripts."
+  []
+  (if dev? (build-csp-header) @csp-cached))
 ```
 
 Reading it directive by directive:
 
 - **`default-src 'none'`** -- deny everything by default, then open the minimum.
 - **`script-src 'self' <sha256...>`** -- same-origin scripts (the modules, authorized further by SRI) plus the SHA-256 hash of every inline `<script>` the app can emit. Crucially there is **no `'unsafe-inline'`** for scripts. An injected `<script>` whose hash is not on the list simply does not run -- which is exactly why the CSP would have blocked the stored XSS even if escaping had failed.
-- **`style-src 'self' 'unsafe-inline'`** -- this one is pragmatic. A truly strict `style-src` is unsolved across DOM-morphing front-ends (inline style attributes get rewritten during morphs), so this directive is the deliberate concession. It is documented as such, not hand-waved -- and worth naming the residual risk it leaves: `'unsafe-inline'` on styles permits CSS injection, which is not as harmless as it sounds. An attacker who can inject a `<style>` or a `style=` attribute can use attribute selectors plus `background: url(...)` to exfiltrate the values of sensitive DOM attributes (a CSRF token in a hidden input, say) one character at a time, and can restyle the page for clickjacking or phishing. It cannot run script -- `script-src` has no `'unsafe-inline'` -- so this is a meaningfully smaller blast radius than a script-injection, but it is not nothing. The escaping renderer is what keeps injected markup out in the first place; this concession is why that defense, not the style CSP, is the one carrying the weight.
+- **`style-src 'self' 'unsafe-inline'`** -- this one is pragmatic. A truly strict `style-src` is unsolved across DOM-morphing front-ends (inline style attributes get rewritten during morphs), so this directive is the deliberate concession. It is documented as such, not hand-waved, and the residual risk it leaves is worth naming. `'unsafe-inline'` on styles permits CSS injection, which is not as harmless as it sounds: an attacker who can inject a `<style>` or a `style=` attribute can restyle the page for clickjacking or phishing. The textbook escalation from there, using attribute selectors plus `background: url(...)` to exfiltrate a hidden CSRF token one character at a time, needs a fetch to an attacker-observable origin; this policy's own `img-src 'self' data:` and `font-src 'self'` (under `default-src 'none'`) block that fetch, so the exfiltration channel is largely closed here even though the injection is not. And CSS injection cannot run script, since `script-src` carries no `'unsafe-inline'`, so its blast radius is meaningfully smaller than a script injection's, though not nothing. The escaping renderer is what keeps injected markup out in the first place; this concession is why that defense, not the style CSP, is the one carrying the weight.
 - **`connect-src 'self'`** -- plus `ws: wss:` in dev for the hot-reload socket.
 - The rest: `img-src 'self' data:`, `font-src 'self'`, `object-src 'none'`, `base-uri 'none'`, `form-action 'self'`, `frame-ancestors 'none'`.
 - **`report-uri /csp-report; report-to csp`** -- violations are reported back to the app. `wrap-csp` also sets a `Reporting-Endpoints: csp="/csp-report"` header (the modern reporting group); `report-uri` is the widely-supported fallback.
@@ -486,6 +496,7 @@ The inline scripts the app emits are defined through a macro, `defn-asset`, whic
 (defn-asset toast-script "myapp/web/toast.js")
 (defn-asset dev-reload-script "myapp/web/dev-reload.js")
 (defn-asset inspector-script "myapp/web/inspector.js")
+(defn-asset trace-overlay-script "myapp/web/trace-overlay.js")
 ```
 
 The macro records each script's path with `register-inline-script!`, and `csp-script-hashes` then hashes each registered inline script, the import-map JSON, and the speculation-rules script:

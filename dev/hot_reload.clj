@@ -35,7 +35,8 @@
 (defn after-refresh
   "Runs after a changed .clj file reloads: notify the browser.
   A view-ns edit is
-  morphable (state-preserving <main> morph); other .clj edits force a full reload.
+  morphable (state-preserving <body> morph — view namespaces own the chrome as
+  well as <main>); other .clj edits force a full reload.
   CSS is rebuilt out-of-band by the Tailwind --watch process, not here."
   [morphable?]
   (log/info "Code refresh completed, notifying browser..." {:morphable morphable?})

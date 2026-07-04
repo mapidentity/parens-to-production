@@ -119,7 +119,7 @@
 ;; conventional `:<ns>/user` ref (e.g. :recipe/user).
 ;; The helpers below are the ONLY safe way to convert an entity id
 ;; that came from outside the session — a path param, query param,
-;; form field, htmx hidden input — into a Datomic eid. They refuse to
+;; or form field — into a Datomic eid. They refuse to
 ;; return foreign entities, returning nil instead, so the handler can
 ;; respond with 404 indistinguishably from "not found".
 ;;

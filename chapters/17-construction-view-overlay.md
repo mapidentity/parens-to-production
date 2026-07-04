@@ -48,9 +48,10 @@ On load it fetches the trace for this page (and, for later, asks whether a prior
 function start() {
   connectWs();
   fetch("/dev/__trace/" + encodeURIComponent(traceId), { headers: { Accept: "application/json" } })
-    .then(function (resp) { return resp.ok ? resp.json() : null; })
+    .then(function (resp) { if (!resp.ok) { console.error("[construction-view] trace fetch failed:", resp.status); return null; } return resp.json(); })
     .then(function (j) {
       if (j && j.spans) { trace = j; traces[traceId] = j; if (wantOpen || inspectEnabled()) setOpen(true); }
+      ,,,
     })
     .catch(function (e) { console.error("[construction-view]", e); });
   ,,,
@@ -161,7 +162,7 @@ function onPageHover(e) {
   var ci = compInfo(e.target);
   if (!ci) return;
   highlight(ci.name, ci.idx);
-  if (regionTraceId(e.target) === traceId) { var id = findSpan(ci.name, ci.idx); if (id) pageReveal(id); }
+  if (regionTraceId(e.target) === traceId) { var id = findSpan(ci.name, ci.idx); if (id) pageReveal(id); }  // reveal only within the active region's trace
 }
 document.addEventListener("mouseover", onPageHover, true);
 ```
@@ -192,7 +193,19 @@ wrap-locale › … › recipe-show
 
 ## Step two: the details pane
 
-Now make a click do more than open source: *select* the frame and show its dossier. A persistent pane at the bottom re-renders on every selection change. `fillDetails` lays it out in order of usefulness when something is wrong: a **throw** box first if the frame threw; then where it was **called** and **defined** (both open in the editor); a **lazy** note linking to where it actually ran; the **data source** (the eid-matched reads from `/dev/__source`); the **transforms** morph badge; the **queries** it ran with full Datalog; navigable **args/ret**; the **not-rendered** conditionals (`/dev/__branches`); and the **produced markup** (`/dev/__hiccup`). Each `/dev/__*` route these read is defined in [The server-side projections](#the-server-side-projections-the-overlay-consumes) below; here we meet them as the overlay consumes them. A representative slice -- the call/def links and the lazy `/dev/__source` fetch:
+Now make a click do more than open source: *select* the frame and show its dossier. A persistent pane at the bottom re-renders on every selection change. `fillDetails` lays it out in order of usefulness when something is wrong:
+
+- a **throw** box first, if the frame threw;
+- where it was **called** and **defined** (both open in the editor);
+- a **lazy** note linking to where it actually ran;
+- the **data source**: the eid-matched reads from `/dev/__source`;
+- the **transforms** morph badge;
+- the **queries** it ran, with full Datalog;
+- navigable **args/ret**;
+- the **not-rendered** conditionals, from `/dev/__branches`;
+- the **produced markup**, from `/dev/__hiccup`.
+
+Each `/dev/__*` route these read is defined in [The server-side projections](#the-server-side-projections-the-overlay-consumes) below; here we meet them as the overlay consumes them. A representative slice -- the call/def links and the lazy `/dev/__source` fetch:
 
 ```javascript
 function fillDetails(d, s) {
@@ -254,8 +267,8 @@ function setSelected(id, broadcast, el) {
   if (broadcast) {
     var s = (id != null && trace) ? trace.spans[id] : null;
     selBroadcasting = true;
-    document.dispatchEvent(new CustomEvent("myapp:select",
-      { detail: s ? { name: s.name, idx: s.instance == null ? 0 : s.instance, node: el && el.node } : { name: null } }));
+    try { document.dispatchEvent(new CustomEvent("myapp:select",
+      { detail: s ? { name: s.name, idx: s.instance == null ? 0 : s.instance, node: el && el.node } : { name: null } })); } catch (e) {}
     selBroadcasting = false;
   }
 }
@@ -267,6 +280,7 @@ document.addEventListener("myapp:select", function (e) {
   if (!d.name) { markSelected(null); return; }
   ,,,
   var id = findSpan(d.name, d.idx == null ? 0 : d.idx);
+  ,,,                                               // fall back to any instance of the name
   markSelected(id);
 });
 ```
@@ -277,7 +291,7 @@ The inspector side mirrors this exactly: it listens for `myapp:select` (boxing t
 
 ## Step three: the icicle overview
 
-A tall tree is hard to read at a glance, so the panel header gets an **icicle** -- a flame-graph cousin. One cell per frame, partitioned top-down, **width ∝ subtree size** and **color ∝ architecture layer**. You read the request *shape* in one look: the middleware stack narrowing into the handler, a narrow db column beside the wide views subtree. It is an *overview* on top of the working tree -- which is why we add it third, not first.
+A tall tree is hard to read at a glance, so the panel header gets an **icicle** (a flame-graph cousin). One cell per frame, partitioned top-down, **width ∝ subtree size** and **color ∝ architecture layer**. You read the request *shape* in one look: the middleware stack narrowing into the handler, a narrow db column beside the wide views subtree. It is an *overview* on top of the working tree, which is why we add it third, not first.
 
 ```javascript
 function nsColor(ns) {
@@ -298,11 +312,22 @@ function subtreeSize(id, cache) {
 }
 ```
 
-`buildIcicle` lays the cells out by recursively partitioning each frame's horizontal span among its children in proportion to subtree size. Hovering a cell peeks the element on the page; clicking selects the frame -- the same two interactions as a tree row, so the overview and the detail stay in lockstep.
+`buildIcicle` lays the cells out by recursively partitioning each frame's horizontal span among its children in proportion to subtree size. Hovering a cell peeks the element on the page, and clicking opens the source and selects the frame, exactly as a tree row does, so the overview and the detail stay in lockstep.
 
-A click on a cell, or a value-thread, applies **degree-of-interest focus+context**: the frames on the path stay lit and everything else dims. The rule is deliberately asymmetric -- icicle focus dims only the overview cells (the tree stays fully readable), while value-threading gently dims the tree rows too, and the page-hovered row is never dimmed so the inspect-sync stays visible:
+A cell click also applies **degree-of-interest focus+context**: the clicked frame's subtree and its ancestor path stay lit while the other overview cells dim, and a click on the icicle's empty background clears the focus. Value-threading (the ⌖ from step two) goes through the same `applyDOI`, its set being the frames the value flowed through plus their ancestor paths. The rule is deliberately asymmetric: an icicle click dims only the overview cells, so the tree stays fully readable, while value-threading isolates a flow and therefore gently dims the tree rows too. The page-hovered row is never dimmed, which keeps the inspect-sync visible:
 
 ```javascript
+cell.addEventListener("click", function (e) {
+  e.stopPropagation(); openSrc(s["call-src"] || s.src); setSelected(id, true);
+  // Icicle focus: light the clicked frame's subtree + ancestor path and dim
+  // the other overview cells. dimRows stays false — the tree keeps full
+  // contrast; only value-threading (which isolates a flow) dims rows too.
+  var set = {};
+  (function sub(x) { set[x] = true; var sp = trace.spans[x]; if (sp) childrenOf(sp).forEach(sub); })(id);
+  for (var p = parentById[id]; p != null; p = parentById[p]) set[p] = true;
+  applyDOI(set, false);
+});
+
 function applyDOI(set, dimRows) {
   Object.keys(trace.spans).forEach(function (id) {
     var on = !set || set[id];
@@ -357,13 +382,13 @@ Every projection above is reached through a route that shares one shape: resolve
 ["/dev/__trace-clear"       ,,, ]  ; (no params)                    → clear-recordings!
 ```
 
-> **Deliberately not built -- timing/profiling.** Instrumentation can't measure wall-clock honestly (the recorder's own overhead dominates), so the `ms` we show is the request total from `record-page`, not per-frame timing. For real profiling, reach for a sampling profiler. The construction view answers *structure and data*, not *time*.
+> **Deliberately not built -- timing/profiling.** Under a recording compiler, per-frame wall-clock would mostly measure the recorder itself (its overhead dominates), so the `ms` we show is the request total from `record-page`, not per-frame timing. For real profiling, reach for a sampling profiler. The construction view answers *structure and data*, not *time*.
 
 > **Trade-off -- the endpoints are unauthenticated, and return real recorded values.** Anything that can reach `/dev/__flow` or `/dev/__value` gets the actual recording -- argument and result previews that can include user emails and recipe content. That is acceptable for a dev-only, loopback service -- the same posture as `/dev/ws` from the inspector chapter, and prod-absent through the same `requiring-resolve` gate. Don't expose the dev server.
 
 ## Flow: from one element to the query behind it
 
-Flow mode is the projection worth dwelling on, because it does what the inspector never could. Here is the whole idea as a single moment at the keyboard. The recipe index is on screen -- eight cards, and the third shows a title you think is wrong. You **Alt+click that card**. The overlay sends its `data-myapp-name` (`recipe-card`) and its DOM rank (`2`, zero-based) to `/dev/__flow`, and flow does four things at once: it resolves the click to *that* card's frame -- the third element-producing `recipe-card` call in the recording, not all eight -- walks its ancestor path up to the handler, reads the entity id off the card's argument, and scans every recorded Datomic read for the one whose result *contained that id*. The card that comes back names the suspects: this card descends from `recipes-index` under the page handler, and its data came from `all-recipes`' `d/q` and one `pull` -- green, self-consistent, and, in the stale-title case, **unhelpful**, because nothing in *this* request set the title. So flow does the honest thing and hands you the entity id with a pivot to `d/history`.
+Flow mode is the projection worth dwelling on, because it does what the inspector never could. Here is the whole idea as a single moment at the keyboard. The recipe index is on screen: eight cards, and the third shows a title you think is wrong. You **Alt+click that card**. The overlay sends its `data-myapp-name` (`recipe-card`) and its DOM rank (`2`, zero-based) to `/dev/__flow`, and flow does four things at once: it resolves the click to *that* card's frame -- the third element-producing `recipe-card` call in the recording, not all eight -- walks its ancestor path up to the handler, reads the entity id off the card's argument, and scans every recorded Datomic read for the one whose result *contained that id*. The card that comes back names the suspects: this card descends from `recipes-index` under the page handler, and its data came from `all-recipes`' `d/q` and one `pull` -- green, self-consistent, and, in the stale-title case, **unhelpful**, because nothing in *this* request set the title. So flow does the honest thing and hands you the entity id with a pivot to `d/history`.
 
 Two capabilities make this more than the inspector could do, and both live in `flow`.
 
@@ -418,11 +443,11 @@ Two capabilities make this more than the inspector could do, and both live in `f
 
 When an index can't be resolved -- genuine render reordering (a `sort` between data order and DOM order), or a conditional that rendered nothing -- `flow` returns `:ambiguous true` rather than guessing.
 
-The `:pivot` is the honest move here. The trace explains how *this request* rendered the value; it does not explain why the *entity* holds it. The classic case is a fork showing a stale title: `fork!` copied the title onto a new entity days ago, and to Datomic the fork's current title is perfectly correct -- the read-trace is green and self-consistent, and unhelpful, because the cause was a write in a different request. So flow mode does not pretend to be a root-cause oracle. It **narrows the suspects, shows the data path, and pivots to the write history** -- handing you the entity id and pointing at `d/history`, which is where that question actually lives.
+The `:pivot` is where flow admits its limit. The trace explains how *this request* rendered the value; it does not explain why the *entity* holds it. In the stale-title case the cause was a write in a different request entirely: `fork!` copied the title onto the new entity days ago, and to Datomic the fork's current title is perfectly correct. So flow mode does not pretend to be a root-cause oracle. It **narrows the suspects, shows the data path, and pivots to the write history**: it hands you the entity id and points at `d/history`, which is where that question actually lives.
 
-## Flow mode: Alt+click an element
+## Flow in the overlay: Alt+click an element
 
-With the tree, details, overview, and the projections in place, flow mode is a small addition on the client: an Alt+click fetches `/dev/__flow` for the clicked instance and shows a card next to the cursor. `onAltClick` branches -- a plain click selects the element (step two), an Alt+click fires flow:
+With the tree, details, overview, and the projections in place, flow mode is a small addition on the client: an Alt+click fetches `/dev/__flow` for the clicked instance and shows a card next to the cursor. `onAltClick` branches; a plain click selects the element (step two), an Alt+click fires flow:
 
 ```javascript
 function onAltClick(e) {
@@ -435,8 +460,9 @@ function onAltClick(e) {
   var src = srcEl ? srcEl.getAttribute("data-myapp-src") : "";
   var q = "?name=" + encodeURIComponent(ci.name) + "&idx=" + ci.idx + "&src=" + encodeURIComponent(src);
   fetch("/dev/__flow/" + encodeURIComponent(traceId) + q, { headers: { Accept: "application/json" } })
-    .then(function (resp) { return resp.ok ? resp.json() : null; })
-    .then(function (f) { highlight(ci.name, ci.idx); showFlow(f, e.clientX + 8, e.clientY + 8); });
+    .then(function (resp) { if (!resp.ok) { console.error("[construction-view] flow fetch failed:", resp.status); return null; } return resp.json(); })
+    .then(function (f) { highlight(ci.name, ci.idx); showFlow(f, e.clientX + 8, e.clientY + 8); })
+    .catch(function (err) { console.error("[construction-view]", err); });
 }
 document.addEventListener("click", onAltClick, true);
 ```
@@ -481,7 +507,7 @@ document.addEventListener("dispatcher:morphed", function (e) {
 });
 ```
 
-So correlation is *per region*: a hover or Alt+click in the chrome resolves against `<html>`'s trace, while one inside a morphed `<main>` resolves against the morph's trace. The same machinery fixed dev-hot-reload staleness for free -- after you edit a view and the page morphs, the overlay shows the *new* construction, not the pre-edit one.
+So the overlay follows one *active* trace, and the plain click is the interaction that switches it per region: click a component inside a morphed `<main>` and the overlay fetches that region's trace, activates it, and selects the frame there; click back in the chrome and `<html>`'s trace becomes active again. Hover and Alt+click stay on whatever trace is active: a page hover still boxes any element, but it reveals a tree row only when that element belongs to the active trace, and an Alt+click's flow queries the active recording. The same machinery fixed dev-hot-reload staleness for free: after you edit a view and the page morphs, the overlay shows the *new* construction, not the pre-edit one.
 
 ## Surfacing a prior error, and detaching the panel
 
@@ -524,7 +550,7 @@ The feature is structurally absent, not merely disabled -- the same bar as the i
 - **Eid-matching is identity, not lineage.** It tells you which query *returned* the entity, not which transform shaped the displayed string. Following a value through `str`/`subs`/i18n/markdown to the exact datom is true taint tracking -- the research-hard frontier (the [Whyline](https://faculty.washington.edu/ajko/papers/Ko2004WhylineAlice.pdf) asked this question of UIs two decades ago and it is still not a shipping feature). We stop one honest step short of it, and say so with the `d/history` pivot.
 - **The DB-namespace allowlist is hand-maintained.** `db-nss` scopes the expression scan; a *new* DB-touching namespace must be added or its reads won't surface.
 - **The recorder is bounded to the current page-visit, not the JVM's lifetime.** FlowStorm's timeline only grows *while recording*, so recording is on only for the span of a render and a full navigation clears the previous visit (see [chapter 16](16-construction-view.md)). The recorder therefore holds the page on screen plus its morphs, not a days-long history -- an earlier "record from boot" build leaked to ~30 GB, which is what this model fixed. `clear-recordings!` / `/dev/__trace-clear` remain as a manual escape hatch, and `-Xmx2g` turns any regression into a loud OOM.
-- **No timing.** Instrumentation can't measure wall-clock honestly; for profiling, use a sampling profiler.
+- **No timing.** Per-frame wall-clock would mostly measure the recorder; for profiling, use a sampling profiler.
 - **A real dev startup/first-hit cost.** The compiler swap slows startup and the first hit to each page -- paid only under `:storm`, never in plain `:dev` or prod.
 
 ## The dual it rests on

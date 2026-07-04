@@ -14,9 +14,11 @@ The problem with styling a server-rendered app is the same one every styled app 
 
 Tailwind wins here because it inverts the problem. Instead of a separate stylesheet full of names you invent, you compose styling from a fixed vocabulary of utility classes written directly in the markup: `[:div.mt-4.flex.items-center ...]`. The styling is co-located with the Hiccup that it styles, so the two cannot drift -- delete the element and its styling goes with it. There is no class name to invent, and no separate CSS file to maintain.
 
-Crucially for this stack, Tailwind does not care where the class names come from. It generates CSS by scanning your source files for class names. It does not need to understand JSX, ERB, or Hiccup -- it scans a directory, finds the utility classes you used, and emits exactly the CSS those classes need and nothing more. That makes it a perfect fit for server-rendered HTML: there is no JavaScript build pipeline for your *styles*, just a binary that reads source and writes one CSS file.
+Crucially for this stack, Tailwind does not care where the class names come from. It generates CSS by scanning your source files for class names. It does not need to understand JSX, ERB, or Hiccup -- it scans a directory, finds the utility classes you used, and emits exactly the CSS those classes need and nothing more. That makes it a perfect fit for server-rendered HTML: there is no JavaScript build pipeline for your *styles*, just one CLI that reads source and writes one CSS file.
 
-And Tailwind v4 ships as a **standalone CLI** -- a single binary, no Node project, no PostCSS plugin chain, no `tailwind.config.js`. You run it, it produces a CSS file, and the app serves that file. It is a build tool, not a runtime dependency: nothing about Tailwind ends up in the served page except plain CSS. The devcontainer from [the devcontainer chapter](03-devcontainer.md) already installs the `tailwindcss` binary on the PATH; outside the container, grab the standalone CLI for your platform from the Tailwind releases page and drop it somewhere on your PATH.
+That scanner is also where Tailwind's own cost lives, and it deserves naming alongside the costs above. The scan is textual: a utility exists in the output only if its class name appears somewhere in the source as a complete literal string. Build one dynamically and the scanner cannot see it. `(str "bg-" (if urgent? "negative" "positive"))` reads like ordinary Clojure, but Tailwind emits nothing for it, the element silently renders unstyled, and no compiler or test flags the gap. The discipline that follows is to branch between whole names, never assemble fragments: `(if urgent? "bg-negative" "bg-positive")` works, because both literals sit in the source for the scanner to find. (Tailwind v4 can force a name into the output with `@source inline(...)`, but a one-line coding rule is cheaper than maintaining an exception list.)
+
+The whole tool is also a **command-line compiler**: no PostCSS plugin chain, no `tailwind.config.js`, no runtime dependency. You run the CLI, it produces a CSS file, and the app serves that file; nothing about Tailwind ends up in the served page except plain CSS. How the CLI reaches your PATH is a packaging detail with two answers. Tailwind publishes a standalone binary for machines without Node, but the devcontainer from [the devcontainer chapter](03-devcontainer.md) already carries Node, so it takes the ordinary route instead: `npm install -g tailwindcss @tailwindcss/cli`, in the same layer that installs Playwright, with the `tailwindcss` script symlinked into `/usr/local/bin`. Same tool, same flags, either way; outside the container, pick whichever install your machine makes cheap.
 
 ## The input file: Tailwind v4 with design tokens
 
@@ -33,6 +35,8 @@ Here is the top of `input.css`:
 @view-transition {
   navigation: auto;
 }
+
+/* (two html-level scroll rules elided; see input.css) */
 
 @font-face {
   font-family: "Geist";
@@ -60,28 +64,28 @@ Here is the top of `input.css`:
 }
 ```
 
-A few decisions here are worth drawing out:
+Working down the file:
 
 **`@import "tailwindcss" source("./src")`** -- This tells Tailwind v4 to scan the `./src` directory for utility classes. It will find class names in your `.clj` files, inside Hiccup vectors like `[:div.mt-4 ...]` or `[:div {:class "flex items-center"} ...]`.
 
 **`@source not "./src/myapp/web/inspector.js"`** -- A targeted exclusion. The dev-only source inspector is a JS file under `src/`, and Tailwind's scanner would otherwise see a `resize` substring in its `addEventListener('resize', ...)` and emit a stray `resize` utility. Excluding the file keeps that false positive out of the production stylesheet at zero cost.
 
-**`@view-transition { navigation: auto }`** -- Opts the site into the browser's native cross-document view transitions, so a full server-rendered navigation cross-fades instead of flashing white. This is the no-JavaScript baseline of the app's page-transition story: it works on a plain link click with no script at all. The morph dispatcher ([chapter 14](14-morph-dispatcher.md)) layers smoother in-place updates on top, and the full stylesheet adds `::view-transition` rules and a `prefers-reduced-motion` guard. Where a browser does not support it, the directive is simply ignored and navigation behaves as before -- zero cost.
+**`@view-transition { navigation: auto }`** -- Opts the site into the browser's native cross-document view transitions, so a full server-rendered navigation cross-fades instead of flashing white. This is the no-JavaScript baseline of the app's page-transition story: it works on a plain link click with no script at all. The morph dispatcher ([chapter 14](14-morph-dispatcher.md)) layers smoother in-place updates on top, and the full stylesheet adds `::view-transition` rules and a `prefers-reduced-motion` guard. Where a browser does not support it, the directive is simply ignored and navigation behaves as before.
 
 **`@font-face` for Geist** -- Geist is a variable font, so a single `.woff2` file covers all weights from 100 to 900. `font-display: swap` shows a fallback immediately, then swaps to Geist once it downloads.
 
 **`@theme` block** -- Design tokens as CSS custom properties. Once declared, you use them directly in utilities: `bg-primary`, `text-text-secondary`, `border-border`. The naming is deliberately semantic -- `surface`, `chrome`, `accent` -- rather than color scales like `indigo-600`. A focused app has a small, fixed palette; you do not need eleven shades of every color.
 
-Below `@theme` the file carries plain CSS that does not map cleanly to utilities: a `.legal-content` block for rendering markdown content (recipe descriptions today; named for the legal pages it could also serve) with proper typography, interaction transitions (press feedback, card hover lift, a `details[open]` chevron rotation), focus-visible outlines for keyboard navigation, and the `.diff-add` / `.diff-del` styles used by the recipe version diff. It is worth seeing a slice of it, because "Tailwind for everything" is not the claim -- the claim is Tailwind for the *utility-shaped* styling, and a small amount of hand-written CSS for the rest:
+Below `@theme` the file carries plain CSS that does not map cleanly to utilities: a `.legal-content` block for rendering markdown content (recipe descriptions today; named for the legal pages it could also serve) with proper typography, interaction transitions (press feedback, card hover lift, a `details[open]` chevron rotation), focus-visible outlines for keyboard navigation, and the `.diff-add` / `.diff-del` styles used by the recipe version diff. A slice of it shows the division of labor, because "Tailwind for everything" is not the claim. The claim is Tailwind for the *utility-shaped* styling, and a small amount of hand-written CSS for the rest:
 
 ```css
-/* Press feedback and hover lift -- one rule each, applied by selector rather
-   than repeated on every clickable element and card in the markup. */
+/* Press feedback -- one rule, applied by selector rather than repeated
+   on every clickable element in the markup. */
 button, a, [role="button"] { transition: transform 100ms ease-out, color 150ms ease-out; }
 button:active, a:active, [role="button"]:active { transform: scale(0.97); }
 
 /* Visible focus rings for keyboard navigation, keyed to the theme token. */
-button:focus-visible, a:focus-visible, input:focus-visible {
+button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
@@ -95,7 +99,7 @@ Each of these earns its place outside the utility system for a concrete reason. 
 
 ## Extending the tokens, and the responsive prefixes
 
-Two things you will reach for constantly are worth showing now, because the views chapter uses both without stopping to explain them.
+The views chapter leans on two more mechanisms without stopping to explain either, so they belong here.
 
 The first is **adding a token**. There is no config file to touch and no plugin to register -- you declare a custom property in `@theme`, and Tailwind generates the matching utilities for you. Add a brand color:
 
@@ -108,17 +112,19 @@ The first is **adding a token**. There is no config file to touch and no plugin 
 
 and `bg-brand`, `text-brand`, and `border-brand` exist immediately, as do `p-gutter`, `gap-gutter`, and `mt-gutter`. The utility *family* follows from the token's prefix: a `--color-*` token feeds every color utility, a `--spacing-*` token feeds padding, margin, and gap. That is the whole extension model -- name a value once, use it everywhere, and the dead-class problem from the BEM option never appears because the utility only exists while the token does.
 
-The second is **responsive prefixes**. Any utility can be gated behind a breakpoint by prefixing it with `sm:`, `md:`, `lg:`, and so on, and the prefixed form is the same utility wrapped in a `min-width` media query. A grid that stacks on phones and spreads to three columns on wider screens is one element:
+The second is **responsive prefixes**. Any utility can be gated behind a breakpoint by prefixing it with `sm:`, `md:`, `lg:`, and so on; the prefixed form is the same utility wrapped in a `min-width` media query (40rem for `sm:`). A grid that stacks on phones and spreads to two columns on wider screens is one element. This is the browse page's recipe grid, from `recipes-index` in the views namespace:
 
 ```clojure
-[:div.grid.grid-cols-1.md:grid-cols-3.gap-gutter ...]
+[:div.grid.gap-4.sm:grid-cols-2
+ (for [r recipes]
+   (recipe-card locale r))]
 ```
 
-`grid-cols-1` always applies; `md:grid-cols-3` takes over once the viewport crosses the `md` breakpoint. There is nothing new to learn per breakpoint -- the same vocabulary, conditionally applied -- and you will see these prefixes throughout the Hiccup views that follow.
+The bare `grid` stacks the cards in a single column; `sm:grid-cols-2` takes over once the viewport crosses the `sm` breakpoint. There is nothing new to learn per breakpoint: the same vocabulary, conditionally applied. The app spends the mechanism sparingly -- eight `sm:` gates in the whole source tree, at the places where phone and desktop genuinely differ: the recipe grids, the admin dashboard's stat tiles, wider gutters on the main column, and labels that appear only when there is room for them.
 
 ## The dev stylesheet
 
-First, generate the stylesheet once so there is something to serve. The standalone CLI takes an input file and an output path:
+First, generate the stylesheet once so there is something to serve. The `tailwindcss` CLI takes an input file and an output path:
 
 ```bash
 tailwindcss -i input.css -o static/styles.css
@@ -134,6 +140,6 @@ That plain `/styles.css` is all dev needs. (The asset pipeline chapter swaps thi
 
 The proof is observable two ways: start the server and the font and colors apply, or `grep` the output for a token you used (`grep bg-primary static/styles.css`) and see that Tailwind emitted it.
 
-`static/styles.css` is a *generated* file, so it is git-ignored -- the sources are `input.css` and the `static/` tree, and the stylesheet is rebuilt from them. You do not commit it.
+`static/styles.css` is a *generated* file, so it is git-ignored: the sources are `input.css` and the class names scanned out of `./src`, and the stylesheet is rebuilt from them. You do not commit it.
 
 What keeps the regeneration loop fast and automatic in development -- a long-lived `tailwindcss --watch` process and the file watcher that swaps the stylesheet in the browser -- is part of the hot-reload story, and it is covered in the hot-reload chapters, not here. What turns this same `static/styles.css` into a content-hashed, immutably cached production asset is the asset pipeline chapter, near the end of the book. For now the picture is simple: Tailwind writes one stylesheet, the layout links it, and your views can use utility classes immediately.

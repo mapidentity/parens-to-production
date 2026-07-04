@@ -2,20 +2,15 @@
 
 ![A server-rendered recipe page -- title, author, ingredients, method, version history, and the forks section.](images/app-recipe-detail.png)
 
-*A single recipe page, assembled entirely on the server from the Hiccup views and layouts this chapter builds.*
+*A single recipe page, assembled entirely on the server: Hiccup views rendered through the layout system this chapter builds.*
 
 In the previous chapters we set up our Ring server and routing with Reitit, a live-reload workflow, a Datomic schema, internationalization, and Tailwind styling. But we glossed over how pages actually get rendered. In this chapter we build the entire server-side view layer: HTML generation with Hiccup, a layout system that shares structure across pages, navigation components, the output-escaping that is our primary defense against cross-site scripting, and Markdown rendering. The progressive-enhancement layer that makes navigation feel instant -- the client dispatcher -- is involved enough to earn [its own chapter](14-morph-dispatcher.md) next; here we build the views it enhances. (The login and session machinery the layouts hint at -- magic-link authentication -- comes later, in the authentication chapters; here we just render the views it will plug into.)
 
 ## Why server-rendered HTML
 
-The default assumption in 2026 is that you need React (or something like it) to build a web app. For a lot of products, that is the wrong starting point. Here is why we went with server-rendered HTML:
+[The positioning chapter](02-positioning.md) made the architectural case: the server is the authority, the browser is a rendering surface, and the hydration tax is a bill you only run up by moving authority to the client. This chapter is where that decision lands in code, and it means three concrete things for the view layer. Rendering is a function call: the Clojure server already has all the data, so a page is functions over data in one process, with no API layer or serialization boundary in between. The browser receives complete HTML, so there is nothing to hydrate and no client application to boot before the page is usable. And JavaScript stays optional: a small script ([the next chapter](14-morph-dispatcher.md)) upgrades navigation and form submissions into in-place updates, but every page works without it.
 
-- **One language, one process.** Our Clojure server already has all the data. Rendering HTML is just a function call -- no API layer, no serialization boundary, no client-side state management.
-- **Instant page loads.** The browser gets complete HTML. No loading spinners, no hydration, no layout shift.
-- **Simpler deployment.** No build step for a JavaScript bundle. No CDN configuration for client assets. The server sends HTML; the browser renders it.
-- **Progressive enhancement where it matters.** A tiny script upgrades navigation and form submissions into in-place updates without requiring JavaScript for the page to work at all.
-
-This is not a philosophical stance against SPAs. It is a pragmatic choice: for a solo-operated SaaS, every moving part you add is a part you maintain. Server-rendered HTML eliminates an entire category of complexity.
+Note what none of the three requires: a bundler. The project does acquire build steps -- Tailwind produces the stylesheet ([the Tailwind chapter](12-tailwind-styling.md)), and production content-hashes and minifies assets ([the asset pipeline chapter](24-asset-pipeline.md)) -- but nothing is ever bundled, and no build output is an application the browser must execute before the page works.
 
 ## Hiccup 2: HTML as data
 
@@ -45,7 +40,13 @@ CSS classes can use dot syntax for brevity:
 ;; <div class="mt-4 text-center">Centered text</div>
 ```
 
-And since it is just data, you can use all of Clojure: `if`, `for`, `when`, `let`, function composition. No template language to learn. No special syntax for conditionals or loops.
+And since it is just data, you can use all of Clojure: `if`, `for`, `when`, `let`, function composition. There is no template language and no special syntax for conditionals or loops. That is a real decision, not a freebie, and its alternatives deserve to be visible behind it.
+
+> **Decision -- why HTML-as-data, not templates?** The alternatives deserve names. **Selmer** brings Django-style string templates to Clojure: views are plain text files with `{{title}}` holes and `{% if %}`/`{% for %}` tags, a designer who has never read Clojure can edit them, and HTML from any documentation pastes in unchanged. **Enlive** keeps the views as pure HTML files and expresses the logic separately, as Clojure transformations keyed by CSS-style selectors. Both keep HTML as HTML, and Hiccup's honest costs are the mirror image of that strength: a designer cannot edit a Clojure function, and every snippet you lift from MDN or a component library must be hand-translated into vectors. We pay those costs for two reasons. First, a rendered template is an opaque `String`. Conditionals and loops arrive as a second mini-language embedded in text, and escaping becomes a per-variable convention: Selmer escapes by default, but a `|safe` filter opts out anywhere, and the engine never parses the surrounding HTML, so it cannot know whether a hole lands in element text, an attribute, or a URL. Hiccup's renderer owns every interpolation point structurally, which is the property the escaping section below builds on. Second, and decisive for this book: **data can carry metadata; strings cannot.** [The inspector chapter](15-inspector.md) reads the view namespaces with `tools.reader`, welding `file:line:column` onto every element vector, and that is what makes hover-an-element-and-open-its-source possible; the [construction-view chapters](16-construction-view.md) walk recorded Hiccup values and project them back into the elements they became. Those tools exist *because* a view's output is a Clojure data structure the whole way down. A string template leaves nothing to instrument.
+
+Two rendering rules govern how this data flattens into a document, and the listings that follow lean on them throughout. First, **vectors are elements; seqs are splices.** A vector becomes a tag, while a seq -- what `list`, `for`, and `map` return -- dissolves into its parent's children. That is why the top nav later in this chapter drops a `(list [:span ...] [:form ...])` in where two siblings are needed, and why an `[:svg ...]` holds a `(for [d paths] [:path ...])` directly as a child. Get the two backwards and the renderer refuses to guess: wrap sibling elements in a vector, `[[:li "a"] [:li "b"]]`, and rendering throws `[:li "a"] is not a valid element name`, because a vector's first slot must be a tag.
+
+Second, **`nil` renders as nothing.** A `nil` child vanishes from the output, which is what lets a bare `(when user-email (nav-tab ...))` sit inside markup: the signed-out case is `nil`, and `nil` leaves no trace in the HTML.
 
 We use one namespace from the library for rendering:
 
@@ -53,7 +54,7 @@ We use one namespace from the library for rendering:
 (require '[hiccup2.core :as h])   ;; escaping html rendering, raw HTML insertion
 ```
 
-`hiccup2.core/html` renders hiccup to an escaped string. `hiccup2.core/raw` wraps a string we want emitted *verbatim* (no escaping) -- used for the doctype, for markdown-rendered HTML, and for the inline scripts and styles we control. We will see both at work in the base layout.
+`hiccup2.core/html` renders hiccup with escaping. One detail of its return type matters: it produces not a plain `String` but a `RawString` wrapper, hiccup's marker for "already rendered, escape nothing further." The wrapper is what makes rendered fragments composable (embed one inside another and the outer render passes it through rather than escaping your markup a second time), and it is why the handler helper later in this chapter calls `str` on the result to realize the actual response body. `hiccup2.core/raw` wraps a string we want emitted *verbatim* (no escaping) -- used for the doctype, for markdown-rendered HTML, and for the inline scripts and styles we control. We will see both at work in the base layout.
 
 ## The layout system
 
@@ -61,7 +62,7 @@ Every web app has shared structure: the `<head>` tag, stylesheets, scripts, navi
 
 ### Base layout
 
-The base layout is the HTML5 shell that every page shares. It is private -- page functions never call it directly:
+The base layout is the HTML5 shell that every page shares:
 
 ```clojure
 (ns myapp.web.views
@@ -124,12 +125,12 @@ The base layout is the HTML5 shell that every page shares. It is private -- page
         (list (dev-reload-script) (inspector-script) (trace-overlay-script)))]]))
 ```
 
-Several things in that shell carry weight worth drawing out:
+Unpacking that shell:
 
-- **`locale` is threaded everywhere.** Every layout takes it as the first argument, and all user-facing text goes through `(t locale :key)` for i18n. i18n has [its own chapter](11-i18n.md); the view layer is ready for it from day one.
-- **The whole document is built by `h/html`, the *escaping* renderer.** This matters enough that it gets its own section below. The doctype is the one structural literal we want emitted as-is, so it goes through `(h/raw "<!DOCTYPE html>")`.
-- **Assets resolve through `(assets/asset "...")`.** The stylesheet, the module scripts, and the import map all come from the asset system: in production each URL is content-hashed and carries an integrity (SRI) attribute; in development the same calls return stable, unhashed URLs. The asset pipeline is its own topic -- here, the view layer just asks for a logical name and gets back a URL.
-- **`(script-tag "js/dispatcher.js" {:type "module"})`** loads the dispatcher, the script that powers progressive enhancement ([its own chapter](14-morph-dispatcher.md), next). It is a normal ES module, served from the classpath through the asset pipeline -- not inlined.
+- **`locale` is threaded everywhere.** Every layout takes it as the first argument, and all user-facing text goes through `(t locale :key)` for i18n. The machinery came in [the i18n chapter](11-i18n.md); the view layer is ready for it from day one.
+- **The whole document is built by `h/html`, the *escaping* renderer.** This matters enough that the output-encoding section below is devoted to it. The doctype is the one structural literal we want emitted as-is, so it goes through `(h/raw "<!DOCTYPE html>")`.
+- **Assets resolve through `(assets/asset "...")`.** The stylesheet, the module scripts, and the import map all come from the asset system: in production each URL is content-hashed and carries an integrity (SRI) attribute; in development the same calls return stable, unhashed URLs. That machinery arrives in [the asset pipeline chapter](24-asset-pipeline.md); here, the view layer just asks for a logical name and gets back a URL.
+- **`(script-tag "js/dispatcher.js" {:type "module"})`** loads the dispatcher, the script that powers progressive enhancement ([the next chapter](14-morph-dispatcher.md)). It is a normal ES module, served from the classpath through the asset pipeline -- not inlined.
 - **`(script-tag "js/controllers.js" {:type "module"})`** loads the controller registry -- the single listener that attaches every behavior module to the elements it enhances, on first load and after each morph ([the dispatcher chapter](14-morph-dispatcher.md) builds it). The behavior modules below (`live-form`, `defer-details`, and the rest) each register themselves with it. This listing shows a representative few; like the dev-only block below, this `<head>` is the one place they mount, so each later behavior chapter adds its module here.
 - **`(toast-script)`** inlines a small toast helper. The `defn-asset` macro and inline scripts are covered later in this chapter.
 - **`(tag-root body)`** wraps the page body for the development source inspector. In production it is the identity function; the body is unchanged.
@@ -360,9 +361,9 @@ Handlers then read what they need off the request and render:
     (html (views/dashboard (:locale request) (:user-email request) (:admin? request) recipes))))
 ```
 
-The pattern is consistent: gather data, render the view, wrap with `html`. No framework magic. The `str` inside `html` realizes the Hiccup output as an HTML string for the response body. (The `:user-eid` and `:admin?` keys these handlers read are not in the raw request -- they are resolved once from the session by `wrap-current-user`, a middleware we build in [the login-flow chapter](21-auth-email-flow.md); until then, read them as "the signed-in user's entity id, or `nil`.")
+The pattern is consistent: gather data, render the view, wrap with `html`. No framework magic. The `str` inside `html` realizes the `RawString` the layout's `h/html` returned into the actual HTML of the response body. (The `:user-eid` and `:admin?` keys these handlers read are not in the raw request -- they are resolved once from the session by `wrap-current-user`, a middleware we build in [the login-flow chapter](21-auth-email-flow.md); until then, read them as "the signed-in user's entity id, or `nil`.")
 
-Importantly, **handlers do not branch on the request type.** There is no "is this a fetch?" check and no separate partial-vs-full code path. A handler renders one thing -- the full page -- and the dispatcher on the client extracts the part it needs. That client dispatcher -- the script that turns these full-page responses into in-place `<main>` morphs, and the reason `data-layout` rides on every `<main>` -- is involved enough to be its own chapter, [The Morph Dispatcher](14-morph-dispatcher.md), which comes next. The rest of *this* chapter finishes the server side of the view layer.
+Importantly, **handlers do not branch on the request type.** There is no "is this a fetch?" check and no separate partial-vs-full code path. A handler renders one thing -- the full page -- and the dispatcher on the client extracts the part it needs. That client dispatcher (the script that turns these full-page responses into in-place `<main>` morphs, and the reason `data-layout` rides on every `<main>`) is [The Morph Dispatcher](14-morph-dispatcher.md), the next chapter. The rest of *this* chapter finishes the server side of the view layer.
 
 ## Output encoding: escaping is the primary XSS defense
 
@@ -385,6 +386,8 @@ This is why the base layout renders with `hiccup2.core/html` -- the *escaping* r
 [:span {:class "..."} user-email]                                      ;; escaped
 ```
 
+Attribute values get the same treatment as element content. The recipe edit form renders the stored title back into its `<input>` as `{:value (:recipe/title recipe)}`, and a title crafted to break out of the quotes -- `" onmouseover="alert(1)` -- is emitted as `value="&quot; onmouseover=&quot;alert(1)"`: inert text inside the attribute, not a live event handler. Element content and attribute values are the two contexts where user text lands in this app, and `h/html` escapes both.
+
 There is nothing to remember and nothing to opt into. Safe is the default; you have to go out of your way to render raw.
 
 ### Opting into raw, on purpose
@@ -404,7 +407,7 @@ Some content we *do* want emitted verbatim, and only those places use `h/raw`:
 
 Each `h/raw` is a deliberate, auditable decision. The rule of thumb: grep for `h/raw`, and every hit should be either a literal you wrote or output from a renderer that sanitizes its input. The doctype and inline assets are bytes we control; the markdown renderer is trusted *because* it neutralizes the HTML a user might smuggle in. Everything else flows through `h/html` and is escaped.
 
-A correctly-escaped output layer is the primary defense here. (The app also ships a strict, hash-based Content-Security-Policy with no `'unsafe-inline'` for scripts, which would *additionally* block an injected inline script -- but that is defense-in-depth sitting behind escaping, and it is the subject of its own chapter ([the asset pipeline chapter](24-asset-pipeline.md)). The escaping is what makes the XSS not happen in the first place.)
+A correctly-escaped output layer is the primary defense here. (The app also ships a strict, hash-based Content-Security-Policy with no `'unsafe-inline'` for scripts, which would *additionally* block an injected inline script -- but that is defense-in-depth sitting behind escaping, and [the asset pipeline chapter](24-asset-pipeline.md) builds it. The escaping is what makes the XSS not happen in the first place.)
 
 ## CommonMark for Markdown content
 
@@ -465,7 +468,7 @@ A few small scripts -- like the toast helper -- are best inlined directly into t
         `(do ~reg (let [v# ~content] (defn- ~sym [] v#)))))))
 ```
 
-Two things connect this back to earlier sections:
+The raw wrapping and the script registration both tie back to earlier sections:
 
 - **The content is wrapped in `h2/raw`.** This macro lives in the `myapp.web.assets` namespace, which aliases `hiccup2.core` as `h2` (the views namespace happens to alias it as `h` -- same library, different local nickname). Because the body is syntax-quoted, `` `(h2/raw ~expr) `` expands to the fully-qualified `hiccup2.core/raw`, so the generated function works no matter how the *calling* namespace aliases Hiccup. An inline script must be emitted byte-for-byte; escaping it would corrupt the JavaScript. Because we control the file, raw output is the correct call here -- and because the bytes are emitted exactly, the strict CSP can authorize the script by hashing those same bytes.
 - **Script assets register their path** (`register-inline-script!`) so the CSP can compute and allow their hash. The CSP machinery itself is covered in the [asset pipeline chapter](24-asset-pipeline.md); the takeaway here is that inlining a script is a one-liner and it stays compatible with a no-`'unsafe-inline'` policy.
@@ -507,7 +510,7 @@ The pieces that touch the view layer:
 
 - **`wrap-locale`** detects the user's locale from the session or the `Accept-Language` header and assocs `:locale` onto the request. Every view function receives this. (This is the *only* request header the server negotiates on -- there is no enhanced/partial negotiation.)
 - **`wrap-no-cache-authenticated`** sets `Cache-Control: no-store` on authenticated responses, preventing the browser's back-forward cache from showing stale pages after logout.
-- **`wrap-csp`** attaches the strict Content-Security-Policy header to every `text/html` response (the defense-in-depth backstop behind output escaping). Its construction lives in `myapp.web.assets` and gets its own chapter ([the asset pipeline chapter](24-asset-pipeline.md)).
+- **`wrap-csp`** attaches the strict Content-Security-Policy header to every `text/html` response (the defense-in-depth backstop behind output escaping). Its construction lives in `myapp.web.assets` and is built in [the asset pipeline chapter](24-asset-pipeline.md).
 
 Static assets are served from `assets/static-root` -- the source `static/` tree in development, the built and content-hashed tree in production. In development a small `wrap-dev-no-store` keeps the browser from caching stable, unhashed dev URLs.
 

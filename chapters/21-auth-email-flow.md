@@ -17,7 +17,7 @@ Every step uses the Post-Redirect-Get pattern where appropriate, and the session
 
 ## Sending email with Jakarta Mail (Eclipse Angus)
 
-There are Clojure email libraries out there, but they are all thin wrappers around Jakarta Mail anyway. Using Jakarta Mail directly means one fewer dependency to track, and the API is straightforward enough that a wrapper does not add much value. Eclipse Angus is the reference implementation of Jakarta Mail since it moved out of the javax namespace.
+There are Clojure email libraries out there, but they are all thin wrappers around Jakarta Mail anyway. Using Jakarta Mail directly means one fewer dependency to track, and the API is straightforward enough that a wrapper does not add much value. Jakarta Mail is the old JavaMail, renamed after its move to Eclipse; its packages left the `javax` namespace at Jakarta Mail 2.0, and when the 2.1 spec separated the API from its implementation, the reference implementation became Eclipse Angus.
 
 The dependency in `deps.edn`:
 
@@ -67,9 +67,9 @@ The imports tell the story. We need `Session` to configure the SMTP connection, 
       (Session/getInstance props))))
 ```
 
-Two decisions ride in that listing. First, we branch on whether `user` is present. In development, we connect to Mailpit without authentication. In production, we use authenticated SMTP with STARTTLS. The same code handles both -- the config drives the behavior.
+The branch on whether `user` is present is deliberate. In development, we connect to Mailpit without authentication. In production, we use authenticated SMTP with STARTTLS. The same code handles both; the config drives the behavior.
 
-Second, the `^Session` type hint on the return value. With `*warn-on-reflection*` set to true, the Clojure compiler will tell us if we miss a hint that causes reflective method lookup. In a namespace full of Java interop, this matters for both performance and correctness.
+So is the `^Session` type hint on the return value. With `*warn-on-reflection*` set to true, the Clojure compiler will tell us if we miss a hint that causes reflective method lookup. In a namespace full of Java interop, this matters for both performance and correctness.
 
 ### The send-magic-link! function
 
@@ -78,13 +78,13 @@ Second, the `^Session` type hint on the return value. With `*warn-on-reflection*
   "Send magic link email to user via SMTP."
   [locale email token base-url]
   (let [magic-link (str base-url "/auth/verify?token=" token)
-        from (config/get-config :smtp :from)
-        session (smtp-session)
+        ^String from (config/get-config :smtp :from)
+        ^Session session (smtp-session)
         msg (doto (MimeMessage. session)
               (.setFrom (InternetAddress. from))
-              (.setRecipient Message$RecipientType/TO (InternetAddress. email))
-              (.setSubject (t locale :email/magic-link-subject))
-              (.setText (format (t locale :email/magic-link-body) magic-link)))]
+              (.setRecipient Message$RecipientType/TO (InternetAddress. ^String email))
+              (.setSubject ^String (t locale :email/magic-link-subject))
+              (.setText ^String (format (t locale :email/magic-link-body) magic-link)))]
     (try
       (Transport/send msg)
       (log/info "Magic link email sent" {:to email})
@@ -95,15 +95,15 @@ Second, the `^Session` type hint on the return value. With `*warn-on-reflection*
          :message (.getMessage e)}))))
 ```
 
-The function takes four arguments: the locale (for i18n), the recipient email, the signed token, and the base URL. It constructs the full magic link URL, builds a `MimeMessage`, and sends it.
+The function takes four arguments: the locale (for i18n), the recipient email, the signed token, and the base URL. It constructs the full magic link URL, builds a `MimeMessage`, and sends it. None of the type hints here is strictly required today. The `session` local inherits its type from `smtp-session`'s `^Session` return hint -- the same propagation noted above -- so `(MimeMessage. session)` resolves without a local hint; the `^String` hints likewise mark where untyped values (config lookups, translations, the caller's arguments) meet Java setters that happen to resolve without them. They are here defensively: each pins the intended overload so the call stays reflection-free as the API or the surrounding code moves, and `*warn-on-reflection*` is what would catch it if one ever stopped resolving.
 
-Three decisions are folded into those few lines, and each is a small refusal of a more elaborate default:
+Each of the choices folded into those few lines is a small refusal of a more elaborate default:
 
 **Plain text email.** No HTML templates, no inline CSS wrestling. A magic link email should contain exactly one thing: the link. Plain text is universally readable, does not get clipped by email clients, and is trivial to test.
 
 **i18n from the start.** The subject and body come from translation maps via the `t` function. The body template uses `%s` for the magic link URL, filled in with `format`. This means Dutch users get Dutch emails and English users get English ones. Adding this later would mean touching every email template. Adding it now costs nothing.
 
-**Return value, not exception.** The function returns `{:error :SUCCESS}` or `{:error :FAIL :message "..."}`. The caller can decide what to do. In our case, the handler always shows the "check your email" page regardless -- we do not want to leak information about whether an email address is registered.
+**Return value, not exception.** The function returns `{:error :SUCCESS}` or `{:error :FAIL :message "..."}`. The caller can decide what to do. In our case, the handler always shows the "check your email" page regardless: we do not want to leak information about whether an email address is registered. The shape has a naming wart worth owning -- a key called `:error` whose value can be `:SUCCESS` reads backwards, and screaming keywords are unidiomatic Clojure. Read the pair as a status code (the map answers "what went wrong?", and `:SUCCESS` means "nothing"), or rename it `{:ok? true}` in your own code. The property that matters is that failure is a value the caller inspects, not an exception that unwinds the handler.
 
 ## The handler layer
 
@@ -154,9 +154,9 @@ The happy path does four things: create a token (and its nonce), send the email,
 
 **Rate-limit the send, because every request emails an attacker-chosen address.** An unthrottled endpoint that mails any address on demand is a mail-bombing and SMTP-reputation hazard: a script can flood one inbox, or spray links at thousands of addresses to make your domain look like a spammer. So we cap requests per email (blunting a bombing run on one inbox) and per IP (blunting a spray from one source) over a trailing window. The per-IP check runs even on malformed input, so junk still counts against the source. The limiter (`myapp.web.ratelimit`) is a small in-process sliding-window counter -- it keeps each key's recent hit timestamps in a local atom and prunes those past the trailing window, so the cap holds exactly for any window-length span. That local atom is also why it is **single-instance**, a constraint worth its own short section below. Crucially, a rate-limited or invalid request still redirects to the *same* confirmation page: throttling must not become an oracle that tells an attacker which addresses are real or which requests were dropped.
 
-Recall from [Part 1](20-auth-tokens.md) that `create-magic-link-token` returns `{:token ... :nonce ...}`. The token goes in the email; the nonce we write to a small server-side store keyed by `:magic-link/nonce`, alongside the email and request time. (This store is the same lightweight event log the admin dashboard reads for analytics -- its schema is defined there; here we only need the nonce field.) When the user clicks the link, verification will look this record up and atomically flip it to "consumed." A second click finds it already consumed and is rejected. One caveat rides on *where* that store lives: it shares the disposable analytics database, so wiping that database resets single-use protection for any link still outstanding at that instant -- harmless for links already consumed, but a still-valid link minted just before the wipe could then be replayed. [The admin-dashboard chapter](23-admin-dashboard.md) spells this out where the analytics database is introduced; the rule is simply to recreate that database only when no unexpired links are in the wild.
+Recall from [Part 1](20-auth-tokens.md) that `create-magic-link-token` returns `{:token ... :nonce ...}`. The token goes in the email; the nonce we write to a small server-side store keyed by `:magic-link/nonce`, alongside the email and request time. (This store is the same lightweight event log the admin dashboard reads for analytics -- its schema is defined there; here we only need the nonce field.) When the user clicks the link, verification will look this record up and atomically flip it to "consumed." A second click finds it already consumed and is rejected. A caveat attaches to *where* that store lives: it shares the disposable analytics database, so wiping that database resets single-use protection for any link still outstanding at that instant -- harmless for links already consumed, but a still-valid link minted just before the wipe could then be replayed. [The admin-dashboard chapter](23-admin-dashboard.md) spells this out where the analytics database is introduced; the rule is simply to recreate that database only when no unexpired links are in the wild.
 
-One ordering subtlety follows from doing the send before the record: a nonce write that failed *after* a successful send would leave the user holding a link whose nonce verification cannot find -- it would be rejected as if it had already been used. In practice the send and the record run in the same request against the same transactor and the window is vanishingly small; if you wanted to close it entirely, record the nonce first and send only once that write has committed, trading a slightly slower happy path for a guarantee that no link is ever in an inbox without its nonce already durable.
+Doing the send before the record leaves an ordering subtlety: a nonce write that failed *after* a successful send would leave the user holding a link whose nonce verification cannot find -- it would be rejected as if it had already been used. In practice the send and the record run in the same request against the same transactor and the window is vanishingly small; if you wanted to close it entirely, record the nonce first and send only once that write has committed, trading a slightly slower happy path for a guarantee that no link is ever in an inbox without its nonce already durable.
 
 ### Why Post-Redirect-Get matters
 
@@ -180,7 +180,7 @@ The in-process counter is the right default -- one instance, no external depende
   ...)
 ```
 
-Because the *key* carries the dimension (`ml-ip:…`, `ml-email:…`) and the policy (which dimensions, what limits, what window) lives entirely in the caller, swapping the backing store is a body-only change behind that same signature. A Redis implementation is the canonical one -- a counter per key with an atomic increment and a TTL that *is* the window. (This is a true fixed window rather than the in-process sliding log: it is slightly bursty at the window boundary, an acceptable trade for a coarse cross-instance abuse limit.)
+Because the *key* carries the dimension (`ml-ip:…`, `ml-email:…`) and the policy (which dimensions, what limits, what window) lives entirely in the caller, swapping the backing store is a body-only change behind that same signature. A Redis implementation is the canonical one: a counter per key with an atomic increment and a TTL that *is* the window. The sketch below uses Carmine, the de facto Clojure Redis client, where `car/wcar` runs the enclosed commands against the connection spec `conn`. (This is a true fixed window rather than the in-process sliding log: it is slightly bursty at the window boundary, an acceptable trade for a coarse cross-instance abuse limit.)
 
 ```clojure
 ;; INCR returns the new count; on the first hit, stamp the TTL to the window.
@@ -277,9 +277,9 @@ The three gates run in order, short-circuiting on the first failure:
 
 Crucially, every failure path produces the *same* generic error page. We never tell the caller whether the token was forged, expired, or already used -- that would hand an attacker a probe.
 
-The same discipline extends to the failures nobody anticipated. `wrap-errors` -- middleware the companion repository mounts innermost in the app's stack -- catches anything a handler throws, logs the stack trace where an operator can read it, and serves the same styled `error-page` as a 500 that reveals nothing -- not the exception class, not the message, not a frame. Without it, an uncaught exception would fall through to `http-kit`'s default: an unstyled 500 carrying none of the app's headers. The placement is the deliberate part: innermost means the error response exits through the CSP and cache-control layers like any other HTML, so even the failure path wears the full security envelope.
+The same discipline extends to the failures nobody anticipated. `wrap-errors`, the middleware mounted innermost in the app's stack (the session-management listing below shows it), catches anything a handler throws, logs the stack trace where an operator can read it, and serves the same styled `error-page` as a 500. That page reveals nothing: not the exception class, not the message, not a frame. Without it, an uncaught exception would fall through to `http-kit`'s default: an unstyled 500 carrying none of the app's headers. The placement is the deliberate part: innermost means the error response exits through the CSP and cache-control layers like any other HTML, so even the failure path wears the full security envelope.
 
-And when one of the gates does refuse and you want to know which, the [construction view](16-construction-view.md) answers without adding a single log line: replay a used link under the `:storm` alias and the recorded tree shows `verify-token` returning the decoded claims -- the signature is fine -- and `consume-magic-link-nonce!` returning `false`, the CAS refusing a nonce that is already stamped. The generic page tells the visitor nothing, which is the point; the recording tells *you* everything, which is the other point. The two halves of the design -- opaque outside, transparent inside -- are the same decision made twice.
+And when one of the gates does refuse and you want to know which, the [construction view](16-construction-view.md) answers without adding a single log line. Replay a used link under the `:storm` alias and the recorded tree shows `verify-token` returning the decoded claims (the signature is fine) and `consume-magic-link-nonce!` returning `false`, the CAS refusing a nonce that is already stamped. The generic page tells the visitor nothing; the recording tells *you* everything; the asymmetry is the point. The two halves of the design -- opaque outside, transparent inside -- are the same decision made twice.
 
 The session is the moment where "stateless token" becomes "stateful session." The token was a one-time bridge to prove the user controls that email address; the nonce guaranteed it was crossed only once. The session persists across requests.
 
@@ -304,8 +304,12 @@ Sessions are configured in the middleware stack using Ring's cookie store:
                                      :same-site :lax
                                      :max-age (* 30 24 60 60)}}]
                     [wrap-locale]
-                    [wrap-no-cache-authenticated]]})))
+                    [wrap-no-cache-authenticated]
+                    [wrap-csp]
+                    [wrap-errors]]})))
 ```
+
+That is the app's whole base stack, outermost first. The last two entries are the layers the verify section leaned on: `wrap-csp` stamps the strict Content-Security-Policy on every HTML response ([the asset pipeline chapter](24-asset-pipeline.md)), and `wrap-errors` sits innermost so anything a handler throws exits through every layer above it. (The repo's version also mounts the construction-view tracer outermost when running under the `:storm` alias; that layer belongs to [the construction-view chapter](16-construction-view.md).) The piece that is new here is the session store.
 
 The session cookie is:
 
@@ -319,15 +323,27 @@ No server-side session store. The session data is sealed inside the cookie itsel
 
 ### Why a client-held session is safe
 
-Putting the session in the cookie only works because of that HMAC, and it is worth being precise about why, because encryption alone would not be enough. Encryption keeps the contents secret; it says nothing about *integrity* -- and integrity is the property that matters when the client holds the data. The session is just `{:user-email "..."}`. If a user could flip those bytes to someone else's address and have the server believe them, the whole scheme would be theatre. They cannot: any edit to the sealed blob -- one byte, the whole thing, or a value lifted from another site -- fails the MAC check, and `unseal` returns `nil`, which Ring reads as *no session*. Forging a valid cookie requires the server's secret key, which never leaves the server. So "no server-side session store" is not a shortcut that trades away safety; it trades a database lookup for a signature check, and the signature is what lets the server trust a value it did not keep. (Two honest caveats. First, why 16 bytes here, when we insisted on a 32-byte magic-link signing key? Because the length is not ours to choose: Ring's cookie store fixes the session key at exactly 16 bytes -- that is AES-128, and 128 bits of random key is plenty -- whereas the HMAC signing key, which *is* ours to size, we make 32. Second, that same 16-byte key drives both the AES and the HMAC. With encrypt-then-MAC over two distinct algorithms that is not a practical weakness, but it is one more reason the key must be real CSPRNG bytes -- the config refuses to boot without `SESSION_KEY` in production, exactly as it does for the magic-link signing key.)
+Putting the session in the cookie only works because of that HMAC, and it is worth being precise about why, because encryption alone would not be enough. Encryption keeps the contents secret; it says nothing about *integrity*, and integrity is the property that matters when the client holds the data. The session is just `{:user-email "..."}`. If a user could flip those bytes to someone else's address and have the server believe them, the whole scheme would be theatre.
+
+They cannot. Any edit to the sealed blob -- one byte, the whole thing, or a value lifted from another site -- fails the MAC check, and `unseal` returns `nil`, which Ring reads as *no session*. Forging a valid cookie requires the server's secret key, which never leaves the server. So "no server-side session store" is not a shortcut that trades away safety; it trades a database lookup for a signature check, and the signature is what lets the server trust a value it did not keep.
+
+Two honest caveats. The first: why 16 bytes here, when we insisted on a 32-byte magic-link signing key? Because the length is not ours to choose. Ring's cookie store fixes the session key at exactly 16 bytes -- that is AES-128, and 128 bits of random key is plenty -- whereas the HMAC signing key, which *is* ours to size, we make 32.
+
+The second: that same 16-byte key drives both the AES and the HMAC. With encrypt-then-MAC over two distinct algorithms that is not a practical weakness, but it is one more reason the key must be real CSPRNG bytes. The config refuses to boot without `SESSION_KEY` in production, exactly as it does for the magic-link signing key.
 
 ### CSRF: what `same-site :lax` does, and what it leaves on the table
 
-Notice what is *not* here: a CSRF token. There is no hidden `_csrf` field on the forms and no synchronizer token in the session, and that is a deliberate choice with a named cost. The defense we rely on instead is `SameSite=Lax`, which tells the browser not to attach the session cookie to cross-site subrequests -- so the classic attack, a hidden form on `evil.com` auto-POSTing to `/terms/accept`, arrives with no cookie and is simply unauthenticated. It works precisely because every endpoint that mutates *on the authority of the cookie* is a POST (`/terms/accept`, `/auth/logout`): `:lax` *does* send the cookie on top-level cross-site GET navigations -- which is what makes the magic link work -- but never on a cross-site POST. The cost of leaning on `:lax` is that the protection is the browser's to enforce, not ours: it assumes a current browser (every maintained one now defaults to honoring it, but a sufficiently old client may not), it does nothing against a same-origin attacker such as an XSS hole or a hostile subdomain, and it does not cover the one state-changing GET we already have. `/auth/verify` mutates on the authority of the token in the URL, not the cookie, so `SameSite` never enters into it -- which opens a different door: login CSRF. An attacker requests a magic link for *their own* account and lures the victim into opening the verify URL -- a top-level GET navigation, exactly the case `:lax` waves through -- and the victim is silently signed in as the attacker, so anything they then save lands in an account the attacker can read. The real fix is binding verification to the browser that asked -- a short-lived cookie set by `/auth/request` and required at verify, so only that browser can complete the sign-in; the interstitial confirm-POST that defuses mail scanners (see the routes section below) merely raises this attack's cost, since a hostile page can script the confirm POST. We name the gap rather than close it: a recipe box is a low-value target for it, and the fix has a natural home -- the interstitial -- when the stakes rise. For this app -- modern browsers, every mutation behind a POST, and escaping plus a strict CSP closing the XSS door upstream ([the asset pipeline chapter](24-asset-pipeline.md)) -- `:lax` is sufficient and is the simplest thing that is correct. A higher-value app, or one that must accept a cross-site POST, should add a double-submit or synchronizer token on top; the place to put it is this same middleware stack.
+Notice what is *not* here: a CSRF token. There is no hidden `_csrf` field on the forms and no synchronizer token in the session, and that is a deliberate choice with a named cost. The defense we rely on instead is `SameSite=Lax`, which tells the browser not to attach the session cookie to cross-site subrequests. The classic attack, a hidden form on `evil.com` auto-POSTing to `/terms/accept`, arrives with no cookie and is simply unauthenticated. It works precisely because every endpoint that mutates *on the authority of the cookie* is a POST (`/terms/accept`, `/auth/logout`): `:lax` *does* send the cookie on top-level cross-site GET navigations, which is what makes the magic link work, but never on a cross-site POST.
+
+The cost of leaning on `:lax` is that the protection is the browser's to enforce, not ours. It assumes a current browser: every maintained one now defaults to honoring it, but a sufficiently old client may not. It does nothing against a same-origin attacker such as an XSS hole or a hostile subdomain. And it does not cover the one state-changing GET we already have.
+
+`/auth/verify` mutates on the authority of the token in the URL, not the cookie, so `SameSite` never enters into it. That opens a different door: login CSRF. An attacker requests a magic link for *their own* account and lures the victim into opening the verify URL -- a top-level GET navigation, exactly the case `:lax` waves through -- and the victim is silently signed in as the attacker, so anything they then save lands in an account the attacker can read. The real fix is binding verification to the browser that asked: a short-lived cookie set by `/auth/request` and required at verify, so only that browser can complete the sign-in. The interstitial confirm-POST that defuses mail scanners (see the routes section below) merely raises this attack's cost, since a hostile page can script the confirm POST. We name the gap rather than close it: a recipe box is a low-value target for it, and the fix has a natural home, the interstitial, when the stakes rise.
+
+For this app -- modern browsers, every mutation behind a POST, and escaping plus a strict CSP closing the XSS door upstream ([the asset pipeline chapter](24-asset-pipeline.md)) -- `:lax` is sufficient and is the simplest thing that is correct. A higher-value app, or one that must accept a cross-site POST, should add a double-submit or synchronizer token on top; the place to put it is this same middleware stack.
 
 ### Cache control for authenticated pages
 
-One subtle middleware worth highlighting:
+The cache-control layer from the stack above is short enough to quote in full:
 
 ```clojure
 (defn wrap-no-cache-authenticated
@@ -473,7 +489,7 @@ The dependency goes in the `:test` alias:
 (use-fixtures :each with-greenmail)
 ```
 
-Four details carry the fixture, and together they are why the email tests run in milliseconds with no network in sight:
+The fixture is why the email tests run in milliseconds with no network in sight:
 
 - **Port 0** tells GreenMail to pick a random available port. No port conflicts, tests can run in parallel.
 - **`with-redefs`** swaps the app config to point SMTP at the GreenMail instance. The production code does not know it is talking to a test server.
@@ -549,7 +565,7 @@ The production email code is identical to the development email code. Only the c
 
 ## The config layer
 
-One detail worth calling out: the SMTP configuration is read at runtime, not compile time. The `smtp-session` function calls `(config/get-config :smtp)` every time it creates a session. This means:
+The SMTP configuration is read at runtime, not compile time. The `smtp-session` function calls `(config/get-config :smtp)` every time it creates a session. This means:
 
 - Tests can swap the config with `with-redefs` and point to GreenMail
 - The dev config points to Mailpit

@@ -16,7 +16,7 @@ Our needs are simpler:
 
 - One signing algorithm (HMAC-SHA256)
 - One producer and one consumer (our server)
-- Two claims (email and expiration)
+- Three claims (email, expiration, and a one-time nonce we introduce shortly)
 - No need for third-party verification
 
 For this, the signing-and-verification pair is fewer than 40 lines of Clojure, uses only `javax.crypto` from the JDK (no dependencies), and has zero ambiguity about what algorithm is in use. The format is dead simple: `base64(payload).base64(signature)`. You can read it, reason about it, and audit it in minutes.
@@ -31,7 +31,7 @@ Our tokens follow a two-part structure separated by a dot:
 base64url({"email":"user@example.com","exp":1709654400000,"nonce":"3f2a…"}).base64url(hmac-sha256-signature)
 ```
 
-The left side is the payload -- a JSON object with the user's email and an expiration timestamp in milliseconds. The right side is the HMAC-SHA256 signature computed over the base64-encoded payload. Both sides use URL-safe base64 encoding (no `+`, `/`, or `=` characters), which matters because these tokens live in URLs.
+The left side is the payload -- a JSON object with the user's email, an expiration timestamp in milliseconds, and a one-time nonce whose purpose we take up later in the chapter. The right side is the HMAC-SHA256 signature computed over the base64-encoded payload. Both sides use URL-safe base64 encoding (no `+`, `/`, or `=` characters), which matters because these tokens live in URLs.
 
 To verify a token, you recompute the signature from the payload using your secret key and compare. If the signatures match, the payload has not been tampered with. Then you check the expiration. Two checks, no ambiguity.
 
@@ -81,15 +81,13 @@ Next, base64 encoding and decoding:
 (defn base64-encode
   "Base64 URL-safe encode."
   ^String [^bytes data]
-  (-> (Base64/getUrlEncoder)
-      (.withoutPadding)
-      (.encodeToString data)))
+  (let [^java.util.Base64$Encoder encoder (.withoutPadding (Base64/getUrlEncoder))]
+    (.encodeToString encoder data)))
 
 (defn base64-decode
   "Base64 URL-safe decode."
   ^bytes [^String data]
-  (-> (Base64/getUrlDecoder)
-      (.decode data)))
+  (.decode (Base64/getUrlDecoder) data))
 ```
 
 We use `getUrlEncoder` / `getUrlDecoder` rather than the standard variants. Standard base64 uses `+` and `/`, which have special meaning in URLs. The URL-safe variant substitutes `-` and `_`. We also strip padding (`=` characters) since the decoder handles unpadded input just fine, and padding adds noise to URLs.
@@ -107,16 +105,16 @@ With the primitives in place, signing is straightforward:
   (let [payload-map {:email email
                      :exp (.toEpochMilli expires-at)
                      :nonce (str nonce)}
-        payload-json (json/write-str payload-map)
+        ^String payload-json (json/write-str payload-map)
         payload-b64 (base64-encode (.getBytes payload-json "UTF-8"))
         signature (hmac-sha256 signing-key payload-b64)
         signature-b64 (base64-encode signature)]
     (str payload-b64 "." signature-b64)))
 ```
 
-The construction reads left to right: a map of the email, the expiration as epoch milliseconds, and a one-time **nonce** -- a random UUID whose purpose we return to in a moment, because it is what turns a forgeable-but-replayable token into a single-use credential -- serialized to JSON, base64-encoded to become the token's left side, HMAC-SHA256-signed under our signing key, the signature base64-encoded as the right side, and the two joined with a dot.
+The construction reads left to right: a map of the email, the expiration as epoch milliseconds, and a one-time **nonce** is serialized to JSON, base64-encoded to become the token's left side, HMAC-SHA256-signed under our signing key, the signature base64-encoded as the right side, and the two joined with a dot. The nonce is a random UUID whose purpose we return to in a moment: it is what turns an unforgeable-but-replayable token into a single-use credential.
 
-An important detail: we sign the base64-encoded payload, not the raw JSON. This means verification only needs to split on the dot and compare signatures -- no base64 decoding needed until after the signature check passes. Fail fast on the cheap operation.
+An important detail: we sign the base64-encoded payload, not the raw JSON. Verification then recomputes the HMAC over exactly the bytes that arrived -- the payload half of the token as received, with nothing decoded or re-serialized between the wire and the comparison. It also means the payload is never base64-decoded, let alone parsed as JSON, until its signature has passed: untrusted input is not interpreted until it is authenticated. (The signature half does get decoded before the comparison, but turning base64 into raw bytes for the equality check is all that ever happens to it.)
 
 ## Verifying tokens
 
@@ -164,7 +162,7 @@ The entire function is wrapped in a `try/catch` that returns `nil` on any except
 
 We compare signatures with `MessageDigest/isEqual` rather than `=`. Clojure's `=` on strings (or `java.util.Arrays/equals` on bytes) short-circuits at the first differing byte, so the time it takes to reject a forgery leaks how many leading bytes were guessed correctly -- the classic byte-at-a-time timing oracle. `MessageDigest/isEqual` compares every byte regardless, in time independent of where the first mismatch is. It costs nothing here and removes the question entirely, so there is no reason to reach for `=` and then argue about whether the leak is exploitable. Comparing the raw HMAC bytes (we decode the incoming signature first) is the standard form; a malformed base64 signature throws in `base64-decode` and is caught as an invalid token.
 
-> **One honest caveat on `isEqual`.** It *does* short-circuit on a *length* mismatch before comparing bytes. Here only one side is fixed -- the signature we recompute is always a 32-byte HMAC-SHA256 output, while the other is decoded straight from the attacker-controlled token and can be any length. So the length check fires on a wrong-length forgery, but it leaks nothing useful: all it reveals is that the supplied signature was not 32 bytes, which the public format already implies. What it never leaks is *which* bytes of a correctly-sized signature are right -- the only leak that would help forge one. The caveat for reuse still stands: comparing two genuinely variable-length, secret-dependent inputs with this helper can turn the length itself into an oracle, so hash both sides to a fixed width first.
+> **One honest caveat on `isEqual`.** "Constant time" has a precise shape here, and it is worth stating. On the Temurin 25 this project pins, a length mismatch does *not* short-circuit: the implementation folds the length difference into its running result (`result |= lenA - lenB`) and still walks every byte of its *first* argument, so the comparison time depends only on that argument's length. We pass the freshly recomputed HMAC first, and that is always 32 bytes, so rejection takes the same time whether a forged signature has the wrong bytes or the wrong length. (The one early exit for non-null inputs is an empty second argument, a token with nothing after the dot, and "you sent no signature" is not a leak.) The caveat is about reuse: because timing tracks the first argument's length, handing this helper two genuinely variable-length, secret-dependent inputs can turn a secret length into an oracle, so hash both sides to a fixed width first.
 
 ### A note on the signing key
 
@@ -180,8 +178,7 @@ Tokens get a 15-minute window. This is a convenience function that wraps `sign-t
    Returns {:token <signed-string> :nonce <UUID>}. The caller records the
    nonce server-side before sending the link; verification consumes it once."
   [signing-key email]
-  (let [expires-at (-> (time/now)
-                       (.plusSeconds (* 15 60)))
+  (let [^Instant expires-at (.plusSeconds (time/now) (* 15 60))
         nonce (UUID/randomUUID)]
     {:token (sign-token signing-key email expires-at nonce)
      :nonce nonce}))
@@ -259,6 +256,8 @@ The login flow needs a function that finds an existing user or creates one. With
 
 If the user exists, we skip the transaction entirely. If they do not, we create them. Either way, we return the email. This function is what the magic link handler will call when a user clicks a valid token -- ensuring they have an account before we create their session.
 
+One property of this function should be stated rather than assumed. The find runs against a snapshot and the create is a separate transaction, so two concurrent first logins for the same address can both see no user and both call `create-user!`. The email upsert from the previous section keeps that race from duplicating the entity, but the merge is not free: `:user/id` and `:user/created-at` are cardinality-one, so the second transaction overwrites both, and the user's supposedly stable UUID quietly rotates. Today that costs nothing: the session the next chapter builds identifies the user by email, and nothing in the application reads `:user/id`. The day something does hold a reference to that UUID, this check-then-act window becomes a bug. The fix then is to move the conditional create into a transaction function, where check and write run atomically inside the transactor -- the same move the next chapter makes with `:db.fn/cas` to consume the nonce.
+
 ## Testing
 
 Tests are where the design proves itself, and a signing primitive earns trust less by what it accepts than by what it refuses. The suite below is weighted accordingly: a couple of round-trip tests to show the happy path works, and then a battery of rejection tests -- expired, tampered, wrong-key, garbage -- because those are the cases an attacker actually probes.
@@ -277,7 +276,6 @@ Tests run against a fresh in-memory Datomic database per test, with a determinis
     [myapp.test-helpers :as h]
     [myapp.time :as time])
   (:import
-    [java.time Instant]
     [java.util UUID]))
 
 (use-fixtures :each h/with-test-db)
@@ -340,7 +338,7 @@ The format test confirms structural correctness: it is a string, it has exactly 
 
 ### Failure modes
 
-These are the tests that matter most. A signing system is defined as much by what it rejects as by what it accepts.
+These are the tests that matter most: each hands `verify-token` a token that is wrong in a different way and expects a clean `nil`.
 
 **Expired tokens:**
 
@@ -435,6 +433,8 @@ Create a user, find them by email. `create-user!` returns a UUID, and `find-user
 ```
 
 Because `:user/email` has `:db.unique/identity`, Datomic performs an upsert rather than throwing a uniqueness constraint violation. Creating the same user twice results in one entity, not two, and no error. This is a property of Datomic's identity model -- entities are identified by their unique attributes, and transacting the same identity twice merges rather than duplicates.
+
+Note what the test does not assert: it pins the entity count and nothing else. The merge that holds the count at one also rewrites `:user/id` and `:user/created-at`, the rotation named in the get-or-create section. One entity per email and a stable `:user/id` are different guarantees, and this test buys only the first.
 
 **Idempotent get-or-create:**
 

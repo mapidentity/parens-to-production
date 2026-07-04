@@ -13,7 +13,11 @@ Front-end frameworks have had the first half for years (React/Vue/Svelte inspect
 
 It reuses two things from [the live-reload chapter](06-live-reload.md) -- the file watcher and the `dev-reload` WebSocket -- and hooks into the `base-layout` from [the Hiccup views chapter](13-hiccup-views.md). Everything here is dev-only and **structurally absent** from production builds, the same as the rest of our dev infrastructure. If you read strictly in order, the Hiccup views chapter's layout sections are the relevant background.
 
-> **Why build this on a server-rendered app?** Because it keeps a workflow Clojure programmers refuse to give up. The REPL habit is to stay in live contact with the running system -- evaluate, inspect the value, navigate the data, redefine, look again -- and the browser is normally where that contact ends: the server ships HTML across the wire, and the rendered page is a dead artifact with no thread back to the process that built it. The inspector reopens that thread at the border, and it runs both ways. Element → code makes the page interrogable -- hover a pixel and your editor opens the line that produced it -- the way the REPL makes a namespace interrogable. Code → element closes the other half: put your cursor on a view function and the element it rendered lights up in the live page, folding the editor into the loop exactly as REPL evaluation already does, so editor, running process, and rendered page stop being three windows you alt-tab between and become one connected surface. A React or Vue developer takes element-to-source inspection for granted because it ships with the framework, and the instinct is that server-rendered Hiccup means doing without. It does not, *because we own the rendering path and can instrument it ourselves*. That is the lesson of this chapter and the construction-view chapters that follow: choosing SSR costs you neither the interactive, REPL-driven development Clojure is built on nor a toolbox an SPA would have -- you extend that workflow across the browser boundary instead of surrendering it there. The tool earns its keep in proportion to how much view code you have and how often you hunt *which* function produced a given pixel; the idea behind it is bigger still, and the next section starts with it -- welding source locations onto plain Clojure data with `tools.reader`.
+> **Why build this on a server-rendered app?** Because it keeps a workflow Clojure programmers refuse to give up. The REPL habit is to stay in live contact with the running system: evaluate, inspect the value, navigate the data, redefine, look again. The browser is normally where that contact ends -- the server ships HTML across the wire, and the rendered page is a dead artifact with no thread back to the process that built it. The inspector reopens that thread at the border, and it runs both ways. Element → code makes the page interrogable the way the REPL makes a namespace interrogable: hover a pixel and your editor opens the line that produced it. Code → element closes the other half. Put your cursor on a view function and the element it rendered lights up in the live page, folding the editor into the loop exactly as REPL evaluation already does. Editor, running process, and rendered page stop being three windows you alt-tab between and become one connected surface.
+>
+> A React or Vue developer takes element-to-source inspection for granted because it ships with the framework, and the instinct is that server-rendered Hiccup means doing without. It does not, *because we own the rendering path and can instrument it ourselves*. That is the lesson of this chapter and the construction-view chapters that follow: choosing SSR costs you neither the interactive, REPL-driven development Clojure is built on nor a toolbox an SPA would have. You extend that workflow across the browser boundary instead of surrendering it there.
+>
+> The tool pays off in proportion to how much view code you have and how often you hunt *which* function produced a given pixel. The idea behind it is bigger still, and it is the keystone of Part I: welding source locations onto plain Clojure data with `tools.reader`.
 
 ## Part I -- element → code
 
@@ -57,7 +61,7 @@ A rendered element actually has *three* distinct source locations, and we will p
 | Coordinate | Attribute | Means |
 | --- | --- | --- |
 | **Element** | `data-myapp-src` | the exact `[:td …]` literal's `file:line:col` |
-| **Component** | `data-myapp-name` | the view fn that produced this subtree (`ns/fn`) |
+| **Component** | `data-myapp-name` | the view fn that produced this subtree (`ns/fn`); plain elements reuse it for the bare tag name |
 | **Call site** | `data-myapp-callsite` | where *this instance* was invoked from |
 
 The element coordinate is the hard, interesting one -- it did not exist for Hiccup. The other two fall out of the same plumbing. The distinction between *component* and *call site* matters more than it looks; we will return to it when a component is rendered from several places.
@@ -105,7 +109,8 @@ First, recognize an element literal -- not every vector is Hiccup (Datomic pull 
 ```clojure
 (ns myapp.web.inspector
   (:require [clojure.string :as str]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [clojure.walk :as walk]))
 
 (def ^:private dev?
   ;; Detect dev by a classpath resource, NOT requiring-resolve — see the design
@@ -127,30 +132,24 @@ First, recognize an element literal -- not every vector is Hiccup (Datomic pull 
        (contains? html-tags (first (str/split (name (first x)) #"[.#]")))))
 ```
 
+A word on the `,,,` inside that set, a notation the listings use from here on: commas are whitespace to the Clojure reader, so a bare `,,,` is legal Clojure. It marks lines elided from a listing; the full text is always in the repo.
+
 The `str/split` on `#"[.#]"` strips Hiccup's `.class`/`#id` shorthand, so `:div.card#main` matches `"div"`. This `element?` gate is what makes everything that follows **safe to apply blindly** across every view: a non-Hiccup vector can never be touched.
 
-Now the walk that adds the file, preserving all existing metadata:
+Now the walk that adds the file:
 
 ```clojure
 (defn add-file-meta
-  "Stamp :myapp/file onto every Hiccup element literal in `form`. Preserves
-   structure and all existing metadata; only element vectors are touched."
+  "Stamp :myapp/file onto every Hiccup element literal's metadata in `form`.
+   A plain postwalk: only element vectors are touched, and only by gaining one key."
   [file form]
-  (cond
-    (vector? form)
-    (let [walked (mapv #(add-file-meta file %) form) m (meta form)]
-      (with-meta walked
-        (if (and m (:line m) (element? form)) (assoc m :myapp/file file) m)))
-    (map? form)
-    (with-meta (into (empty form)
-                     (map (fn [[k v]] [(add-file-meta file k) (add-file-meta file v)])) form)
-               (meta form))
-    (set? form) (with-meta (into (empty form) (map #(add-file-meta file %)) form) (meta form))
-    (seq? form) (with-meta (apply list (map #(add-file-meta file %) form)) (meta form))
-    :else form))
+  (walk/postwalk
+    (fn [x]
+      (if (and (vector? x) (element? x) (:line (meta x))) (vary-meta x assoc :myapp/file file) x))
+    form))
 ```
 
-The care to re-attach `(meta form)` on lists/maps/sets matters: `clojure.walk/postwalk` would *drop* metadata as it rebuilds collections, throwing away the very line numbers we are keeping. We rebuild by hand so nothing is lost.
+That this can be a plain `clojure.walk/postwalk` rests on a guarantee that only recently became complete. The walk rebuilds every collection it traverses, so the question is whether the rebuilt copies keep their metadata; lose it here and we throw away the very line numbers we just captured. Vectors, maps, and sets always kept theirs -- `walk` reconstructs them with `(into (empty form) …)`, and `empty` preserves metadata -- so the element vectors carrying our `:line` numbers were never at risk. Lists and seqs, though, silently lost their metadata to `postwalk` until Clojure 1.12 re-attached `(meta form)` explicitly (CLJ-2568). That metadata is not disposable either: this walk runs *after* `wrap-callsites` (below) has rebuilt every call form carrying its reader span, and the compiler reads `:line` off list forms to emit line numbers into compiled code. Stripping it would degrade every stack trace through a view. On the Clojure this book pins (1.12.4) the guarantee is total and the plain walk preserves everything. On anything earlier, hand-roll it: rebuild each collection yourself and re-attach `(meta form)` to every rebuilt seq.
 
 ### The loader (and the component layer)
 
@@ -184,6 +183,7 @@ The loader -- `dev/inspector_load.clj`, under `dev/` and so never on the prod cl
               forms (into [ns-form] body)
               names (inspector/view-defn-names forms)]    ;; fn names → call heads to wrap
           (doseq [form body]
+            ;; per-form try + plain-eval fallback elided — see "Keeping the tags alive"
             (eval (inspector/add-file-meta file (inspector/wrap-callsites names file form true))))
           (inspector/instrument-ns! (ns-name *ns*))           ;; component layer
           (inspector/index-ns! file (ns-name *ns*) forms))))))  ;; reverse-direction index
@@ -251,7 +251,7 @@ The fix is to tag each rendered instance with its **invocation site**. During th
 (myapp.web.inspector/tag-callsite "myapp/admin/views.clj:123:9" (stat-card "Total Users" n))
 ```
 
-`tag-callsite` adds `data-myapp-callsite` to the result if it is an element, and is otherwise a no-op. The rewrite is done by `wrap-callsites`, which walks the form preserving reader metadata and only wraps calls whose head is an **unqualified** symbol naming a fn the file defined:
+`tag-callsite` adds `data-myapp-callsite` to the result if it is an element, and is otherwise a no-op. The rewrite is done by `wrap-callsites`, which walks the form preserving reader metadata and only wraps calls whose head is an **unqualified** symbol naming a fn the file defined. Unlike `add-file-meta`, this walk cannot be a plain `postwalk` (the `wrap?` flag must flow top-down into threading subtrees, and `postwalk` carries no context), so it rebuilds by hand and re-attaches `(meta form)` at every step:
 
 ```clojure
 (def ^:private no-wrap-heads
@@ -290,7 +290,8 @@ The metadata rides on the runtime Hiccup, but a browser can't read Clojure metad
 
 ```clojure
 (defn tag-tree
-  "Add data-myapp-src to every element carrying :line + :myapp/file metadata."
+  "Add data-myapp-src (file:line:col) and data-myapp-name (the bare tag) to
+   every element carrying :line + :myapp/file metadata."
   [node]
   (cond
     (vector? node)
@@ -300,8 +301,9 @@ The metadata rides on the runtime Hiccup, but a browser can't read Clojure metad
               attrs      (if has-attrs? (second children) {})
               body       (subvec children (if has-attrs? 2 1))]
           (into [(first children)
-                 (assoc attrs :data-myapp-src
-                        (str (:myapp/file m) ":" (:line m) ":" (or (:column m) 1)))]
+                 (assoc attrs
+                        :data-myapp-src  (str (:myapp/file m) ":" (:line m) ":" (or (:column m) 1))
+                        :data-myapp-name (first (str/split (name (first node)) #"[.#]")))]
                 body))
         children))
     (seq? node) (doall (map tag-tree node))
@@ -323,7 +325,7 @@ We never call this directly -- that would defeat Hiccup's compile-time precompil
       ,,, ]]))
 ```
 
-The two layers compose cleanly. `tag-tree` only tags elements that still carry reader metadata; a component's *root* was rebuilt by `tag-hiccup`/`tag-callsite` (so its reader metadata is gone) and keeps its component/call-site tags, while every inner literal keeps its own `:line`. Roots resolve to their function; inner literals to their exact line.
+The two layers compose cleanly. `tag-tree` only tags elements that still carry reader metadata; a component's *root* was rebuilt by `tag-hiccup`/`tag-callsite` (so its reader metadata is gone) and keeps its component/call-site tags, while every inner literal keeps its own `:line`. Roots resolve to their function; inner literals to their exact line. Note that `data-myapp-name` does double duty across the layers: a component root carries `ns/fn` (stamped by `tag-hiccup`), a plain element the bare tag name (stamped here). The overlay's breadcrumb reads that one attribute for every crumb's label.
 
 ### The browser overlay
 
@@ -353,6 +355,8 @@ function chain(node) {
   return out;
 }
 ```
+
+`shortName` reads the node's `data-myapp-name` and trims any namespace for display: `stat-card` from `myapp.admin.views/stat-card` on a component root, the bare `dl`/`dd` that `tag-tree` stamped on plain elements.
 
 **Alt+wheel walks the chain without moving the mouse.** Hover selects the most-nested element (`e.target.closest('[data-myapp-src]')`); holding Alt and scrolling then walks *outward* (λ → () → parent element → …) and back in, so you can select an outer component or its call site without nudging the pointer. While Alt is held we freeze the selection (a mouse jitter during scrolling must not reset it), and a click opens whatever step is currently selected -- the λ, the `()`, or an element -- not whatever is physically under the cursor.
 
@@ -393,7 +397,7 @@ The forward direction tags the DOM with source coordinates. The reverse directio
 
 ### The index: reuse the same read pass
 
-We already read every view with tools.reader. While we're there, we build a per-file span index -- top-level `defn` spans (→ component), every element literal's span (→ element), and every call-to-a-view-fn span (→ call site):
+We already read every view with tools.reader. While we're there, we build a per-file span index: top-level `defn` spans (→ component), and, within those defns, every element literal's span (→ element) and every call-to-a-view-fn span (→ call site). Only forms inside a `defn` are indexed; a cursor resolves only inside a defn anyway, and the restriction skips phantom element literals in `(comment …)` blocks and top-level data defs:
 
 ```clojure
 (def view-index (atom {}))   ;; file -> {:defns [...] :elements [...] :calls [...]}
@@ -462,11 +466,12 @@ On the server, the same `/dev/ws` handler now tags each client's role (browser b
 
 ```clojure
 (defn- handle-cursor! [file line column]
-  (when (and (number? line) (number? column))
-    (when-let [f (resolve-source-file file)]                 ;; same trust boundary
-      (when-let [resolved (inspector/resolve-cursor (classpath-relative f) line column)]
-        (when (:component resolved)
-          (notify-highlight! resolved))))))                  ;; broadcast to browsers
+  (let [column (if (number? column) column 1)]               ;; tolerate a missing col
+    (when (number? line)
+      (when-let [f (resolve-source-file file)]               ;; same trust boundary
+        (let [resolved (inspector/resolve-cursor (classpath-relative f) line column)]
+          (when (:component resolved)
+            (notify-highlight! resolved)))))))                  ;; broadcast to browsers
 ```
 
 The editor agent piggybacks on Joyride over this WebSocket relay, and making it survive a REPL/server restart on its own took real care, because the VS Code extension host is a Node (undici) runtime with a few non-obvious socket behaviors: it fires `close` for a dropped link but only `error` for a failed connect (so both must schedule a reconnect), and calling `.close()` from inside an `error`/`close` handler re-fires the event synchronously and wedges the host. The reconnect logic that handles this -- current-socket guarding, dedup, backoff -- lives in the Joyride editor script (`.joyride/scripts/workspace_activate.cljs`) and, for the browser side, `src/myapp/web/inspector.js`; read the exact code there rather than reconstructing it from prose. The browser side needs none of it: Chromium fires the events reliably and `.close()` is async, so the overlay reconnects on `close`/`error` with no heartbeat. (Two things we tried and removed, in case you reach for them: a per-highlight sequence number is pointless on an already-ordered socket and stalls when a hot-reload resets the counter; and a browser-side ping/pong heartbeat is redundant once the events prove reliable.)
@@ -538,17 +543,18 @@ The feature is structurally absent, not merely disabled.
 ## Trade-offs & limitations, in one place
 
 - **Per-instance precision has a floor.** Distinct call sites are distinguishable; instances of a *single* looped call are not (they share a call site) -- and highlighting all of them is the correct semantics, not a defect.
-- **Definition vs. call site is an intent, resolved by position.** A cursor in a component's body means "show me my output" (component/element); a cursor on a call means "show me what this produces" (call site). The breadcrumb's λ/() makes the same choice clickable in the forward direction. Navigating to *the specific call site that produced one clicked instance* is the one thing that needs the call-site tag we added -- and it now works. Concretely, with a dashboard rendering four `stat-card`s, the cursor's position picks the intent in the reverse direction:
+- **Definition vs. call site is an intent, resolved by position.** A cursor in a component's body means "show me my output" (component/element); a cursor on a call means "show me what this produces" (call site). The breadcrumb's λ/() makes the same choice clickable in the forward direction. Navigating to *the specific call site that produced one clicked instance* is the one thing that needs the call-site tag we added -- and it now works. Concretely, with the dashboard rendering its eight `stat-card`s, the cursor's position picks the intent in the reverse direction:
 
   ```clojure
-  (defn stat-card [label n]        ; ← cursor here lights up ALL four cards (the component, every instance)
-    [:div.rounded-lg.p-4            ; ← cursor here lights up just this element, across all four
+  (defn stat-card [label n]        ; ← cursor here lights up ALL eight cards (the component, every instance)
+    [:div.rounded-lg.p-4            ; ← cursor here lights up just this element, across all eight
      [:dt label]
      [:dd n]])
 
   ;; ...in the dashboard view:
-  (stat-card "Total Users" users)  ; ← cursor here lights up only THIS card — one instance, via the call-site tag
-  (stat-card "Active" active)
+  (stat-card "Total Users" total-users)  ; ← cursor here lights up only THIS card — one instance, via the call-site tag
+  (stat-card "Links Sent"  links-sent)
+  ,,,                                    ; six more
   ```
 
   Three positions, three answers -- the definition (all instances), one element within it (that element in all instances), and one call (exactly one rendered card). The looped case is the floor noted above: a single `(for [r recipes] (recipe-card r))` is one call site, so a cursor on it lights up the whole family, not iteration 3.

@@ -10,7 +10,7 @@ There is one idea under everything that follows: a 100 is not an achievement, it
 
 ![Lighthouse's four category gauges for the recipes page: Performance 98, Accessibility 100, Best Practices 100, SEO 100.](images/lighthouse-scores.png)
 
-*The contract, made visible -- the recipes page audited through the test server below. Accessibility, Best Practices, and SEO sit at the hard 100 the gate pins. Performance is the one category scored from noisy, continuous metrics, so it does not repeat a 100 from run to run; here it lands at 98, sitting comfortably between the 0.95 floor the gate enforces and the 100 we engineer toward -- which is exactly the band that floor exists to protect.*
+*The contract, made visible: the recipes page audited through the test server below, three categories at 100 and performance at 98, inside the 0.95 floor argued under `assert`.*
 
 ## The test server
 
@@ -62,7 +62,7 @@ Lighthouse needs to see authenticated pages, but it has no way to perform a logi
   (fn [request] (handler (assoc-in request [:session :user-email] (test-email)))))
 ```
 
-Two decisions are folded in here. First, the test email comes from the admin email in config, resolved at request time -- a function, not a top-level `def`, so it tracks whatever profile the server starts under rather than freezing the value when the namespace loads (the same runtime-config discipline as [the web-server chapter](05-web-server.md)'s `delay` and [the email login-flow chapter](21-auth-email-flow.md)'s SMTP config). This means the auto-authenticated user has admin privileges, so Lighthouse can audit admin pages too. Second, `wrap-auto-auth` is trivial -- one line of middleware that sets `:user-email` in the session map. The rest of the application sees a normal authenticated request.
+The test email comes from the admin email in config, resolved at request time: a function, not a top-level `def`, so it tracks whatever profile the server starts under rather than freezing the value when the namespace loads (the same runtime-config discipline as [the web-server chapter](05-web-server.md)'s `delay` and [the email login-flow chapter](21-auth-email-flow.md)'s SMTP config). It also means the auto-authenticated user has admin privileges, so Lighthouse can audit admin pages too. `wrap-auto-auth` itself is trivial: one line of middleware that sets `:user-email` in the session map. The rest of the application sees a normal authenticated request.
 
 This is convenient and dangerous in equal measure, so state the boundary plainly: **this server is an unauthenticated admin bypass by construction.** Anyone who can reach it is the admin -- no token, no login. That is fine for what it is (a throwaway instance the CI job starts, audits, and kills on loopback), but it must *never* bind a non-loopback interface or outlive the audit. It lives on the test classpath precisely so it cannot be reached from the production jar; keep it that way -- do not add it to a deployable alias, and bind it to `127.0.0.1`, never `0.0.0.0`.
 
@@ -112,10 +112,16 @@ The test server reconstructs the Ring handler from the same route table the prod
                      {:store session-store
                       :cookie-attrs {:http-only true
                                      :same-site :lax}}]
-                    [wrap-auto-auth] [routes/wrap-locale]]})))
+                    [wrap-auto-auth] [routes/wrap-locale]
+                    ;; Audit the page production actually ships, CSP header and
+                    ;; all — the Lighthouse run would otherwise score a policy
+                    ;; the real app never serves.
+                    [routes/wrap-csp]]})))
 ```
 
-The middleware ordering matters. `wrap-params` and `wrap-keyword-params` run first to parse the request. `wrap-session` sets up cookie-based sessions. Then `wrap-auto-auth` injects the test user identity. Finally `wrap-locale` determines the locale for i18n. The handlers see a request that looks identical to a real authenticated request. Like the e2e server in [the e2e-testing chapter](22-e2e-testing.md), this one omits `:secure` (it runs over plain HTTP on `localhost`); the session cookie is `:same-site :lax`, which is all the auto-auth flow needs.
+The middleware ordering matters, and the position of `wrap-auto-auth` is forced. `wrap-params` and `wrap-keyword-params` run first to parse the request; `wrap-session` sets up cookie-based sessions. `wrap-auto-auth` must sit inside `wrap-session` because Ring's session middleware does not merge into a `:session` already on the request: on the way in it replaces the key wholesale with whatever the cookie store holds, an empty map here since Lighthouse sends no cookie. Inject the identity outside `wrap-session` and it is clobbered before any handler runs; inject it inside, and every handler sees a request identical to a real authenticated one. `wrap-locale` then determines the locale for i18n.
+
+The stack ends with `wrap-csp`, and the comment above it is the argument: this server exists to audit the pages production actually ships, and [the asset-pipeline chapter](24-asset-pipeline.md)'s strict Content-Security-Policy is part of those pages. Leave it out and the run scores a response the real app never serves; the promise that this server serves the same pages your real users see is quietly false. Like the e2e server in [the e2e-testing chapter](22-e2e-testing.md), this one omits `:secure` (it runs over plain HTTP on `localhost`); the session cookie is `:same-site :lax`, which is all the auto-auth flow needs.
 
 ### The entry point
 
@@ -178,7 +184,7 @@ module.exports = {
 };
 ```
 
-Two blocks do the work: `collect`, which starts the server and produces the audits, and `assert`, which turns each audit into a pass or a fail.
+The work happens in two blocks: `collect` starts the server and produces the audits, and `assert` turns each audit into a pass or a fail.
 
 ### `collect`
 
@@ -186,7 +192,7 @@ Two blocks do the work: `collect`, which starts the server and produces the audi
 
 **`startServerReadyPattern`** is a string that `lhci` watches for in the server's stdout. When it sees `"Lighthouse server ready on port"`, it knows the server is accepting connections and begins the audit. This is why the `println` in `start!` matters -- it is a protocol between your server and the test runner.
 
-**`startServerReadyTimeout`** gives the JVM 60 seconds to start. Clojure's startup is not instant, especially with AOT compilation disabled on the test classpath. Sixty seconds is generous but avoids flaky failures in CI where CPU is constrained.
+**`startServerReadyTimeout`** gives the JVM 60 seconds to start. Clojure's startup is not instant, and the `:test` alias runs from source: every namespace is compiled as it loads, whereas the production jar ships classes compiled ahead of time. Sixty seconds is generous but avoids flaky failures in CI where CPU is constrained.
 
 **`url`** lists every page to audit. This covers the full range: the public landing page (`/`), the recipe browse page (`/recipes`), the terms-acceptance flow (`/terms/welcome`), the authenticated dashboard, and the admin panel. Because `wrap-auto-auth` is active, Lighthouse accesses all of them without authentication ceremony. (Audit the routes your app actually serves -- pointing Lighthouse at a path with no route loads a 404 page, which will tank the very scores you are trying to enforce.)
 
@@ -290,28 +296,32 @@ And forms use explicit label associations:
 ```clojure
 [:label.block.text-sm.font-medium.text-text-primary {:for "email"}
  (t locale :home/email-label)]
-[:input {:type "email" :id "email" :name "email" :required true
-         :placeholder (t locale :home/email-placeholder)}]
+[:input ;; ...styling classes elided
+ {:type "email" :id "email" :name "email" :required true
+  :placeholder (t locale :home/email-placeholder)}]
 ```
 
-These are not difficult changes, but they are easy to forget -- and for the scored ones, Lighthouse in CI catches the omission before it ships; `<main>` rides on the dispatcher's stricter guarantee instead. Re-run, and accessibility is at 100 but for one last class of failure, which is the only one you cannot retrofit with markup.
+These are not difficult changes, but they are easy to forget -- and for the scored ones, Lighthouse in CI catches the omission before it ships; `<main>` rides on the dispatcher's stricter guarantee instead. Re-run, and one last class of failure stands between accessibility and 100: the only one you cannot retrofit with markup.
 
 ### Color contrast
 
 The final accessibility deductions are contrast failures: text that does not stand out enough against its background to clear WCAG 2.1's ratios. This one is different from the others -- there is no tag to add, because the fix is in the palette itself, which means it has to be designed in from the start rather than patched at the end.
 
-In the CSS theme definition:
+In the CSS theme definition (`input.css`), the four values contrast hangs on:
 
 ```css
 @theme {
-  --color-text-primary: #0f172a;    /* near-black on white: ~15.4:1 ratio */
-  --color-text-secondary: #64748b;  /* slate on white: ~4.6:1 ratio */
+  /* ... */
   --color-surface: #ffffff;
-  --color-surface-subtle: #f8fafc;
+  --color-surface-subtle: #fafaf9;
+  /* ... */
+  --color-text-primary: #0f172a;    /* near-black: 17.1:1 even on the subtle surface */
+  --color-text-secondary: #78716c;  /* warm stone gray: 4.6:1, the tight one (below) */
+  /* ... */
 }
 ```
 
-The minimum ratio for normal text is 4.5:1 (AA standard). For large text it is 3:1. The `text-secondary` color at `#64748b` against a white background gives roughly a 4.6:1 ratio -- just above the threshold. If you had picked a lighter gray, Lighthouse would catch it.
+The minimum ratio for normal text is 4.5:1 (the AA standard); for large text it is 3:1. The tightest pair in this palette is `text-secondary` on the app shell's `surface-subtle` background: `#78716c` on `#fafaf9` computes to 4.59:1, clearing AA by less than a tenth of a point. On the white card surface the same gray reaches 4.8:1; it is the tinted background that eats the margin. Pick a slightly lighter gray, or a slightly darker background tint, and Lighthouse catches it.
 
 The lesson: pick your grays carefully, and let Lighthouse verify the math. Eyeballing contrast is unreliable.
 

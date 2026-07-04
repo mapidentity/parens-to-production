@@ -4,8 +4,6 @@ Most SaaS applications reach for PostgreSQL or MySQL without a second thought. T
 
 Datomic treats data as immutable facts over time. Every transaction is recorded. Every past state of the database is queryable. Nothing is ever truly deleted -- it is retracted, and the retraction itself is a fact. For a SaaS whose product is the history of its data -- ours versions recipes -- this is not a nice-to-have. It is the correct data model.
 
-> **If you are on PostgreSQL.** The cost of this chapter's choice, priced for the reader who cannot make it. Everything [the recipe-domain chapter](09-recipe-domain.md) will read out of Datomic for free, you build: version history becomes a `recipe_versions` table plus a write to it on every edit (application code or trigger -- both work, both can drift from the live row); "as of" becomes temporal tables where your tooling supports them, or timestamp predicates against the versions table; the stable version *address* (our basis-t in a URL) becomes a version id you mint and index; and the guarantee that the audit trail cannot disagree with the data -- because they are the same thing -- becomes a discipline your tests enforce instead of a property the store provides. What survives the swap in shape: the domain functions' signatures and the scenarios their tests pin down, the line-diff (pure data in, pure data out), the web layer's structure, and the tenancy waist -- `entid-owned` becomes the `WHERE user_id = ?` you refuse to omit. The trade in the other direction is real too: a mainstream database buys operational maturity, hosting everywhere, and a hiring pool. This book judges a history-shaped domain worth the niche store; your domain may judge differently, and now the bill is itemized.
-
 Setting up Datomic in a Clojure SaaS application has four parts: the Peer library, schema design, a wrapper layer that bridges `java.time` and Datomic's `java.util.Date`, and a test fixture that gives you a fresh database per test.
 
 ## The Datomic peer library
@@ -68,7 +66,9 @@ The code that connects to the database does not know or care which backend it is
   (d/db (get-connection)))
 ```
 
-`create-database!` is safe to call repeatedly. `d/create-database` returns `false` rather than erroring when the database already exists, and the schema transaction behind it is itself idempotent -- Datomic no-ops a `:db/ident` that is already installed with the same definition -- so re-running it reinstalls nothing. (It is not a literal no-op: the schema is re-transacted each call; it simply has no effect.) It creates the database, connects, and transacts the schema. `get-db` returns an immutable database value: a snapshot of the database at a point in time. This is a key Datomic concept. The database value you get from `(d/db conn)` never changes. You can pass it around, query it later, and the results will always be consistent with that moment.
+`create-database!` is safe to call repeatedly. `d/create-database` returns `false` rather than erroring when the database already exists, and the schema transaction behind it is itself idempotent -- Datomic no-ops a `:db/ident` that is already installed with the same definition -- so re-running it reinstalls nothing. (It is not a literal no-op: each call re-transacts the schema, and the transaction itself is recorded in the log like any other; it just asserts nothing new about the attributes.) It creates the database, connects, and transacts the schema. `get-db` returns an immutable database value: a snapshot of the database at a point in time. This is a key Datomic concept. The database value you get from `(d/db conn)` never changes. You can pass it around, query it later, and the results will always be consistent with that moment.
+
+> **If you are on PostgreSQL.** The cost of this chapter's choice, priced for the reader who cannot make it. Everything [the recipe-domain chapter](09-recipe-domain.md) will read out of Datomic for free, you build: version history becomes a `recipe_versions` table plus a write to it on every edit (application code or trigger -- both work, both can drift from the live row); "as of" becomes temporal tables where your tooling supports them, or timestamp predicates against the versions table; the stable version *address* (a URL carrying our basis-t: Datomic's monotonic transaction counter, introduced next chapter) becomes a version id you mint and index; and the guarantee that the audit trail cannot disagree with the data -- because they are the same thing -- becomes a discipline your tests enforce instead of a property the store provides. What survives the swap in shape: the domain functions' signatures and the scenarios their tests pin down, the line-diff (pure data in, pure data out), the web layer's structure, and the tenancy waist: `entid-owned`, the single ownership check every read passes through (built in [the progressive-enhancement chapter](19-progressive-enhancement.md)), becomes the `WHERE user_id = ?` you refuse to omit. The trade in the other direction is real too: a mainstream database buys operational maturity, hosting everywhere, and a hiring pool. This book judges a history-shaped domain worth the niche store; your domain may judge differently, and now the bill is itemized.
 
 ## Schema design
 
@@ -113,7 +113,7 @@ Here is the user schema:
 
 Right now `schema` is just `user-schema`. In the [next chapter](09-recipe-domain.md), as the recipe domain takes shape, this same file gains a `recipe-schema` and `schema` becomes `(vec (concat user-schema recipe-schema))`; `user-schema` itself also picks up a `:user/display-name` attribute. The shape -- one `schema` var transacted at startup -- does not change; the contents grow.
 
-Three decisions in this schema are worth drawing out:
+The decisions in this schema are worth drawing out:
 
 **Namespaced attributes.** Every attribute is namespaced (`:user/email`, `:user/created-at`). In Datomic, attributes are global -- they exist at the database level, not the table level. Namespacing is how you organize them. An entity can have attributes from any namespace. This is more flexible than relational tables but demands discipline in naming.
 
@@ -190,11 +190,11 @@ With the conversion functions in place, we wrap Datomic's core API to apply them
       results)))
 ```
 
-The naming convention -- `transact*`, `pull*`, `q*` -- signals that these are enhanced versions of the originals. The rest of the application uses these wrappers exclusively and never touches `java.util.Date`.
+The naming convention -- `transact*`, `pull*`, `q*` -- signals that these are enhanced versions of the originals. The rest of the application writes and reads through these wrappers, and domain code never constructs or stores a `java.util.Date`.
 
-One scoping note on `q*`: it assumes a *relation* result -- a set of tuples, the shape a `:find ?e ?email` query returns -- because that is what the application's reads ask for. A scalar find (`:find ?e .`) returns a bare value and a collection find (`:find [?e ...]`) a flat vector, neither of which is a set of tuples; those go straight through `d/q` rather than `q*` (you will see exactly that a few queries down, where a scalar lookup is written against `d/q` directly). The wrapper earns its place for the relation case the app overwhelmingly uses; reach past it for the other find shapes.
+One scoping note on `q*`: it assumes a *relation* result -- a set of tuples, the shape a `:find ?e ?email` query returns -- because that is what the application's reads ask for. A scalar find (`:find ?e .`) returns a bare value and a collection find (`:find [?e ...]`) a flat vector, neither of which is a set of tuples; those go straight through `d/q` rather than `q*` (you will see exactly that a few queries down, where a scalar lookup is written against `d/q` directly). The wrapper covers the relation case the app overwhelmingly uses; reach past it for the other find shapes.
 
-Notice that `transact*` returns a future (just like `d/transact`). You deref it with `@` when you need to wait for the transaction to complete. The `(time/now)` it carries is the clock wrapper from [the previous chapter](07-time-clock.md) -- the single source of "now" whose output is the `java.time.Instant` the bridge below converts:
+Notice that `transact*` returns a future, just like `d/transact`; you deref it with `@` when you need to wait for the transaction to complete. Here it is in use, with the timestamp supplied by `(time/now)`, the single source of "now" from [the previous chapter](07-time-clock.md):
 
 ```clojure
 @(db/transact* conn
@@ -206,9 +206,28 @@ Notice that `transact*` returns a future (just like `d/transact`). You deref it 
 
 The `time/now` value (a `java.time.Instant`) gets transparently converted to a `Date` before Datomic sees it. When you later pull this entity, the `Date` comes back as an `Instant`.
 
+The scoping note above left one gap open. Any read outside the wrappers -- a scalar or collection find, or any query written against raw `d/q` -- returns its values unconverted, so an instant-typed value read that way arrives as whatever the read path produces: `java.util.Date` on some paths, `java.time.Instant` on others, varying with driver version and with how the value was reached (pull versus raw query, pulled via ref versus by entity id). Rather than make every such call site branch on the type, the wrapper layer's fifth function normalizes at the point of use:
+
+```clojure
+(defn as-instant
+  "Coerce a Datomic instant value to java.time.Instant."
+  ^Instant [v]
+  (cond
+    (nil? v) nil
+    (instance? Instant v) v
+    (instance? Date v) (.toInstant ^Date v)
+    :else (throw
+            (ex-info
+              (str "Cannot coerce to Instant: " (some-> v class .getName))
+              {:value v
+               :type (class v)}))))
+```
+
+`nil` maps to `nil`, so an absent timestamp stays absent. Both temporal types come out as `Instant`. Anything else throws on the spot, because silently returning the input would let a caller chain `.atZone` onto a value that is not a time and fail far from the source. The [next chapter](09-recipe-domain.md) uses it exactly as intended: its version-history query reads `:db/txInstant` values through raw `d/q` and passes each one to `as-instant`.
+
 ## Query patterns
 
-Datomic queries use Datalog, a declarative query language. If you have used SQL, the mental model is different but not difficult. Where SQL stores data in tables of rows and columns, Datomic stores it as a single flat set of **entity-attribute-value** facts -- one row per fact, not per record. A user is not a row in a `users` table; it is a handful of facts that share an entity id: `[42 :user/email "alice@example.com"]`, `[42 :user/active? true]`, and so on. A query, then, is not a `SELECT` over tables with `JOIN`s on keys -- it is a set of *patterns* with logic variables (the `?`-prefixed symbols) that Datomic unifies against those facts. A join across "tables" is just two patterns sharing a variable, with no foreign keys to declare. Read the first query below with that in mind and the rest follow.
+Datomic queries use Datalog, a declarative query language. If you have used SQL, the mental model is different but not difficult. Where SQL stores data in tables of rows and columns, Datomic stores it as a single flat set of **entity-attribute-value** facts called *datoms* -- one row per fact, not per record. A datom in full has five positions, `[entity attribute value transaction added?]`: which entity, which attribute, what value, the transaction that recorded the fact, and whether it was added or retracted. Queries usually bind only the first three, and every pattern in this chapter does; the trailing two matter once you query history, which the [next chapter](09-recipe-domain.md) does. A user, then, is not a row in a `users` table; it is a handful of datoms that share an entity id: `[42 :user/email "alice@example.com"]`, `[42 :user/active? true]`, and so on. A query is not a `SELECT` over tables with `JOIN`s on keys -- it is a set of *patterns* with logic variables (the `?`-prefixed symbols) that Datomic unifies against those facts. A join across "tables" is just two patterns sharing a variable, with no foreign keys to declare. Read the first query below with that in mind and the rest follow.
 
 **Find an entity by attribute:**
 
@@ -221,7 +240,7 @@ Datomic queries use Datalog, a declarative query language. If you have used SQL,
      "alice@example.com")
 ```
 
-Read the `:where` clause against the fact shape above: `[?e :user/email ?email]` is `[entity :user/email value]` with logic variables in the entity and value slots. It matches every stored fact whose attribute is `:user/email`, binding `?e` to the entity id and `?email` to the value -- and because `:in` already binds `?email` to the address you pass (alongside `$`, the database itself), the pattern is pinned to that one user, so `?e` comes back as their entity id.
+Read the `:where` clause against the datom shape above: `[?e :user/email ?email]` is `[entity :user/email value]` with logic variables in the entity and value slots. It matches every stored fact whose attribute is `:user/email`, binding `?e` to the entity id and `?email` to the value -- and because `:in` already binds `?email` to the address you pass (alongside `$`, the database itself), the pattern is pinned to that one user, so `?e` comes back as their entity id.
 
 The `.` after `?e` in the `:find` clause is a scalar binding -- it returns the single value directly instead of wrapping it in a set of tuples. Without it, you would get `#{[12345]}` instead of `12345`.
 
@@ -263,7 +282,7 @@ Because we use `q*` instead of `d/q`, every `Date` in the result tuples is autom
 
 The entity API uses lookup refs -- `[:user/email "alice@example.com"]` -- to find entities by identity attributes. This is often more readable than a separate query when you already know the identity value.
 
-One caveat: `d/entity` is raw Datomic, so it sits *outside* our conversion wrappers. Reading a non-temporal attribute like `:user/active?` is fine, but reading a `:db.type/instant` attribute through it gives you back a raw `java.util.Date` -- the very thing the wrapper layer exists to keep out of application code. So reach for `d/entity` only for the lazy, navigational reads where you are not pulling timestamps; when you need instant-typed attributes, go through `pull*`/`q*`, which convert. (If you wanted entity-style navigation *with* conversion, you would wrap it the same way -- `(convert-dates (into {} (d/entity db ref)))` -- but realizing the whole entity defeats the laziness, so we keep the two tools separate.)
+One caveat: `d/entity` is raw Datomic, so it sits *outside* our conversion wrappers. Reading a non-temporal attribute like `:user/active?` is fine, but reading a `:db.type/instant` attribute through it gives you back a raw `java.util.Date` -- the very thing the wrapper layer exists to keep out of application code. So reach for `d/entity` only for the lazy, navigational reads where you are not pulling timestamps; when you need instant-typed attributes, go through `pull*`/`q*`, which convert, or normalize the single value you read with `as-instant`. (If you wanted entity-style navigation *with* conversion, you would wrap it the same way -- `(convert-dates (into {} (d/entity db ref)))` -- but realizing the whole entity defeats the laziness, so we keep the two tools separate.)
 
 ## Isolated test databases
 
@@ -365,7 +384,7 @@ Using it in a test namespace is one line:
         (is (instance? Instant created))))))
 ```
 
-These tests verify the full round trip: write with `java.time.Instant`, read back with `java.time.Instant`, with Datomic storing `java.util.Date` internally. The test suite never touches `java.util.Date` -- the bridge is invisible.
+These tests verify the full round trip: write with `java.time.Instant`, read back with `java.time.Instant`, with Datomic storing `java.util.Date` internally. The tests themselves never touch `java.util.Date`; the bridge is invisible.
 
 Each test gets its own database, runs in milliseconds, and cleans up after itself. No Docker containers, no test database provisioning, no cleanup scripts.
 
@@ -403,6 +422,6 @@ It is also worth testing that your schema installs correctly and that uniqueness
           "Same email should resolve to one entity (upsert)"))))
 ```
 
-The email uniqueness test demonstrates an important Datomic behavior: when you transact an entity with a `:db.unique/identity` attribute that already exists, Datomic merges the new data into the existing entity rather than creating a duplicate. This is upsert semantics. The second transaction with the same email does not fail -- it updates the existing entity. Understanding this early prevents subtle bugs.
+The email uniqueness test demonstrates an important Datomic behavior: when you transact an entity with a `:db.unique/identity` attribute that already exists, Datomic merges the new data into the existing entity rather than creating a duplicate. This is upsert semantics. The second transaction with the same email does not fail; it updates the existing entity. Look closely at what that update did, though. The second map carried a fresh `(java.util.UUID/randomUUID)` as `:user/id`, and because the tempid unified through the email, that new UUID was asserted onto the existing entity, quietly replacing the value the schema calls a "Unique user ID". An upsert through one identity attribute can rewrite another, and anything that keyed on the old `:user/id` now resolves to nothing. That is the subtle bug this behavior hides, and it is why the account-creation path in [the auth chapter](20-auth-tokens.md) checks for an existing user before transacting rather than leaning on the upsert.
 
-The conversion wrappers are thin -- about 40 lines. They are not a framework or an ORM; they solve one specific problem, the `Date`/`Instant` mismatch, and stay out of the way for everything else. You still write Datalog directly, navigate with `d/entity`, and transact plain maps through `transact*`. Datomic's API is good; it just needs this one bridge -- and with it in place, the chapters that follow build domain logic on top without ever seeing a `java.util.Date`. (The same `myapp.db.core` namespace later grows a second, unrelated concern: a tenant-isolation layer -- the `*-owned` helpers that enforce per-user data access -- which we reach for once there are users to isolate, in [the progressive-enhancement chapter](19-progressive-enhancement.md). It is not part of the bridge, so it is not in that 40-line count.)
+The conversion layer is thin: seven functions, about sixty lines with their docstrings. They are not a framework or an ORM; they solve one specific problem, the `Date`/`Instant` mismatch, and stay out of the way for everything else. You still write Datalog directly, navigate with `d/entity`, and transact plain maps through `transact*`. Datomic's API is good; it just needs this one bridge. With it in place, the chapters that follow build domain logic on top without ever constructing a `java.util.Date`, and `as-instant` is the normalizer to reach for on the occasional read that steps outside the wrappers with a timestamp in play. (The same `myapp.db.core` namespace later grows a second, unrelated concern: a tenant-isolation layer -- the `*-owned` helpers that enforce per-user data access -- which we reach for once there are users to isolate, in [the progressive-enhancement chapter](19-progressive-enhancement.md). It is not part of the bridge, so it is not in that line count.)

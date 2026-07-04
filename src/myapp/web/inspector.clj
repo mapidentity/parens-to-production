@@ -28,7 +28,8 @@
   literal keeps its exact line."
   (:require
     [clojure.java.io :as io]
-    [clojure.string :as str]))
+    [clojure.string :as str]
+    [clojure.walk :as walk]))
 
 (set! *warn-on-reflection* true)
 
@@ -96,36 +97,19 @@
 
   Used by the dev tools.reader load (`inspector-load`): tools.reader puts `:line`
   on every vector, this adds the file so `tag-tree` can emit \"file:line\".
-  Preserves structure and ALL existing metadata on every form; only element
-  vectors are touched, and only by adding one key — so non-element vectors
-  (arg/binding vectors, pull patterns, tuples) are walked but never tagged.
+  A plain `postwalk` — it preserves ALL existing metadata on every form on our
+  Clojure (1.12 completed the guarantee: seqs and lists, CLJ-2568; vectors, maps,
+  and sets always kept theirs through `empty`). Only element vectors are touched,
+  and only by adding one key — so non-element vectors (arg/binding vectors, pull
+  patterns, tuples) are walked but never tagged.
   Recursion depth is bounded by Hiccup/code nesting (tens of levels in practice);
   a pathological depth would StackOverflow, but the dev load is fail-safe (it
   falls back to a normal `load-file` — see `inspector-load/reload-changed!`)."
   [file form]
-  (cond
-    (vector? form)
-    (let [walked (mapv #(add-file-meta file %) form)
-          m (meta form)]
-      (with-meta
-        walked
-        (if (and m (:line m) (element? form))
-          (assoc m
-            :myapp/file file)
-          m)))
-
-    (map? form)
-    (with-meta
-      (into (empty form) (map (fn [[k v]] [(add-file-meta file k) (add-file-meta file v)])) form)
-      (meta form))
-
-    (set? form)
-    (with-meta (into (empty form) (map #(add-file-meta file %)) form) (meta form))
-
-    (seq? form)
-    (with-meta (apply list (map #(add-file-meta file %) form)) (meta form))
-
-    :else form))
+  (walk/postwalk
+    (fn [x]
+      (if (and (vector? x) (element? x) (:line (meta x))) (vary-meta x assoc :myapp/file file) x))
+    form))
 
 (defn tag-tree
   "DEV: walk an assembled Hiccup tree, injecting element-level source tags.

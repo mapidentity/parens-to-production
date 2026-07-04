@@ -42,6 +42,8 @@ The heart of the setup is a dedicated server entry point. It looks like your pro
     [ring.middleware.session.cookie :as cookie]))
 ```
 
+One require points forward. `myapp.analytics.db` is defined in [the admin dashboard chapter](23-admin-dashboard.md), not here; if you are building strictly in order, create it now from there (or take it from the repo), because the e2e server boots the full stack -- analytics database included -- and will not start without it.
+
 ### Capturing emails instead of sending them
 
 The first problem is email. Your auth flow sends magic links via SMTP. In tests, you do not have an SMTP server, and even if you did, you would not want tests depending on network I/O. The solution is simple: an atom that collects emails, and a stubbed function that writes to it instead of sending.
@@ -205,6 +207,8 @@ Everything comes together in `start!`:
     @(promise)))
 ```
 
+The stub's return value looks odd on purpose. `{:error :SUCCESS}` is the exact shape the real `send-magic-link!` returns on a successful send: an `:error` key whose value is `:SUCCESS` (failures return `{:error :FAIL}`). Mirroring it keeps the stub a faithful stand-in rather than an approximation.
+
 The sequence matters:
 
 1. **Install config first.** Everything downstream reads from this.
@@ -227,6 +231,11 @@ module.exports = {
   use: {
     baseURL: 'http://localhost:9876',
     locale: 'en-US',
+    // Diagnostics on failure only (free on green runs): a trace records the
+    // whole run -- DOM snapshots, network, console -- replayable with
+    // `npx playwright show-trace`; the screenshot captures the final state.
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
   },
   projects: [
     {
@@ -252,7 +261,7 @@ module.exports = {
 };
 ```
 
-The `webServer` block is the key piece: Playwright owns the server's whole lifecycle. It runs `command` to start the Clojure server, polls `url` -- the `/health` endpoint -- until it answers 200, runs the tests, and kills the process when they finish. The generous `timeout` (300 seconds) is deliberate: JVM startup -- loading the Datomic peer and compiling every required namespace from source -- can be slow on a cold, CPU-constrained CI runner, and a high ceiling avoids flaky timeouts, while the `stdout`/`stderr: 'pipe'` settings surface a server-side startup error in the logs instead of leaving you a bare timeout.
+The `webServer` block is the key piece: Playwright owns the server's whole lifecycle. It runs `command` to start the Clojure server, polls `url` -- the `/health` endpoint -- until it answers 200, runs the tests, and kills the process when they finish. The generous `timeout` (300 seconds) is deliberate: JVM startup, which loads the Datomic peer and compiles every required namespace from source, can be slow on a cold, CPU-constrained CI runner, so a high ceiling keeps a legitimately slow boot from being read as a failure. The `stdout`/`stderr: 'pipe'` settings are separate insurance: when the server does fail to start, they surface its error in the logs instead of leaving you only the timeout.
 
 The `reuseExistingServer` flag is useful during development. When not in CI, if a server is already running on port 9876, Playwright will use it instead of starting a new one. This lets you start the E2E server manually in a terminal, make changes, and re-run tests without the JVM startup penalty each time.
 
@@ -286,6 +295,8 @@ function uniqueEmail() {
 ```
 
 Two helper functions set the stage. `getMagicLink` calls our test-only `/test/emails` endpoint to retrieve the magic link that was "sent" to a given address. `uniqueEmail` generates a fresh address per test -- a timestamp plus a random suffix, so two tests that begin in the same millisecond still get distinct users when the suite runs in parallel.
+
+Notice what `getMagicLink` does *not* do: it fires a single `request.get` with no retry loop, yet it never races the server. Two things make that safe. First, Playwright's assertions auto-wait. `expect(...).toBeVisible()` polls the live page until the element appears or the timeout fires, so the preceding assertion that "Check your email" is visible has already blocked until the server finished handling the sign-in POST. That is why the specs carry no manual `sleep`s or polling anywhere. Second, that POST captures the email synchronously: the `request-magic-link` handler calls `send-magic-link!` inline, before it issues its redirect (see [the auth chapter](21-auth-email-flow.md)), so the stub has appended to the atom by the time the confirmation page renders. The email is guaranteed present the moment the browser sees the heading. That second guarantee is a real coupling worth naming: move sending onto a background thread or a queue and the ordering breaks, at which point `getMagicLink` would need a retry of its own.
 
 ### Shared registration flow
 
@@ -348,22 +359,18 @@ test('new user registration', async ({ page, request }) => {
 });
 ```
 
-That single test exercises form submission, server-side email "sending," token verification, terms acceptance, session creation, and the final redirect. The *other* tests do not re-walk it -- they call `registerUser`, whose inline `expect`s carry the same assertions -- so the flow is spelled out once, here, and reused everywhere else.
+That single test exercises form submission, server-side email "sending," token verification, terms acceptance, session creation, and the final redirect. The other tests in this file do not re-walk it: they call `registerUser`, whose inline `expect`s carry the same assertions, so within `auth.spec.js` the full flow is written out exactly once, here. The recipe specs in the next file carry their own lighter `registerUser`, one that drives straight to the dashboard without re-asserting the confirmation page or the terms redirect. That is deliberate rather than sloppy reuse: their subject is what happens *after* login, so the auth assertions stay here, where verifying the login is the point.
 
 ### Test: returning user skips terms
 
 ```javascript
 test('returning user login skips terms', async ({ page, request }) => {
   const email = uniqueEmail();
-
-  // Register first (creates user with terms accepted)
   await registerUser(page, request, email);
 
-  // Logout
   await page.getByRole('button', { name: 'Sign out' }).click();
   await expect(page.locator('input[name="email"]')).toBeVisible();
 
-  // Login again with same email
   await page.fill('input[name="email"]', email);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(
@@ -373,12 +380,15 @@ test('returning user login skips terms', async ({ page, request }) => {
   const magicLink = await getMagicLink(request, email);
   await page.goto(magicLink);
 
-  // Should go directly to dashboard (skip terms)
+  // Should go directly to the dashboard (terms already accepted)
   await expect(page).toHaveURL(/\/dashboard/);
+  await expect(
+    page.getByRole('heading', { name: 'Your recipes' })
+  ).toBeVisible();
 });
 ```
 
-This tests a critical branching point: returning users who have already accepted terms should land directly on the dashboard. The test registers a user, logs out, logs back in, and verifies the terms page is skipped. This is the kind of stateful behavior that is nearly impossible to unit test meaningfully -- you need the full session lifecycle.
+This tests a critical branching point: returning users who have already accepted terms should land directly on the dashboard. The test registers a user, logs out, logs back in, and verifies the terms page is skipped and the dashboard itself renders. This is the kind of stateful behavior that is nearly impossible to unit test meaningfully -- you need the full session lifecycle.
 
 ### Test: logout prevents dashboard access
 
@@ -409,24 +419,56 @@ There is no wrapper script to write -- running the suite is one command from the
 npx playwright test
 ```
 
-Playwright reads the config, starts the Clojure server (via the `webServer` block), waits for `/health` to return 200, runs every spec in `e2e/`, and tears everything down. You do not need to start the server manually (though you can, during development, thanks to `reuseExistingServer`). This is exactly the command [the CI/CD chapter](26-ci-cd.md) runs in the pipeline.
+Playwright reads the config, starts the Clojure server (via the `webServer` block), waits for `/health` to return 200, runs every spec in `e2e/`, and tears everything down. You do not need to start the server manually (though you can, during development, thanks to `reuseExistingServer`). [The CI/CD chapter](26-ci-cd.md) runs the same suite in the pipeline, there through the container's own `playwright` binary rather than `npx`, but against the identical config, server, and specs.
 
-The companion repo ships two spec files -- `e2e/auth.spec.js` (the magic-link login, logout, and route-protection flows built above) and `e2e/recipes.spec.js` (the recipe browse/fork/version flows) -- and `npx playwright test` runs both.
+The companion repo ships two spec files: `e2e/auth.spec.js` (the magic-link login, logout, and route-protection flows built above) and `e2e/recipes.spec.js` (recipe creation, edit history, diffs, and fork lineage). `npx playwright test` runs both.
+
+The recipe specs are where E2E earns the most in this application, because they check UI derived from Datomic's history -- the book's central subject -- through a real browser. One excerpt, from the edit test, after the recipe has been changed and saved:
+
+```javascript
+// History shows two versions
+await page.getByRole('link', { name: /Version history/ }).click();
+await expect(page.getByText('Version 1')).toBeVisible();
+await expect(page.getByText('Version 2')).toBeVisible();
+
+// Diff from previous shows the added line
+await page.getByRole('link', { name: 'Changes from previous' }).click();
+await expect(page.locator('.diff-add', { hasText: 'vanilla' })).toBeVisible();
+```
+
+No unit test reaches that far. The assertion is that a real edit, recorded as a new Datomic version, surfaces in the rendered history and produces a diff with the added ingredient line marked `.diff-add`. The fork test makes the same kind of check for lineage: after forking, the child page reads "Descends from 1 ancestor" and links back to its parent.
+
+## When a test fails
+
+A green suite tells you little; a red one is where the harness has to prove it was worth building. Playwright is configured so a failure leaves evidence rather than a bare stack trace, and both artifacts cost nothing on a passing run:
+
+- **The trace** (`trace: 'retain-on-failure'`) is a full recording of the failed run: a DOM snapshot, the network log, and the console at every step. Open it with `npx playwright show-trace`, scrub to the step that failed, and read the page's actual state at that instant instead of inferring it from an error message.
+- **The screenshot** (`screenshot: 'only-on-failure'`) captures the final rendered page, often enough on its own to show that a selector matched the wrong element or a redirect never happened.
+
+To reproduce a failure interactively, three flags open the run up. `--headed` runs the browser visibly instead of headless. `--ui` opens Playwright's watch-mode interface, where you step through actions and re-run a single test in isolation. `--debug` launches the inspector with the run paused, so you can advance action by action and try selectors against the live page.
+
+What the config deliberately does not set is retries.
+
+> **Decision -- why retries stay at 0.** Playwright can re-run a failed test several times and pass the suite if any attempt succeeds. We leave that off. A flaky E2E test is a defect, not weather: a bug in the test or in the app, of exactly the kind the isolation section dissected, a cross-worker race, an ordering assumption, a missing wait. Retrying does not fix the defect; it hides it, letting a real bug reach users because the build stayed green. The cost of refusing retries is honest and worth stating: a genuinely environmental flake, a CI runner that stalls or a port slow to free, fails the whole build instead of passing on the second try. We take that cost, because a suite that retries its way to green is a suite that lies about how reliable the application is. When a test does flake, the trace tells you which kind you are looking at.
+
+None of this makes E2E free to keep. A browser test breaks when the interface it drives changes: a renamed button, a moved heading, a new redirect on a path it walks. It breaks in ways a unit test never would, because it is coupled to rendered text and roles rather than to a function signature. That coupling is the price of testing the thing users actually touch, and there is no version of E2E that avoids it. The harness holds the cost down, since isolation is structural, failures leave traces, and one command runs everything, but each spec is a maintained asset, not a write-once one.
 
 ## Why the harness is shaped this way
 
-Four choices in the setup are worth defending directly, because the obvious alternative to each is tempting and wrong.
+Five choices in the setup are worth defending directly, because for each the tempting alternative deserves a named answer.
 
-**Why a separate server process instead of starting the server in-test?** Playwright expects to manage a server lifecycle via `webServer`. This is cleaner than trying to boot a JVM from within a Node.js test runner. It also means the Clojure server is a real process with real resource management, not something awkwardly embedded.
+**Why Playwright at all, in a Clojure codebase?** It brings a second language and runtime into the repo, which is a real cost to weigh. Three things pay for it. Its assertions are web-first: `expect(...).toBeVisible()` retries against the live page until it passes or times out, so the specs need no manual waits and do not flake on timing. Its `webServer` block owns the server lifecycle, the spine of this whole harness, so nothing has to hand-roll start, health-poll, and teardown. And when a test fails, its trace viewer replays the run step by step, tooling the WebDriver protocol behind Selenium and Etaoin does not match. Etaoin, the Clojure-native option, would keep the tests in one language but hands back the auto-waiting and the lifecycle management this design leans on. Node, meanwhile, is not a new dependency here: Tailwind and Lighthouse CI already run through it, so Playwright is one more use of a runtime the project already carries.
 
-**Why `alter-var-root` instead of dependency injection?** For a test server that runs as its own process, global var replacement is the simplest approach. You are not composing test and production code in the same process. The E2E server is a standalone entry point. There is nothing to accidentally leak.
+**Why a separate server process instead of starting the server in-test?** Two runtimes, kept cleanly apart. The tests run on Node and the server on the JVM, and booting and supervising a JVM from inside a Node test runner is awkward at best. Keeping them separate processes buys more than tidiness: the process boundary is the seam that makes stubbing safe, since nothing test-only shares memory with anything that could ship, and the heavy JVM startup happens once, which is what `reuseExistingServer` exploits to skip it during development. Playwright's `webServer` already knows how to drive a real external process; embedding would trade all of that for a single-language illusion.
+
+**Why `alter-var-root` instead of dependency injection?** Dependency injection exists to swap implementations without a global mutation, but its payoff is isolation inside a shared process, and this server has no shared process to isolate within. It is a standalone entry point in its own JVM, so (as the note above spells out) the global replacement costs nothing it would otherwise protect, while stubbing the function everywhere it is called without threading a seam through the code. DI here would be machinery bought to solve a problem the process boundary already solved.
 
 **Why in-memory Datomic instead of a test database?** Speed and isolation. In-memory databases are created in milliseconds, start empty, and disappear when the process exits. No cleanup, no port conflicts, no leftover state between test runs.
 
-**Why test-only HTTP endpoints instead of reading the atom directly?** The tests run in a Node.js process. The server runs in a JVM process. They communicate over HTTP. The test endpoints are the bridge between these two worlds.
+**Why capture emails in an atom behind a test-only endpoint, rather than a real mail-catcher?** The honest alternatives are a Mailpit or MailHog container the stub delivers to and the tests poll, or letting the test side query Datomic directly. Both add a moving part this design does not need. A mail-catcher is a second service to start, health-check, and tear down, the very lifecycle weight in-memory Datomic was chosen to avoid, and it puts real SMTP I/O back in the loop the stub exists to remove. Querying the JVM's state from Node is not really on offer: the atom lives in one process and the tests in another. An HTTP endpoint the e2e server already serves is the smallest bridge across that boundary, and it reads captured state the same way the browser reads everything else, over HTTP against the running server.
 
 ## Where this leaves us
 
 The harness, not the specs, is the deliverable. A dedicated E2E server boots the full stack against in-memory databases with its external services stubbed; test-only endpoints let the browser inspect server-side state without a line of that machinery reaching production; a single `webServer` block hands Playwright the whole lifecycle; and one command runs it all. The specs that ride on top -- registration, login, logout, route protection -- are the cheap part once that scaffolding exists.
 
-And it extends without ceremony. A new feature needing coverage gets a new spec file; a new external dependency gets stubbed, and if a test needs to observe its effects, a test endpoint. The infrastructure is the investment, and it is already paid for -- the same bargain unit testing offers one layer down, which is why a serious application wants both rather than choosing between them.
+And it extends cheaply, if never quite for free. A new feature needing coverage gets a new spec file; a new external dependency gets stubbed, and if a test needs to observe its effects, a test endpoint. The infrastructure is the one-time investment, already paid for; the specs riding on it are the standing cost, the same bargain unit testing offers one layer down, which is why a serious application wants both rather than choosing between them.

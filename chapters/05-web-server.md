@@ -9,9 +9,9 @@ The web server needs three things: routing, configuration, and a clean developme
 Here is what we are using and why:
 
 - **Ring** -- The HTTP abstraction. Requests and responses are plain Clojure maps. Middleware are functions that wrap handlers. This is the foundation that nearly every Clojure web library builds on.
-- **http-kit** -- A fast, lightweight HTTP server with WebSocket support. The usual alternatives are Jetty (via `ring-jetty-adapter`) and Undertow (via Aleph or `luminus`); both are excellent and battle-tested. We pick http-kit for two concrete reasons: it is a single, self-contained dependency with no servlet container to configure, and its WebSocket support is built in rather than bolted on -- which matters immediately, because the very next chapter pushes live-reload events to the browser over a WebSocket on this same server. It implements the Ring spec, starts in milliseconds, and stays out of your way.
-- **Reitit** -- Data-driven routing from Metosin. The long-standing alternative is Compojure, which expresses routes as macros (`(GET "/foo" [] ...)`); Reitit expresses them as plain vectors instead. That difference is the reason we choose it: a route tree that is *data* can be inspected, transformed, and tested without being executed -- the testing chapter walks the whole tree as a value to assert every route resolves, which a macro-based router cannot offer.
-- **Aero** -- Configuration as EDN with profile support (`:dev`, `:prod`). Environment variables, defaults, and profile switching without a framework.
+- **http-kit** -- A fast, lightweight HTTP server with WebSocket support. The usual alternatives are Jetty (via `ring-jetty-adapter`), Undertow (via Luminus's `ring-undertow-adapter`), and Netty (via Aleph); all are excellent and battle-tested. We pick http-kit for two concrete reasons: it is a single, self-contained dependency with no servlet container to configure, and its WebSocket support is built in rather than bolted on -- which matters immediately, because the very next chapter pushes live-reload events to the browser over a WebSocket on this same server. It implements the Ring spec, starts in milliseconds, and stays out of your way.
+- **Reitit** -- Data-driven routing from Metosin. The long-standing alternative is Compojure, which expresses routes as macros (`(GET "/foo" [] ...)`); Reitit expresses them as plain vectors instead. That difference is the reason we choose it: a route tree that is *data* can be inspected, transformed, and tested without being executed. [The testing chapter](10-unit-testing.md) resolves every path the application should serve against the compiled router without invoking a single handler -- a check a macro-based router can only perform by executing the route.
+- **Aero** -- Configuration as EDN with profile support (`:dev`, `:prod`). The common alternatives are environ and cprop, which assemble configuration from environment variables and system properties. We pick Aero because the whole configuration is one EDN file you can read, diff, and test as a value: every key is visible in one place, `#profile` makes each dev/prod split explicit, and `#env` marks exactly which values the deployment must supply. With env-var libraries, that inventory lives in the deployment docs or in your head.
 
 ## deps.edn: your project file
 
@@ -51,7 +51,7 @@ Clojure projects use `deps.edn` to declare dependencies and paths. Here is the r
                      "--middleware" "[cider.nrepl/cider-middleware]"]}}}
 ```
 
-Three keys carry this file. `:paths` tells Clojure where to find source code (`src`) and resources like config files (`resources`). `:deps` lists runtime dependencies at explicit Maven versions -- no lock files, no version ranges, you pin exactly what you want. And `:aliases` define optional configurations layered on top: the `:dev` alias puts the `dev` directory on the classpath and pulls in development-only dependencies like nREPL and `tools.namespace`, while `:repl` starts nREPL on port 7888 with CIDER middleware for editor integration.
+`:paths` tells Clojure where to find source code (`src`) and resources like config files (`resources`). `:deps` lists runtime dependencies at explicit Maven versions: no lock files, no version ranges, you pin exactly what you want. And `:aliases` define optional configurations layered on top: the `:dev` alias puts the `dev` directory on the classpath and pulls in development-only dependencies like nREPL and `tools.namespace`, while `:repl` starts nREPL on port 7888 with CIDER middleware for editor integration.
 
 To start a REPL with both aliases active:
 
@@ -89,9 +89,9 @@ Middleware is a function that takes a handler and returns a new handler, typical
 ```clojure
 (defn wrap-something [handler]
   (fn [request]
-    ;; Do something before
-    (let [response (handler modified-request)]
-      ;; Do something after
+    ;; Do something before, often by modifying the request
+    (let [response (handler request)]
+      ;; Do something after, often by modifying the response
       response)))
 ```
 
@@ -117,7 +117,7 @@ Before we write routes, we need configuration. Aero reads an EDN file and suppor
  :signing-key #env "SIGNING_KEY"}
 ```
 
-The `#profile` reader tag selects a value based on the active profile. In dev, the server binds to `0.0.0.0` (all interfaces); in prod, to `127.0.0.1` (localhost only, behind a reverse proxy). The `#env` tag reads from environment variables, and the division of labor between the two tags is the configuration policy in miniature: dev values are literals, so a fresh checkout runs with zero setup, while anything that varies per deployment comes from the environment the production process manager supplies -- `#env` under `:prod` for the base URL and the SMTP host, bare `#env` for the crypto keys, whose dev fallback is `resolve-keys`' job below.
+The `#profile` reader tag selects a value based on the active profile. In dev, the server binds to `0.0.0.0` (all interfaces) for a concrete reason: TLS terminates in the separate Caddy container from [the devcontainer chapter](03-devcontainer.md), and its proxied requests reach this container over the compose network, which a loopback-only bind would refuse. In prod it binds to `127.0.0.1` (localhost only, behind a reverse proxy on the same host). The `#env` tag reads from environment variables, and the division of labor between the two tags is the configuration policy in miniature: dev values are literals, so a fresh checkout runs with zero setup, while anything that varies per deployment comes from the environment the production process manager supplies. That means `#env` under `:prod` for the base URL and the SMTP host, and bare `#env` for the two crypto keys. The session key's dev fallback is `resolve-keys`' job below; the signing key has no consumer yet, so its `nil` dev value is harmless until [the auth chapter](20-auth-tokens.md) starts signing tokens and threads it through the same fallback.
 
 `:base-url` and `:smtp` are placeholders for now -- we use them later for magic-link emails ([the email login-flow chapter](21-auth-email-flow.md)). They live in config from the start so every environment has them, and so the config test we write in [the testing chapter](10-unit-testing.md) can assert their presence. (The repository's `:smtp` map eventually grows `:user` and `:pass` entries -- same pattern, `#env` under `:prod` -- and a `:tls` flag that simply flips to true in production, once the email chapter starts sending.)
 
@@ -253,7 +253,7 @@ A *handler* is a plain function from a Ring request map to a Ring response map. 
    :body "<!doctype html><h1>MyApp</h1>"})
 ```
 
-`json-response` builds a plain Ring response map: set the content type, serialize the data to JSON, done. The `json` alias is `clojure.data.json` (the `org.clojure/data.json` dependency from our `deps.edn`); `write-str` turns a Clojure value into a JSON string, and we pass a string body straight through unchanged. `home` returns a stub HTML page for now -- the [Hiccup views chapter](13-hiccup-views.md) replaces its body with a real server-rendered view, and the [auth](20-auth-tokens.md) and dashboard chapters add the handlers the fuller route tree calls.
+`json-response` builds a plain Ring response map: set the content type, serialize the data to JSON, done. The `json` alias is `clojure.data.json` (the `org.clojure/data.json` dependency from our `deps.edn`); `write-str` turns a Clojure value into a JSON string, and we pass a string body straight through unchanged. (The repository's `json-response` later grows a `:headers` option, merged over these defaults, so a caller can add or override a header without giving up the shared shape.) `home` returns a stub HTML page for now -- the [Hiccup views chapter](13-hiccup-views.md) replaces its body with a real server-rendered view, and the [auth](20-auth-tokens.md) and dashboard chapters add the handlers the fuller route tree calls.
 
 ### The middleware stack
 
@@ -286,14 +286,16 @@ The middleware stack, layer by layer:
 
 1. **`wrap-params`** -- Parses query string and form body parameters into a `:params` map on the request.
 2. **`wrap-keyword-params`** -- Converts string parameter keys to keywords, so you get `(:email params)` instead of `(get params "email")`.
-3. **`wrap-session`** -- Manages sessions using encrypted cookies. The session key comes from our config. Cookie attributes are set for security: `http-only` prevents JavaScript access, `secure` requires HTTPS, `same-site :lax` is a partial CSRF mitigation (it withholds the cookie on cross-site subrequests but still sends it on top-level GET navigations, so it is a defense-in-depth layer, not a substitute for per-form tokens -- see [the email-flow chapter](21-auth-email-flow.md)), and `max-age` sets a 30-day expiry. One consequence of `secure` is worth stating now: the browser will only *send the cookie back* over HTTPS, so authenticated flows must be reached over TLS -- which in dev means the Caddy `.lan` hostname above (`https://myapp.lan`), not `http://localhost:3000`. The plain-`localhost` `curl` we run in a moment hits `/health`, which carries no session, so it is unaffected; but if you log in over plain HTTP and wonder why the session never sticks, this attribute is why. We keep `secure` on unconditionally rather than relaxing it in dev, because the dev environment is already HTTPS by design.
+3. **`wrap-session`** -- Manages sessions using encrypted cookies; the session key comes from our config. Every cookie attribute is a security decision. `http-only` prevents JavaScript access, `secure` restricts the cookie to HTTPS, and `max-age` sets a 30-day expiry. `same-site :lax` is a partial mitigation of cross-site request forgery (CSRF), where another site causes your browser to submit a state-changing request that arrives carrying your ambient cookies. `:lax` withholds the cookie on cross-site subrequests but still sends it on top-level GET navigations, so it is a browser-enforced, defense-in-depth layer; [the email-flow chapter](21-auth-email-flow.md) weighs exactly what it covers and what it leaves on the table.
 
-Two structural choices worth noting:
+One consequence of `secure` is worth stating now: the browser will only *send the cookie back* over HTTPS, so authenticated flows must be reached over TLS. In dev that means the Caddy `.lan` hostname above (`https://myapp.lan`), not `http://localhost:3000`. The plain-`localhost` `curl` we run in a moment hits `/health`, which carries no session, so it is unaffected; but if you log in over plain HTTP and wonder why the session never sticks, this attribute is why. We keep `secure` on unconditionally rather than relaxing it in dev, because the dev environment is already HTTPS by design.
+
+How the stack is built matters as much as what is in it:
 
 - **`app*` is a `delay`**, just like our config. This prevents the middleware stack from being built at compile time (which would try to read config, which might not be available yet). It's built once on the first request.
 - **`app` is a plain function** that derefs the delay. The server receives `#'routes/app` (a var reference), which means you can redefine `app` at the REPL and the server picks up changes without restarting.
 
-Later chapters insert more middleware here -- locale negotiation ([i18n](11-i18n.md)), a no-cache guard for authenticated pages, the current-user/auth/terms/admin gates ([auth](20-auth-tokens.md), [admin](23-admin-dashboard.md)), a catch-all error boundary that turns an uncaught exception into a logged, generic 500 ([the email-flow chapter](21-auth-email-flow.md)), and a strict Content-Security-Policy ([asset pipeline](24-asset-pipeline.md)) -- and `myapp.config` learns to resolve more keys (a `:signing-key` for magic-link HMAC, `:database-uri`, an `:admin-email`) the same way it resolves `:session-key` here.
+Later chapters insert more middleware here: locale negotiation ([i18n](11-i18n.md)), a no-cache guard for authenticated pages, and the current-user/auth/terms/admin gates ([auth](20-auth-tokens.md), [admin](23-admin-dashboard.md)). A catch-all error boundary that turns an uncaught exception into a logged, generic 500 arrives with [the email-flow chapter](21-auth-email-flow.md), and a strict Content-Security-Policy with [the asset pipeline](24-asset-pipeline.md). Alongside the stack, `myapp.config` grows more keys: a `:signing-key` for magic-link HMAC (resolved with the same dev-fallback, prod-fail-closed policy as `:session-key`), a `:database-uri`, an `:admin-email`.
 
 Putting the pieces together, here is the whole path a request takes through the parts this chapter built. Each middleware is a layer the request passes *inward* through on the way to a handler, and the response passes back *outward* through on the way to the browser -- which is exactly why order matters, and why the outermost layer is listed first:
 
@@ -444,9 +446,13 @@ clj -M:dev:repl
 
 ```clojure
 (start!)
+;; ⚠️  Generating random session key (dev mode)
+;; ⚠️  Sessions will not survive server restart
 ;; Starting server on 0.0.0.0:3000...
-;; Server running at http://localhost:3000
+;; Server running at http://0.0.0.0:3000
 ```
+
+The two warnings are `resolve-keys` doing its dev-mode job: nothing in the devcontainer sets `SESSION_KEY`, so the key is freshly random and sessions will not survive a restart. They print before the startup lines because the first `get-config` call is what forces the config delay.
 
 Hit the health endpoint:
 
@@ -455,7 +461,7 @@ curl http://localhost:3000/health
 # {"status":"ok"}
 ```
 
-That `curl` runs from inside the devcontainer, where the app listens on `0.0.0.0:3000`. From the host, go through Caddy at the `.lan` hostname set up in [the devcontainer chapter](03-devcontainer.md) -- `curl https://myapp.lan/health` -- which is also how a browser reaches the app.
+That `curl` runs from inside the devcontainer, where the app listens on `0.0.0.0:3000` and the `.lan` names resolve. From the host they do not, and nothing publishes Caddy's port, so a host-side `curl https://myapp.lan/health` has nothing to reach; [the devcontainer chapter](03-devcontainer.md) explains why and how you reach the app from your own machine instead -- the editor's forwarded `http://localhost:3000` for a quick look, or the in-container browser at `https://myapp.lan` for the real HTTPS front door.
 
 Stop it:
 

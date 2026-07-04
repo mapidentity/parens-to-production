@@ -28,15 +28,26 @@ if (document.prerendering) {
   connectDevReload();
 }
 
-// A view-ns edit: morph <main> in place via the dispatcher (state-preserving — keeps
-// scroll, focus, open <details>). Falls back to a full reload on any failure, and
-// clears a prior stale banner since the morph won't navigate it away.
+// A view-ns edit: morph the whole <body> in place via the dispatcher
+// (state-preserving — keeps scroll, focus, open <details>). The target is the
+// body, not <main>, because view namespaces also own the page chrome — nav,
+// layout, footer — and a <main>-only morph would leave a chrome edit invisibly
+// stale. The one thing a body morph must not do is remove the dev tooling the
+// server's HTML never contained — the inspector's UI, the construction-view
+// overlay — so every client-injected dev node carries data-myapp-overlay and
+// the morph is told to leave those alone. Falls back to a full reload on any
+// failure, and clears a prior stale banner since the morph won't navigate it away.
 function morphReload() {
   var bar = document.getElementById('myapp-stale-warning'); if (bar) bar.remove();
   import('/js/dispatcher.js')
     .then(function (m) {
       return m.fetchAndMorph(location.pathname + location.search,
-        { target: 'main', replaceUrl: true, focus: false, ignoreActiveValue: true });
+        { target: 'body', replaceUrl: true, focus: false, ignoreActiveValue: true,
+          morphCallbacks: {
+            beforeNodeRemoved: function (node) {
+              return !(node.nodeType === 1 && node.hasAttribute('data-myapp-overlay'));
+            },
+          } });
     })
     .catch(function () { window.location.reload(); });
 }

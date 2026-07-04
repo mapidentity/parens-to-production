@@ -2,7 +2,7 @@
 
 An admin dashboard is a tempting target. It reads across every user, exposes operational internals, and -- unlike the rest of the app -- has no legitimate audience but you. So the load-bearing question is not "what does it show" but "who is allowed to see it, and what happens to everyone else." Get the authorization wrong and you have built a single page that leaks the whole tenancy.
 
-This chapter sits in the book's hardening arc, and its real subject is that gate: a `wrap-admin` middleware that restricts the route group to one admin email, the JSON-vs-HTML decision that keeps an expired session from being mis-parsed as data, and the case-insensitive comparison that keeps the gate from locking out the one person it exists to admit. The dashboard it protects -- Datomic queries across two databases, a stat grid, live polling -- is conventional once the gate is right. The chapter closes with a small presentational nicety (CSS-animated counters) that a security-minded reader can skip.
+This chapter sits in the book's hardening arc, and its real subject is that gate: a `wrap-admin` middleware that restricts the route group to one admin email, the JSON-vs-HTML branch that keeps an expired session from being mis-parsed as data, and the case-insensitive comparison that keeps a stray capital letter from locking the admin out of their own dashboard. The dashboard it guards is a conventional query-and-render once the gate is right: Datomic reads across two databases, a stat grid, a pair of tables. The one thing downstream of the gate that still needs an argument of its own is the live-polling lifecycle, where a naive poller leaks intervals across morph navigation; the CSS-animated counters are a presentational aside a security-minded reader can skip.
 
 ## The access control layer
 
@@ -39,11 +39,11 @@ Admin routes need to be locked down -- not "requires authentication" but "requir
         :else (handler request)))))
 ```
 
-The comparison is **case-insensitive**, and that is a deliberate hardening choice, not a stylistic one. A naive `(= user-email admin-email)` is the kind of check that passes every test and then locks you out in production the first time a session carries `Admin@example.com` while config holds `admin@example.com`. Email local parts are case-insensitive in practice for every provider you will meet, so the only correct behavior is to fold both sides to lower case before comparing -- otherwise the gate is one stray capital letter away from excluding the one person it exists to admit -- which is why `clojure.string` is required as `str` in the namespace above.
+The comparison is **case-insensitive**, and that is a deliberate hardening choice, not a stylistic one. A naive `(= user-email admin-email)` is the kind of check that passes every test and then locks you out in production the first time a session carries `Admin@example.com` while config holds `admin@example.com`. Email local parts are case-insensitive in practice for every provider you will meet, so the only correct behavior is to fold both sides to lower case before comparing. Skip the fold and the gate sits one stray capital letter away from excluding the one person it exists to admit.
 
 > **How the repo factors this.** The version above does the lookup and the case-fold inline, which keeps this chapter self-contained. In the companion repo the work is split across the middleware stack from [the login-flow chapter](21-auth-email-flow.md): `wrap-current-user` resolves the session once and, via an `admin-email?` helper that does exactly this lower-cased comparison, stamps a boolean `:admin?` onto the request; `wrap-admin` is then the bottom layer that simply reads `(:admin? request)` and chooses redirect-or-JSON. The check is identical -- it has just moved up into the layer that already touched the session, so the gate itself is a one-line flag read. If you have built the auth chapters' middleware, prefer that structure; the standalone form here is the minimal thing that works on its own.
 
-Three branches, each with two sub-branches for HTML vs JSON responses:
+Three branches. The two that reject split again on HTML versus JSON; the third just passes through:
 
 1. **Not authenticated at all** -- redirect to the home page (or 401 for JSON).
 2. **Authenticated but not the admin** -- redirect to the regular dashboard (or 403 for JSON).
@@ -67,7 +67,9 @@ The `:json? true` metadata on the `/stats` route tells `wrap-admin` to return JS
 
 One design decision worth explaining: analytics data lives in a separate Datomic database from operational data. Same transactor, same underlying PostgreSQL storage -- zero new infrastructure. But logically separated so you can delete and recreate the analytics database without touching user data.
 
-One caveat rides on that disposability, and it is worth stating plainly because it couples a security invariant to a database we have just called throwaway: the magic-link nonces that make sign-in single-use (see [the email-flow chapter](21-auth-email-flow.md)) live in this same analytics database. Deleting and recreating it clears the nonce log -- harmless for nonces already consumed, but it resets replay protection for any magic link still outstanding at that instant, so a link minted just before the wipe could be replayed just after. In practice you drop analytics during a maintenance window, not mid-flight, so the exposure is small; the rule is simply to do it when no unexpired links are in the wild, rather than to treat this database as unconditionally safe to discard.
+One caveat rides on that disposability, and it is worth stating plainly because it couples a security invariant to a database we have just called throwaway: the magic-link nonces that make sign-in single-use (see [the email-flow chapter](21-auth-email-flow.md)) live in this same analytics database. Deleting and recreating it clears the nonce log. That is harmless for nonces already consumed, but it resets replay protection for any magic link still outstanding at that instant, so a link minted just before the wipe could be replayed just after.
+
+The obvious alternative is to keep the anti-replay nonce in the operational database and leave only the funnel counts disposable. It does not pay, because there is no separate record to move. One entity carries the email, the request and verify timestamps, and the nonce; consuming the nonce is the same transaction that stamps `:verified-at`, so the one-shot check and the "verified" funnel fact are a single write. Splitting the invariant out would mean writing two rows per link -- one to each database -- and joining across both to build the funnel, or else merging the databases back into one and giving up the line that lets analytics be dropped without touching user data. One row is one write and one source of truth. The window it costs opens only during a wipe of still-valid links, and a wipe is a maintenance action you schedule, so the rule is to run it when no unexpired links are outstanding, not to treat this database as unconditionally safe to discard.
 
 ```clojure
 (ns myapp.analytics.db
@@ -289,7 +291,7 @@ The JSON endpoint for live polling bundles everything into a flat map with numer
   "Returns raw numeric stats for the live-polling JSON endpoint."
   [db analytics-db]
   (let [funnel (funnel-stats db analytics-db)
-        runtime (Runtime/getRuntime)
+        ^Runtime runtime (Runtime/getRuntime)
         mb (fn [^long n] (long (/ n 1048576)))]
     {:total-users (total-users db)
      :links-sent (:links-sent funnel)
@@ -309,31 +311,27 @@ The handler orchestrates queries and renders the view:
 
 ```clojure
 (defn admin-dashboard
-  "Renders the admin dashboard. Access control handled by wrap-admin middleware."
+  "Render the admin dashboard. Access control handled by wrap-admin."
   [request]
   (let [db (d/db (db/get-connection))
         analytics-db (analytics/get-db)
-        runtime (Runtime/getRuntime)
+        ^Runtime runtime (Runtime/getRuntime)
         mb (fn [^long n] (long (/ n 1048576)))
-        jvm-used-mb (mb (- (.totalMemory runtime) (.freeMemory runtime)))
-        user-email (get-in request [:session :user-email])]
-    {:status 200
-     :headers {"Content-Type" "text/html"}
-     :body (str
-             (admin-views/admin-dashboard
-               {:total-users (admin/total-users db)
-                :users (admin/all-users db)
-                :magic-links (admin/recent-magic-links analytics-db)
-                :funnel (admin/funnel-stats db analytics-db)
-                :jvm {:jvm-free-mb (mb (.freeMemory runtime))
-                      :jvm-total-mb (mb (.totalMemory runtime))
-                      :jvm-max-mb (mb (.maxMemory runtime))}
-                :jvm-used-mb jvm-used-mb
-                :user-email user-email}))}))
+        jvm-used-mb (mb (- (.totalMemory runtime) (.freeMemory runtime)))]
+    (html
+      (admin-views/admin-dashboard
+        {:total-users (admin/total-users db)
+         :users (admin/all-users db)
+         :magic-links (admin/recent-magic-links analytics-db)
+         :funnel (admin/funnel-stats db analytics-db)
+         :jvm {:jvm-free-mb (mb (.freeMemory runtime))
+               :jvm-total-mb (mb (.totalMemory runtime))
+               :jvm-max-mb (mb (.maxMemory runtime))}
+         :jvm-used-mb jvm-used-mb
+         :user-email (:user-email request)}))))
 
 (defn admin-stats
-  "JSON endpoint for live-polling admin stat cards.
-  Access control handled by wrap-admin middleware."
+  "JSON endpoint for the live-polling admin stat cards. Guarded by wrap-admin."
   [_request]
   (let [db (d/db (db/get-connection))
         analytics-db (analytics/get-db)]
@@ -414,7 +412,10 @@ The dashboard view assembles eight cards into a 4-column, 2-row grid:
                    verification-rate)
         (stat-card "Terms Accepted" "terms-accepted" (:terms-accepted funnel))
         (stat-card "JVM Used" "jvm-used-mb" jvm-used-mb jvm-used-pct)
-        (stat-card "JVM Free" "jvm-free-mb" (:jvm-free-mb jvm))
+        (stat-card "JVM Free" "jvm-free-mb" (:jvm-free-mb jvm)
+                   (when (pos? jvm-total-mb)
+                     (format "%.0f%%" (* 100.0 (/ (double (:jvm-free-mb jvm))
+                                                  (double jvm-total-mb))))))
         (stat-card "JVM Total" "jvm-total-mb" jvm-total-mb jvm-total-pct)
         (stat-card "JVM Max" "jvm-max-mb" jvm-max-mb)]
 
@@ -425,7 +426,7 @@ The dashboard view assembles eight cards into a 4-column, 2-row grid:
        (live-stats-style)])))
 ```
 
-The `gap-px` and `bg-border` classes create a shared-border effect: the container's border-colored background shows through a 1px gap between solid-surface cards, so the cards appear to share borders without any border elements. The verification rate ("83%") rides on the "Verified" card as a trending indicator; the JVM cards show used-as-percent-of-total and total-as-percent-of-max the same way.
+The `gap-px` and `bg-border` classes create a shared-border effect: the container's border-colored background shows through a 1px gap between solid-surface cards, so the cards appear to share borders without any border elements. The verification rate ("83%") rides on the "Verified" card as a trending indicator, and three JVM cards carry one the same way: used and free as a percentage of total, and total as a percentage of max.
 
 The `live-stats-style` function inlines the dashboard's animated-counter CSS at the bottom of the page, loaded from a classpath resource with the `defn-asset` macro that reads the file once in production and re-reads on every call in development (for hot-reload):
 
@@ -433,7 +434,7 @@ The `live-stats-style` function inlines the dashboard's animated-counter CSS at 
 (defn-asset live-stats-style "myapp/admin/views.css")
 ```
 
-The polling **JavaScript**, by contrast, is *not* inlined. It is an ordinary ES module, `static/js/admin-stats.js`, loaded once from the base layout's `<head>` alongside the other module scripts (`(script-tag "js/admin-stats.js" {:type "module"})`, from [the Hiccup views chapter](13-hiccup-views.md)). That is a deliberate split: an inline `<script>` in the page body would be forbidden by the strict Content-Security-Policy we add in [the asset pipeline chapter](24-asset-pipeline.md) -- `<main>` carries no inline scripts -- whereas a hashed-and-served module passes cleanly. The script runs on every page but no-ops unless it finds the dashboard's stat elements, so loading it globally costs nothing elsewhere. Inline CSS is fine under the policy; inline behavior is not.
+The polling **JavaScript**, by contrast, is *not* inlined. It is an ordinary ES module, `static/js/admin-stats.js`, loaded once from the base layout's `<head>` alongside the other module scripts (`(script-tag "js/admin-stats.js" {:type "module"})`, from [the Hiccup views chapter](13-hiccup-views.md)). What keeps it out of the page body is the morph lifecycle, not the policy. The dashboard is reached by morphing a fragment into the live document, and the dispatcher never runs `<script>` elements inside a morphed fragment (the live-polling section below leans on this), so a `<script>` in `<main>` would never fire on a morph navigation into `/admin`. A module in the `<head>` evaluates once when the document first loads and stays resident. The strict Content-Security-Policy from [the asset pipeline chapter](24-asset-pipeline.md) is not the constraint here: the same `defn-asset` machinery used for the CSS above registers a script asset's content hash into `script-src`, so a registered inline `<script>` would clear the policy cleanly. Morph execution is the real reason; the policy would have allowed it. The module runs on every page but no-ops unless it finds the dashboard's stat elements, so loading it globally costs nothing elsewhere.
 
 ## A note on the animated counters
 
@@ -586,7 +587,7 @@ And the magic links table, which includes the time-to-click metric:
      [:p.px-6.py-4.text-sm.text-text-secondary "No magic links yet."])])
 ```
 
-Unverified magic links show "Pending" in a warning color instead of a timestamp. Time-to-click shows a dash for links that have not been clicked yet.
+Where the users table renders a fixed cell for every row, this one carries the two fallbacks an unverified link forces: it shows "Pending" in a warning color instead of a verify timestamp, and a dash instead of a time-to-click nobody has produced yet. Both fall out of a plain `or` in the cell: the computed value when it exists, a placeholder when it does not.
 
 The date formatting uses `java.time.format.DateTimeFormatter` configured for the Europe/Amsterdam timezone:
 

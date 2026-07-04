@@ -4,18 +4,18 @@
 
 A full reload throws away *all* page state. It loses your scroll position (we patched that with the scroll stash), but it also blurs the field you were typing in, collapses every open `<details>`, and discards any in-progress form input. For the most common edit during day-to-day work -- a one-line tweak to a view function -- that is wildly disproportionate. You changed some markup; the browser tore down and rebuilt the entire page.
 
-And reload is not even the right answer for *every* kind of save. A CSS rebuild should not reload the page at all -- a stylesheet is declarative, so swapping it in place restyles the page with no flash and no lost state. Meanwhile a `.js` module edit genuinely *must* reload, for reasons rooted in how ES modules work. Different edits have genuinely different correctness constraints.
+And reload is not even the right answer for *every* kind of save. A CSS rebuild should not reload the page at all -- a stylesheet is declarative, so swapping it in place restyles the page with no flash and no lost state. Meanwhile a `.js` module edit genuinely *must* reload, for reasons rooted in how ES modules work. Different edits have different correctness constraints.
 
 The insight that drives this chapter is that **a save is not one thing.** A view edit, a non-view code edit, a JavaScript edit, and a CSS rebuild each have a *narrowest correct response*, and matching the response to the edit is what makes the loop feel instant instead of janky. We call the mapping the per-edit *delivery matrix*:
 
 | You edit... | Response |
 | --- | --- |
-| a view namespace (`*views.clj`) | morph `<main>` in place -- keeps scroll, focus, open `<details>` |
+| a view namespace (`*views.clj`) | morph `<body>` in place -- keeps scroll, focus, open `<details>` |
 | any other `.clj` | full reload, scroll restored |
 | a served `.js` module | full reload, scroll restored |
 | (Tailwind rebuilds `styles.css`) | hot-swap the stylesheet `<link>` -- no reload |
 
-This chapter rebuilds the watcher's dispatch around that matrix. It assumes the basic file watcher and WebSocket from [the live-reload chapter](06-live-reload.md), the server-rendered Hiccup views from [the Hiccup views chapter](13-hiccup-views.md), the client dispatcher's `fetchAndMorph` (idiomorph) from [the morph-dispatcher chapter](14-morph-dispatcher.md), the source inspector and its `inspector-load` loader from [the source inspector chapter](15-inspector.md), and the Tailwind setup from [the asset pipeline chapter](24-asset-pipeline.md).
+This chapter rebuilds the watcher's dispatch around that matrix. It assumes the basic file watcher and WebSocket from [the live-reload chapter](06-live-reload.md), the server-rendered Hiccup views from [the Hiccup views chapter](13-hiccup-views.md), the client dispatcher's `fetchAndMorph` (idiomorph) from [the morph-dispatcher chapter](14-morph-dispatcher.md), the source inspector and its `inspector-load` loader from [the source inspector chapter](15-inspector.md), and the Tailwind setup (`input.css`, the `@source` scan, the CLI) from [the Tailwind chapter](12-tailwind-styling.md).
 
 > **One artifact, two deliveries.** Dev and production build from the same committed sources through one pipeline; they differ in the HTTP envelope (URL shape, cache headers) and the build cadence (watch vs. one-shot), not in a second asset tree to reconcile. For CSS the bytes are literally identical -- the dev watch runs the same minified Tailwind build production does. For JavaScript the module graph is identical -- same files, same import specifiers -- but production esbuild-minifies each module, so dev serves the readable source and prod ships the compressed bytes. The dev story below is the "watch" cadence of that pipeline; [the asset pipeline chapter](24-asset-pipeline.md) covers the production cadence -- content hashing, minification, an import map, and immutable caching. Nothing here changes *what* ships between dev and prod; it only changes *when* and *how* it is delivered.
 
@@ -67,7 +67,7 @@ In [the live-reload chapter](06-live-reload.md), `load-changed-file` had a singl
 Read top to bottom, this *is* the matrix:
 
 - **`styles.css` changed.** This is Tailwind's output, not a file you edited by hand, so it gets a *debounced* CSS swap (`debounced-css-reload!`, covered below). No code loads; no page reloads.
-- **A `.clj` file changed.** This is the interesting branch. Instead of an unconditional `load-file`, we first ask `inspector-load/reload-changed!`, which returns truthy if the file was a *view* namespace. That truthiness becomes the `morphable?` flag passed to `after-refresh`. A view edit is morphable (the browser can morph `<main>`); any other `.clj` edit is not (full reload).
+- **A `.clj` file changed.** This is the interesting branch. Instead of an unconditional `load-file`, we first ask `inspector-load/reload-changed!`, which returns truthy if the file was a *view* namespace. That truthiness becomes the `morphable?` flag passed to `after-refresh`. A view edit is morphable (the browser can morph `<body>`); any other `.clj` edit is not (full reload).
 - **A `.js` (or other `.css`) asset changed.** A plain full reload via `dev-reload/reload!`.
 
 The cheap predicates are unchanged from before, with one addition for assets:
@@ -85,7 +85,7 @@ The cheap predicates are unchanged from before, with one addition for assets:
     (or (.endsWith s ".js") (.endsWith s ".css"))))
 ```
 
-Two refinements deserve their own attention: the failure path and the view/non-view split.
+The failure path and the view/non-view split both need a closer look.
 
 The **failure path** is new. A broken file -- a syntax error -- no longer just logs and moves on. It also sends a `reload-error` message to the browser via `notify-reload-error!`. The edit didn't take, so the browser was never refreshed, which means the page in front of you no longer matches the code you just saved. The `reload-error` message raises a soft "this page may be stale" banner so you know *why* the page and the code disagree. Fix the error, save again, and the next successful reload clears the banner on its own.
 
@@ -149,7 +149,7 @@ The better design decouples them. Tailwind v4 has its own watch mode: point it a
     p))
 ```
 
-Two non-obvious choices here:
+The two flags at the end of that command are the non-obvious part.
 
 **Why `--watch=always` and not plain `--watch`?** Plain `--watch` exits as soon as its stdin closes. That is fine when you run it by hand in a terminal, but a process you launch from a script or the REPL doesn't keep a TTY attached to its stdin, so plain `--watch` would exit almost immediately. `--watch=always` tells Tailwind to keep watching regardless of stdin. This is exactly the kind of thing you only discover by hitting it, and the flag is essential.
 
@@ -207,7 +207,7 @@ The fix is to debounce the CSS notification and fire it only *after* the writes 
       ^Runnable (fn [] (dev-reload/notify-css!)) 150 TimeUnit/MILLISECONDS)))
 ```
 
-Each `styles.css` event cancels the pending task and reschedules it ~150ms out. A burst of writes collapses into a single `notify-css!`, fired only once the file has been quiet for 150ms -- by which point the rebuilt CSS is fully on disk. One daemon-thread scheduler does all of it. This is the kind of small race that makes a decoupled watcher feel *unreliable* if you skip it, and rock-solid once it is in place.
+Each `styles.css` event cancels the pending task and reschedules it ~150ms out. A burst of writes collapses into a single `notify-css!`, fired only once the file has been quiet for 150ms -- by which point the rebuilt CSS is, in practice, fully on disk. (A quiet window is a heuristic, not a proof: the filesystem offers no "rebuild finished" event, so silence after the last write is the strongest done-signal available.) One daemon-thread scheduler does all of it. This is the kind of small race that makes a decoupled watcher feel *unreliable* if you skip it, and rock-solid once it is in place.
 
 ### Stable dev URLs with `no-store`
 
@@ -249,7 +249,7 @@ In dev the app serves the *source* `static/` tree directly at stable URLs with `
 
 ## WebSocket: from one message to four
 
-The live-reload chapter had exactly one outbound message: `reload`. The matrix needs more. The `dev-reload` namespace now emits three message types, and the `reload` message carries a `morphable` flag, so the browser has four behaviors to dispatch on.
+The live-reload chapter had exactly one outbound message: `reload`. The matrix needs more. The reload loop now spans three message types, and the `reload` message carries a `morphable` flag, so the browser has four behaviors to dispatch on. (The `/dev/ws` socket is shared infrastructure by this point in the book: [the source inspector chapter](15-inspector.md) already relays `connected`, `highlight`, and `open-result` over it. What follows is the reload loop's slice of the traffic.)
 
 ```clojure
 (defn notify-reload!
@@ -273,7 +273,7 @@ The live-reload chapter had exactly one outbound message: `reload`. The matrix n
   (send-json! (clients-of :browser) {:type "reload-error" :file file :error error}))
 ```
 
-So the server emits exactly three browser messages: `reload` (with a `morphable` flag), `css`, and `reload-error`. The `before-refresh`/`after-refresh` hooks in `hot-reload` are the thin shims that turn the load result into the first of those:
+So the reload loop emits exactly three browser messages: `reload` (with a `morphable` flag), `css`, and `reload-error`. The `before-refresh`/`after-refresh` hooks in `hot-reload` are the thin shims that turn the load result into the first of those:
 
 ```clojure
 (defn before-refresh
@@ -283,8 +283,9 @@ So the server emits exactly three browser messages: `reload` (with a `morphable`
 
 (defn after-refresh
   "Runs after a changed .clj file reloads: notify the browser. A view-ns edit is
-  morphable (state-preserving <main> morph); other .clj edits force a full reload.
-  CSS is rebuilt out-of-band by the Tailwind --watch process, not here."
+  morphable (state-preserving <body> morph -- view namespaces own the chrome as
+  well as <main>); other .clj edits force a full reload. CSS is rebuilt
+  out-of-band by the Tailwind --watch process, not here."
   [morphable?]
   (log/info "Code refresh completed, notifying browser..." {:morphable morphable?})
   (dev-reload/notify-reload! morphable?))
@@ -312,7 +313,7 @@ ws.onmessage = function (event) {
 };
 ```
 
-Three message types, four behaviors -- because `reload` forks on `morphable`.
+Three message types, four behaviors -- because `reload` forks on `morphable`. (One drift note for anyone reading `dev-reload.js` alongside this: the repo wraps this connection in a `connectDevReload()` function and defers the call while `document.prerendering` is true, because a prerendered page is not allowed to hold a WebSocket. The rule, and the speculative prerendering that makes it matter, belong to [the progressive-enhancement chapter](19-progressive-enhancement.md); the dispatch itself is exactly as shown.)
 
 <svg viewBox="0 0 760 250" role="img" aria-label="The delivery matrix: each kind of edit becomes one message and one browser response" style="width:100%;height:auto;font-family:monospace">
   <defs>
@@ -348,7 +349,7 @@ Three message types, four behaviors -- because `reload` forks on `morphable`.
     <path d="M 465 172 H 508"/><path d="M 465 210 H 508"/>
   </g>
   <g font-size="12.5">
-    <text x="520" y="62" fill="#2a9d8f">morph &lt;main&gt; — page state kept</text>
+    <text x="520" y="62" fill="#2a9d8f">morph &lt;body&gt; — page state kept</text>
     <text x="520" y="100" fill="#e07840">full reload — scroll restored</text>
     <text x="520" y="138" fill="#e07840">full reload — scroll restored</text>
     <text x="520" y="176" fill="#4a7fb5">hot-swap the &lt;link&gt; — no reload</text>
@@ -358,33 +359,43 @@ Three message types, four behaviors -- because `reload` forks on `morphable`.
 
 *The matrix as it runs: one watcher event becomes one of three message types, and the browser answers with the narrowest correct response -- morph, reload, stylesheet swap, or an honest warning that what you see may be stale.*
 
-### A view edit: morph `<main>` in place
+### A view edit: morph `<body>` in place
 
-The most common edit during day-to-day work is to a view function -- tweak markup, adjust a class, restructure a fragment. For that case a full reload is overkill and actively annoying: it loses scroll, collapses open `<details>`, blurs the field you were typing in. So a `morphable` reload morphs the new `<main>` into the live DOM instead, reusing the *production* navigation machinery:
+The most common edit during day-to-day work is to a view function -- tweak markup, adjust a class, restructure a fragment. For that case a full reload is overkill and actively annoying: it loses scroll, collapses open `<details>`, blurs the field you were typing in. So a `morphable` reload morphs the freshly rendered page into the live DOM instead, reusing the *production* navigation machinery:
 
 ```javascript
-// A view-ns edit: morph <main> in place via the dispatcher (state-preserving -- keeps
-// scroll, focus, open <details>). Falls back to a full reload on any failure, and
-// clears a prior stale banner since the morph won't navigate it away.
+// A view-ns edit: morph the whole <body> in place via the dispatcher
+// (state-preserving -- keeps scroll, focus, open <details>), sparing the
+// client-injected dev UI marked data-myapp-overlay (see below). Falls back to a
+// full reload on any failure, and clears a prior stale banner since the morph
+// won't navigate it away.
 function morphReload() {
   var bar = document.getElementById('myapp-stale-warning'); if (bar) bar.remove();
   import('/js/dispatcher.js')
     .then(function (m) {
       return m.fetchAndMorph(location.pathname + location.search,
-        { target: 'main', replaceUrl: true, focus: false, ignoreActiveValue: true });
+        { target: 'body', replaceUrl: true, focus: false, ignoreActiveValue: true,
+          morphCallbacks: {
+            beforeNodeRemoved: function (node) {
+              return !(node.nodeType === 1 && node.hasAttribute('data-myapp-overlay'));
+            },
+          } });
     })
     .catch(function () { window.location.reload(); });
 }
 ```
 
-The key point is that this is *not* a new mechanism. `fetchAndMorph` is the app's production interaction layer ([the morph-dispatcher chapter](14-morph-dispatcher.md)): it fetches the current URL, parses the response, and uses idiomorph to morph `<main>` in place, preserving form values, focus, and scroll. Dev hot-reload is just one more caller of it. A few options matter:
+The key point is that this is *not* a new mechanism. `fetchAndMorph` is the app's production interaction layer ([the morph-dispatcher chapter](14-morph-dispatcher.md)): it fetches the current URL, parses the response, and uses idiomorph to morph the requested target in place, preserving form values, focus, and scroll. Dev hot-reload is just one more caller of it. A few options matter:
 
-- `target: 'main'` -- morph only the main content region. The dev overlay scripts and the `<head>` are siblings of `<main>`, so an inner-HTML morph of `<main>` leaves them untouched. The overlay survives for free.
+- `target: 'body'` -- morph the whole page body, not just `<main>`. Why the widest target is the narrowest *correct* one is the decision below.
+- `morphCallbacks` with a `beforeNodeRemoved` veto -- refuses to remove any element carrying `data-myapp-overlay`, the mark every client-injected dev node wears. Also part of the decision below.
 - `ignoreActiveValue: true` -- this one is mandatory. Without it, idiomorph would clobber the value of the field you are currently typing in. With it, your in-progress input survives the morph.
 - `focus: false` -- a hot reload should not steal focus.
 - The `.catch(...)` falls back to a full `window.location.reload()` if anything goes wrong, so a morph failure degrades to the safe behavior rather than leaving a half-updated page.
 
 It also clears any leftover stale-warning banner first, because a morph (unlike a reload) does not navigate, so the banner would otherwise persist.
+
+> **Decision -- morph `<body>`, and teach the morph to spare the overlays.** An earlier cut of this function morphed `<main>`, the same region production navigation targets, and it looked like the narrowest correct response. It is not, because of what "view namespace" means in this app: `views.clj` owns the page chrome (`base-layout`, `top-nav`, the layout wrappers) as well as the content inside `<main>`. Edit the nav markup under a `<main>`-only morph and everything reports success -- the server reloads the namespace, sends `morphable: true`, the morph completes -- while the visible chrome stays stale, with no banner to say so. That is precisely the silent staleness this chapter builds `reload-error` to prevent, manufactured by the morph itself. So the target is the whole `<body>`; the `<head>` stays untouched, and the dispatcher copies the new `<title>` over as it does for every navigation. The widening has a cost the options list pays. The server's freshly rendered HTML never contained the dev tooling's client-injected nodes (the inspector's badge and highlight boxes, the construction-view panel), so to idiomorph they are cruft to delete. Every such node therefore carries `data-myapp-overlay`, and the `beforeNodeRemoved` callback vetoes their removal. The attribute is a contract: a future dev overlay that forgets to mark itself will be eaten by the next view save.
 
 After the morph, `fetchAndMorph` fires a `dispatcher:morphed` event. The source inspector listens for it to re-attach its highlight to the freshly morphed DOM -- [the source inspector chapter](15-inspector.md), which precedes this one, owns that behavior. Here it is enough to know the morph announces itself.
 
@@ -416,7 +427,7 @@ This raises the obvious question: **why does a `.js` edit force a full reload at
 >
 > We reject (a) and (b). `eval` requires `'unsafe-eval'` in the Content-Security-Policy, and our CSP forbids it on purpose ([the asset pipeline chapter](24-asset-pipeline.md)) -- adding `unsafe-eval` for a dev convenience would weaken the very policy the book is teaching. Re-importing under a fresh URL is CSP-legal but *unsound*: the old module's event listeners and `setInterval`s keep running with nothing to dispose them, so you accumulate zombie handlers on every edit. A real module-replacement system (HMR with accept/dispose hooks) is bundler-grade machinery, wildly disproportionate for the thin, mostly stateless client JS here. So (c), a full reload, is the *correct* behavior, not a fallback -- and the scroll stash makes it nearly seamless.
 
-The same singleton argument is why the dev scripts do not try anything clever for non-view `.clj` edits either: those can change server behavior in ways a `<main>` morph can't safely reflect (a changed route, a changed handler), so a full reload is the conservative choice.
+The same singleton argument is why the dev scripts do not try anything clever for non-view `.clj` edits either: those can change server behavior in ways a body morph can't safely reflect (a changed route, a changed handler), so a full reload is the conservative choice.
 
 ### A CSS rebuild: swap the `<link>`, no reload
 
@@ -474,6 +485,8 @@ The matrix adds two steps to the `hot-reload/start` [the live-reload chapter](06
 
 `(start!)` from the REPL still brings up the whole system in one call -- now with the Tailwind process and the view preload folded in.
 
+> **What the repo's `start` adds.** The listing is trimmed to this chapter's two additions. The repo's `start` also seeds a fresh dev database with the demo recipe graph (`seed/seed-if-empty!`, a no-op once recipes exist, so restarts never pile up duplicates) and, under the `:storm` alias only, enables the construction-view tracer -- the guarded block [the construction-view chapter](16-construction-view.md) added to this same function. Neither belongs to the reload loop, which is why they are elided here; `dev/hot_reload.clj` has the full body.
+
 ## The complete flow, per edit type
 
 To see how the pieces fit, here is the end-to-end story for each kind of edit:
@@ -482,7 +495,7 @@ To see how the pieces fit, here is the end-to-end story for each kind of edit:
 1. The WatchService wakes on `ENTRY_MODIFY` under `src/`.
 2. `load-changed-file` sees a `.clj` file; `inspector-load/reload-changed!` recognizes it as a view, loads it via `tools.reader`, and returns truthy.
 3. `after-refresh` is called with `morphable? = true`, so `notify-reload!` sends `{:type "reload" :morphable true}`.
-4. The browser's `morphReload` imports `dispatcher.js` and morphs the new `<main>` into place -- scroll, focus, and open `<details>` preserved. (If a class changed, Tailwind's watcher rebuilds CSS in parallel and a `css` message swaps the stylesheet a beat later.)
+4. The browser's `morphReload` imports `dispatcher.js` and morphs the new `<body>` into place, sparing the marked dev overlays -- scroll, focus, and open `<details>` preserved. (If a class changed, Tailwind's watcher rebuilds CSS in parallel and a `css` message swaps the stylesheet a beat later.)
 
 **You edit a handler or other non-view `.clj`:**
 1. Same wake-up; `reload-changed!` returns nil, so `load-file` runs.
@@ -504,12 +517,12 @@ The whole cycle -- from saving a file to seeing the updated page -- typically co
 
 ## Design decisions worth noting
 
-**Why decouple CSS from code reloads?** Rebuilding Tailwind on every `.clj` save couples two unrelated concerns and puts a CSS rebuild on the critical path of every code edit -- even edits that touch no markup. A long-lived `tailwindcss --watch=always` rebuilds incrementally and only when classes actually change, and it owns the stylesheet end to end. The file watcher merely *reacts* to its output with a debounced, no-reload `<link>` swap. The result is faster code reloads and a CSS path that never flickers the page.
+**Why decouple CSS from code reloads?** The argument is made in full above; what deserves stating here is the price. Decoupling means the stylesheet rebuild runs asynchronously to the code reload, and that asynchrony is what created the markup-before-CSS race the debounce exists to close. A 150ms settle window against a Tailwind run on every save is a good trade, but it is a trade, not a free win.
 
-**Why reuse `fetchAndMorph` for the morph path?** Idiomorph and `fetchAndMorph` already ship as the app's production interaction layer. Building a separate dev-only morph would mean a second, divergent code path to maintain and a second set of edge cases. Dev hot-reload is just one more caller of the production dispatcher, so the morph behaves in dev exactly as it does for real navigation.
+**Why reuse `fetchAndMorph` for the morph path?** Because a second, dev-only morph would be a divergent code path with its own edge cases. Riding the production dispatcher has its own cost, and it surfaced exactly once: the body morph needed a way to spare the client-injected overlays, so `fetchAndMorph` grew the `morphCallbacks` pass-through -- a generic option with, so far, a single caller. One extension point against a parallel implementation is the right side of that trade.
 
 **Why `requiring-resolve` for dev/prod separation?** The pattern -- a guarded `requiring-resolve` of `'dev-reload/websocket-handler` -- is a runtime classpath check: the resolve throws when the namespace is absent, and the catch reads that failure as "not present". It is structurally impossible to accidentally enable dev reload in production -- the code simply is not there. The base layout uses the same check to decide whether to emit the dev scripts at all, so none of this advanced machinery leaks to a production page.
 
 ## Where this leaves the loop
 
-The matrix is the argument: a save is not one thing, so each edit earns the lightest correct response. A view edit morphs `<main>` in place, preserving scroll, focus, and open `<details>`; a `.js` module or a non-view `.clj` triggers the full reload it actually needs, because an ES module is a URL-cached singleton that cannot be hot-swapped without the `eval` the CSP forbids; a Tailwind rebuild swaps the stylesheet `<link>` and nothing else, fired only once the rebuild settles. A failed reload raises a soft staleness banner rather than a silent stale page. The CSS watcher and the JVM share explicit lifecycle hardening, and the whole apparatus stays out of production by classpath separation -- so a loop this tight is paid for only in development and never shipped.
+The matrix is the argument: a save is not one thing, so each edit gets the lightest correct response. A view edit morphs the whole `<body>` in place, preserving scroll, focus, and open `<details>` while sparing the client-injected dev overlays; a `.js` module or a non-view `.clj` triggers the full reload an ES-module singleton actually requires; a Tailwind rebuild swaps the stylesheet `<link>` and nothing else, fired only once the rebuild settles. A failed reload raises a soft staleness banner rather than a silent stale page. The CSS watcher and the JVM share explicit lifecycle hardening, and the whole apparatus stays out of production by classpath separation -- so a loop this tight is paid for only in development and never shipped.

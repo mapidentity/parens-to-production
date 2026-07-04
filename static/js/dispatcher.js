@@ -73,8 +73,6 @@ function shouldEnhanceLink(a, e) {
   if (!href) return false;
   if (!sameOrigin(href)) return false;
   if (isFragmentOnly(a)) return false;
-  // Skip elements still wired by legacy htmx during migration.
-  if (a.hasAttributeNS && [...a.attributes].some(at => at.name.startsWith('hx-'))) return false;
   return true;
 }
 
@@ -82,7 +80,6 @@ function shouldEnhanceForm(form) {
   if (form.hasAttribute('data-no-enhance')) return false;
   if (!form.action) return false;
   if (!sameOrigin(form.action)) return false;
-  if ([...form.attributes].some(at => at.name.startsWith('hx-'))) return false;
   return true;
 }
 
@@ -153,6 +150,7 @@ function abortInflight(key) {
  *   key:         string for in-flight dedupe (default = url)
  *   focus:       boolean — move focus to <main> after morph (default = pushUrl)
  *   ignoreActiveValue: boolean — pass through to idiomorph
+ *   morphCallbacks: idiomorph callbacks object — pass through to the morph
  */
 export async function fetchAndMorph(url, opts = {}) {
   const {
@@ -164,6 +162,7 @@ export async function fetchAndMorph(url, opts = {}) {
     key,
     focus,
     ignoreActiveValue = false,
+    morphCallbacks,
   } = opts;
 
   // Show the pending bar for real navigations/updates, but not for live-typing
@@ -186,9 +185,11 @@ export async function fetchAndMorph(url, opts = {}) {
       });
     } catch (err) {
       if (err.name === 'AbortError') return;
-      // Network error: fall back to native navigation. For form submits
-      // the caller has already prevented default; do a synthetic full nav
-      // so the user isn't stranded.
+      // Network error. A GET falls back to a real navigation so the user is
+      // never stranded on a dead link. A POST deliberately does nothing: a
+      // native nav can't carry the body, and re-issuing the request risks a
+      // duplicate write (the error may have struck after the server processed
+      // it), so we leave the form and its typed-in values on screen for a retry.
       if (method === 'GET') window.location.assign(url);
       return;
     }
@@ -235,7 +236,9 @@ export async function fetchAndMorph(url, opts = {}) {
     // updates (ignoreActiveValue), where per-keystroke animation would be noise,
     // and when the user has asked for reduced motion.
     const applyMorph = () => {
-      morph(targetEl, fragmentEl, { morphStyle: 'innerHTML', ignoreActiveValue });
+      morph(targetEl, fragmentEl,
+        { morphStyle: 'innerHTML', ignoreActiveValue,
+          ...(morphCallbacks ? { callbacks: morphCallbacks } : {}) });
       // morphed region carries its own trace-id (see note above); dev-only.
       if (traceId) targetEl.setAttribute('data-myapp-trace-id', traceId);
     };

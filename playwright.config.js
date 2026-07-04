@@ -6,6 +6,11 @@ module.exports = {
   use: {
     baseURL: 'http://localhost:9876',
     locale: 'en-US',
+    // Diagnostics on failure only (free on green runs): a trace is a full
+    // recording of the run — DOM snapshots, network, console — replayable
+    // with `npx playwright show-trace`; the screenshot shows the final state.
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
   },
   projects: [
     {

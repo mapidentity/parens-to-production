@@ -13,7 +13,7 @@ Several tools address this, and they are worth putting side by side before commi
 - A **VM** (Vagrant) reproduces a whole machine, but it is heavy, slow to boot, and awkward on Apple Silicon.
 - **Docker Compose on its own** pins the services and their images, but not the *editor* side -- the REPL, the extensions, the in-container shell where you actually work.
 
-A **devcontainer** is Docker Compose plus that editor integration, defined as code in the repository. It pins the toolchain *and* the services, *and* it drops your editor inside the same container the app runs in -- and that last part is why we choose it for a REPL-driven Clojure workflow specifically. The nREPL, the file watcher, and the app all live in one place, so "connect your editor" and "run the app" are the same environment rather than two that have to be kept in step. The cost is a hard dependency on Docker and on an editor that speaks the devcontainer protocol (VS Code, or the JetBrains and `devcontainer`-CLI clients); a team already all-in on Nix has a defensible different answer. We take devcontainers because they reproduce the *whole* topology -- tooling, services, networking, and editor -- from one definition.
+A **devcontainer** is Docker Compose plus that editor integration, defined as code in the repository. It pins the toolchain and the services, and it drops your editor inside the same container the app runs in. That last part is why we choose it for a REPL-driven Clojure workflow specifically: the nREPL, the file watcher, and the app all live in one place, so "connect your editor" and "run the app" are the same environment rather than two that have to be kept in step. The cost is a hard dependency on Docker and on an editor that speaks the devcontainer protocol (VS Code, or the JetBrains and `devcontainer`-CLI clients); a team already all-in on Nix has a defensible different answer. We take devcontainers because they reproduce the *whole* topology -- tooling, services, networking, and editor -- from one definition.
 
 A complete devcontainer setup for a Clojure SaaS application has six parts:
 
@@ -101,7 +101,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 ```
 
-A handful of these earn their place for reasons that recur later in the book: `ripgrep` and `fd-find` make searching a large codebase fast, `inotify-tools` backs the file-watching the live-reload chapter depends on, `libnss3-tools` provides the `certutil` that imports our development CA into Chromium's certificate store, and `rlwrap` gives the Clojure REPL readline support. The rest are the ordinary comforts of a shell you have to live in -- the kind you only miss when they are absent at the wrong moment. (The listing is an excerpt: the repository's list runs longer with more of the same species -- `strace`, `iotop`, `nethogs`, `valgrind`, locale and apt plumbing -- and a later layer installs the `zprint` binary that [the build-hardening chapter](04-build-hardening.md)'s formatter calls. `.devcontainer/Dockerfile` is the full inventory.)
+Several of these return later in the book: `ripgrep` and `fd-find` make searching a large codebase fast, `inotify-tools` backs the file-watching the live-reload chapter depends on, `libnss3-tools` provides the `certutil` that imports our development CA into Chromium's certificate store, and `rlwrap` gives the Clojure REPL readline support. The rest are the ordinary comforts of a shell you have to live in, the kind you only miss when they are absent at the wrong moment. (The listing is an excerpt. The repository's list runs longer with more of the same species -- `strace`, `iotop`, `nethogs`, `valgrind`, locale and apt plumbing -- and the full file carries whole layers this chapter does not walk: the `zprint` binary that [the build-hardening chapter](04-build-hardening.md)'s formatter calls, Google Chrome with a pinned `chromedriver`, and agent tooling (Claude Code, a Clojure MCP server). Chrome is not idle cargo; it is the browser the Caddy section below puts on your screen. `.devcontainer/Dockerfile` is the full inventory.)
 
 ### Java (Eclipse Temurin)
 
@@ -164,18 +164,21 @@ RUN mkdir -p "$NVM_DIR" \
     && ln -s "$NVM_DIR/versions/node/$(nvm version)/bin/npm"  /usr/local/bin/npm \
     && ln -s "$NVM_DIR/versions/node/$(nvm version)/bin/npx"  /usr/local/bin/npx \
     && npm install -g @playwright/test tailwindcss @tailwindcss/cli \
+    && ln -s "$NVM_DIR/versions/node/$(nvm version)/bin/playwright"  /usr/local/bin/playwright \
+    && ln -s "$NVM_DIR/versions/node/$(nvm version)/bin/tailwindcss" /usr/local/bin/tailwindcss \
+    && ln -s "$NVM_DIR/versions/node/$(nvm version)/lib/node_modules" /usr/local/lib/node_modules \
     && playwright install --with-deps
 
 ENV NODE_PATH=/usr/local/lib/node_modules
 ```
 
-The symlinks from `/usr/local/bin/` are important. `nvm` manages Node through shell functions that only work in login shells, but many tools (VS Code tasks, CI scripts, `make`) run in non-login shells. The symlinks ensure `node`, `npm`, and `npx` are available everywhere.
+The symlinks into `/usr/local/` are important. `nvm` manages Node through shell functions that exist only in a shell that has sourced `nvm.sh`, but many tools (VS Code tasks, CI scripts, `make`) spawn shells that never do. The first three symlinks put `node`, `npm`, and `npx` on the default `PATH`, the next two do the same for the installed CLIs, and the last links the global module tree to `/usr/local/lib/node_modules`, so the `NODE_PATH` set on the final line names a real directory rather than one buried under an `nvm` version string. (The repository's copy installs two more globals this listing trims, along with their symlinks: `@playwright/mcp`, a browser-automation server for agent tooling, and `@lhci/cli`, the Lighthouse CI runner [the Lighthouse chapter](25-lighthouse.md) drives.)
 
 The `playwright install --with-deps` line downloads browser binaries (Chromium, Firefox, WebKit) and their system dependencies. This is a large download, but doing it at build time means browser tests run instantly during development.
 
 ### A note on pinning
 
-One honesty is owed here, because this chapter argues for reproducibility and these installs don't fully deliver it. The JDK comes from apt, Babashka and clj-kondo from their `master` install scripts, the Clojure CLI from `latest`, Node from `--lts`, and -- later in `compose.yml` -- Mailpit from an image `:latest` tag. Each pulls *a* current version rather than *a specific* one, so two builds months apart can drift. That is the single place this chapter relaxes the principle it spends its length defending, and it does so deliberately, to keep the listings short and the moving parts legible. To close the gap for an image you can rebuild bit-for-bit, pin every one: pass `--version` to the Babashka and clj-kondo install scripts, install the Clojure CLI and Node at named versions, and tag `axllent/mailpit` with a release instead of `:latest`. The rule is to pin; we are naming the spot where the example chooses brevity over it rather than letting you discover the drift yourself.
+Honesty requires naming a gap: this chapter argues for reproducibility, and these installs do not fully deliver it. The JDK comes from apt, Babashka and clj-kondo from their `master` install scripts, the Clojure CLI from `latest`, Node from `--lts`, and, later in `compose.yml`, Mailpit from an image `:latest` tag. Each pulls *a* current version rather than *a specific* one, so two builds months apart can drift. This is the single place the chapter relaxes the principle it spends its length defending, and it does so deliberately, to keep the listings short and the moving parts legible. To close the gap for an image you can rebuild bit-for-bit, pin every one: pass `--version` to the Babashka and clj-kondo install scripts, install the Clojure CLI and Node at named versions, and tag `axllent/mailpit` with a release instead of `:latest`. The rule is to pin; we are naming the spot where the example chooses brevity over it rather than letting you discover the drift yourself.
 
 ## devcontainer.json
 
@@ -199,7 +202,7 @@ The `devcontainer.json` file tells VS Code how to build and connect to the devel
 }
 ```
 
-Five of its fields carry decisions:
+Field by field:
 
 **`dockerComposeFile` points to `compose.yml`** at the project root, not a standalone Dockerfile. This is important. When you use Compose, VS Code starts the entire service topology -- your app container plus Caddy, Mailpit, and any other services -- in one operation. You do not need to remember to start supporting services separately.
 
@@ -207,9 +210,9 @@ Five of its fields carry decisions:
 
 **`workspaceFolder` is `/workspace`**, where the project source gets mounted.
 
-**Calva is the load-bearing extension.** Calva provides Clojure language support, REPL integration, structural editing (paredit), and inline evaluation. It connects to your running application's nREPL server, giving you the ability to evaluate code in the context of your live application, not just a standalone REPL. The repo also installs **Joyride** alongside it -- VS Code scripted in ClojureScript -- but Calva is the one this book leans on.
+**Calva is the extension that matters.** Calva provides Clojure language support, REPL integration, structural editing (paredit), and inline evaluation. It connects to your running application's nREPL server, giving you the ability to evaluate code in the context of your live application, not just a standalone REPL. The repo also installs **Joyride** alongside it -- VS Code scripted in ClojureScript -- but Calva is the one this book leans on.
 
-**`remoteUser` is `root`.** In a devcontainer that is throwaway by nature, running as root avoids permission headaches with mounted volumes and installed tools. This is a development environment, not production.
+**`remoteUser` is `root`.** In a devcontainer that is throwaway by nature, running as root means nothing the container does is ever denied: writes to mounted volumes, trust-store imports, globally installed tools. The cost depends on the engine underneath. On Docker Desktop (macOS, Windows), file sharing maps ownership between its VM and the host, so container-root writes land in the repo as your own user and the choice is free; a rootless engine on Linux behaves the same way, because container root maps to your host UID. On a rootful native Linux engine there is no mapping: files the container creates in the bind mount come out root-owned on the host, and host-side `git` meets them. That is the case the base image's `vscode` user exists for -- the devcontainer tooling remaps its UID to match yours -- so on such a host, set `remoteUser` to `vscode` and keep everything else. This is a development environment, not production; the field buys convenience, and which value is convenient is a property of the host.
 
 ## compose.yml
 
@@ -241,9 +244,9 @@ services:
 
 The app container waits for the `certificates` service to complete (more on that below), then runs `importcerts.sh` to trust the development CA, and finally `tail -f /dev/null` to keep the container running. VS Code attaches to this container and takes over from there.
 
-The `:cached` mount flag on the workspace volume tells Docker to optimize for read performance on the host side. This makes file access noticeably faster on macOS, where Docker's filesystem bridging adds latency.
+The `:cached` flag on the workspace mount is a consistency hint aimed at Docker Desktop's file sharing: it declares the host's view of the files authoritative and allows the container's view to lag behind it, which bought faster reads inside the container in the era when macOS bind mounts went through `osxfs`. Docker Desktop's current sharing layer (VirtioFS) accepts the flag and ignores it, and a native Linux engine never consulted it -- a bind mount there is the same filesystem, not a synchronized copy. The flag stays because it costs nothing and still helps anyone on an older Docker Desktop.
 
-The container joins two networks: `default` (for inter-service communication) and `myapp-network` (a dedicated bridge network). This separation keeps the service topology clean and allows the Caddy reverse proxy to reach the application.
+The container joins two networks. `default` is where the `.lan` names resolve (they are aliases on that network, defined with the Caddy service below), so the app's own outbound calls to `https://myapp.lan` work. `myapp-network` is the backend network it shares with Caddy and Mailpit, the one on which `mailpit:1025` accepts SMTP. Why the topology is split at all is the [Networks](#networks) section's subject.
 
 ### TLS certificate generation
 
@@ -312,7 +315,7 @@ for CN in $HOSTS; do
 done
 ```
 
-One line ties the script to the compose service above: `SCRIPT_DIR`. The container's working directory is the certificates *volume*, but `openssl.cnf` is mounted beside the script in `/opt` -- so the config must be read from the script's own directory, not the current one. (The listing is lightly abridged: the repository's copy also dumps each certificate with `x509 -text` for inspection and exports JKS/PKCS12 keystores alongside the PEMs.)
+One line ties the script to the compose service above: `SCRIPT_DIR`. The container's working directory is the certificates *volume*, but `openssl.cnf` is mounted beside the script in `/opt` -- so the config must be read from the script's own directory, not the current one. (The listing is lightly abridged: the repository's copy also dumps each certificate with `x509 -text` for inspection and exports JKS/PKCS12 keystores alongside the PEMs. The keystore export is also why the one-shot container runs on a JRE image rather than a bare shell image: `keytool` ships with Java.)
 
 The OpenSSL configuration for the SAN (Subject Alternative Name) extension is minimal:
 
@@ -400,9 +403,13 @@ Caddy serves as the ingress layer, providing HTTPS termination and routing to ba
       myapp-network:
 ```
 
-The `aliases` on the default network are the key detail. They make `myapp.lan` and `mailpit.lan` resolve to the Caddy container from within the Docker network. Your Clojure application can call `https://myapp.lan` and it works -- the request goes to Caddy, which terminates TLS and proxies to the app container.
+The `aliases` on the default network are the key detail. They make `myapp.lan` and `mailpit.lan` resolve to the Caddy container from within the Docker network. Your Clojure application can call `https://myapp.lan` and it works: the request goes to Caddy, which terminates TLS and proxies to the app container.
 
-We use `expose` (not `ports`) because we access services through the Docker network, not from the host. This avoids port conflicts with anything else running on your machine.
+We use `expose` (not `ports`), and the choice decides more than it appears to. `ports` would publish container ports on the host; `expose` merely documents them inside the Docker network. Nothing in this file publishes anything, so the topology can never collide with whatever else is listening on your machine. But the same choice means the `.lan` names resolve *only inside* that network: your host's browser has never heard of `myapp.lan`, and no host port reaches Caddy. That raises the question this section owes an answer to: how do you actually look at the running app?
+
+The answer this repository is built around keeps the browser inside the topology, where the names resolve and the CA is already trusted. The app image installs Google Chrome, `importcerts.sh` has put the development CA into its NSS store, and `compose.yml` hands the container the host's `DISPLAY` together with a `/tmp/.X11-unix` mount. On a Linux host, allow the connection once with `xhost +local:` (the comment in `compose.yml` says so), then run `google-chrome --no-sandbox https://myapp.lan` from a devcontainer terminal: a window opens on your own screen showing the app through the real HTTPS front door. (`--no-sandbox` is a cost of the `remoteUser: root` decision above; Chrome refuses to run its sandbox as root.) The `browser` service the [Networks](#networks) section describes is the same idea packaged as a separate, locked-down container. This is a Linux-host mechanism by design: sharing the X socket is native there and contrived anywhere else.
+
+Everywhere else, the path is the editor. VS Code forwards ports out of the container it is attached to: it detects the server listening on 3000 and maps it, so `http://localhost:3000` in the host browser reaches the app on macOS and Windows exactly as on Linux (the `forwardPorts` field of `devcontainer.json` exists to pin that forwarding explicitly; we rely on detection). Be clear about what that window is: plain HTTP straight into the application, bypassing Caddy, so no TLS and none of what this chapter set TLS up *for*. The `secure` session cookie of [the web-server chapter](05-web-server.md) is never sent over it, so authenticated flows will not work there. It is a quick check, not the front door. Putting your host browser on `https://myapp.lan` itself takes exactly the per-machine state this chapter refuses: a `ports:` mapping publishing Caddy's 443, `/etc/hosts` entries pointing the `.lan` names at `127.0.0.1`, and `rootCA.crt` trusted in the host's certificate store. Nothing stops you, but every item on that list lives outside the repository, unenforced by the definition -- the exact disease this chapter set out to cure. The checked-in answer keeps the browser in the container instead.
 
 The Caddyfile itself is straightforward -- shown here as this chapter creates it; [the asset-pipeline chapter](24-asset-pipeline.md) later adds a block of request-invariant security headers (HSTS, `nosniff`, COOP/CORP) and an immutable-cache rule for the vendored morphing library:
 
@@ -469,7 +476,7 @@ Mailpit is an SMTP server and web UI that captures outgoing email. Your applicat
 
 In your Clojure application configuration, you point the SMTP host to `mailpit` and port to `1025`. Every email your application sends shows up in the Mailpit web UI instantly, with full HTML rendering, headers, and attachment inspection.
 
-The health check ensures that services depending on Mailpit (indirectly, through your application) do not start sending emails before Mailpit is ready to receive them.
+Be precise about what the health check does, because Compose healthchecks are widely misread. It gates nothing in this file: a healthcheck affects startup ordering only when some other service declares `depends_on` with `condition: service_healthy`, and nothing here depends on Mailpit. What it buys is visibility -- `docker compose ps` reports the container `healthy` or `unhealthy`, so when a test email fails to arrive, the first diagnostic is one command. And if a service that sends mail at startup ever joins the file, the condition to wait on is already defined.
 
 ### Networks
 
@@ -479,9 +486,11 @@ networks:
     driver: bridge
 ```
 
-A dedicated bridge network keeps inter-service communication clean. All services that need to talk to each other join this network. Docker's built-in DNS resolves service names to container IPs automatically, so `mailpit:1025` and `myapp:3000` just work.
+Only `myapp-network` is declared here; the other network the services join, `default`, is the one Compose creates for every project, and a service that names no networks (the `certificates` one-shot, the `browser` service below) lands on it automatically. The split follows from how Docker scopes names. Aliases resolve per network, so the `.lan` front-door names live on `default`, the network of the things that *browse*: the app container, whose outbound calls use `https://myapp.lan`, and the browser. `myapp-network` is the back side, where plain service names and raw ports are spoken -- Caddy proxies to `myapp:3000` and `mailpit:8025` there, the app hands SMTP to `mailpit:1025`, and Docker's built-in DNS resolves each name to a container IP.
 
-The listings above are the load-bearing services. The repo's `compose.yml` carries one more the book does not walk: a containerized **`browser`** service wired to the host X server (a `DISPLAY` environment variable and a `/tmp/.X11-unix` mount, mirrored on the app container) so a real Chromium can render the running app from inside the topology -- useful for the construction-view tooling later in the book. It is orthogonal to the dev loop here; see the file for the exact wiring.
+The decision in this block is that Mailpit joins *only* the back network. Its two ports are an unencrypted web UI and an open SMTP socket, and keeping it off `default` means the only services that can reach them are the two with a reason to: the app for SMTP, Caddy for the UI proxy. Everything else, the browser included, sees Mailpit only as `https://mailpit.lan`, through TLS. A single flat network would behave identically right up until something dialed a raw port it should not; the split leaves the deliberate paths as the only paths.
+
+One service in the repo's `compose.yml` has gone unlisted: **`browser`**, the locked-down Chromium container the Caddy section pointed at. It carries the same X11 wiring as the app container (`DISPLAY` plus the `/tmp/.X11-unix` mount), imports the development CA on startup, drops capabilities a browser has no business holding (`MKNOD`, `NET_RAW`, `AUDIT_WRITE`), and, naming no networks, sits on `default`, where its only route to anything is the TLS front door. `browser/Dockerfile` has the exact wiring.
 
 ## VS Code and Calva integration
 
@@ -493,4 +502,4 @@ Start the REPL (`clojure -M:dev:repl`; [the web-server chapter](05-web-server.md
 
 What all of this purchases is a single answer to the question every contributor otherwise answers differently: *what does it take to run this?* Open the project and the pieces assemble in order on their own -- the `certificates` container mints the CA and per-host certificates and exits, the app container trusts them and waits, Caddy picks them up and serves HTTPS on `myapp.lan` and `mailpit.lan`, Mailpit comes up on SMTP, and VS Code attaches with Calva connected to the running REPL. None of it is a sequence you have to remember, because all of it is defined in files checked into the repository. The next time you -- or anyone else -- open the project, the environment is identical down to the JDK, the Node version, the certificates, and the proxy.
 
-That is the gap a setup script never closes. "Which version of Java do I need?", "I can't get the certificates to work" -- the questions a README leaves to the reader, the definition answers in advance. And because it mirrors production from the first commit, the bugs that only surface under HTTPS, real TLS, and a reverse proxy surface here, on your machine, rather than after deployment. That is the foundation the rest of the book rests on: Datomic, the application's structure, authentication, the asset pipeline, and the deploy are each built on an environment that already looks like the one it will ship into.
+A setup script never closes that gap. "Which version of Java do I need?", "I can't get the certificates to work" -- the questions a README leaves to the reader, the definition answers in advance. And because it mirrors production from the first commit, the bugs that only surface under HTTPS, real TLS, and a reverse proxy surface here, on your machine, rather than after deployment. That is the foundation the rest of the book rests on: Datomic, the application's structure, authentication, the asset pipeline, and the deploy are each built on an environment that already looks like the one it will ship into.

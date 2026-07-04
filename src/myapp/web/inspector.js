@@ -53,12 +53,13 @@
       'font:11px/1.4 ui-monospace,monospace;padding:4px 8px;border-radius:4px;opacity:0;transition:opacity .15s}' +
     '.fy-insp-toast.show{opacity:1}' +
     // While inspecting, a click does something different (jump to source), so
-    // signal it with a magnifying-glass cursor everywhere — except our own UI.
+    // signal it with a magnifying-glass cursor everywhere — except dev-overlay
+    // UI (ours and siblings like the construction view), which gets a normal
+    // cursor, and our clickable controls, which get pointer (that rule comes
+    // last so it wins the tie against the overlay rule).
     'html.fy-insp-on,html.fy-insp-on *{cursor:zoom-in !important}' +
-    'html.fy-insp-on .fy-insp-badge,html.fy-insp-on .fy-insp-crumb{cursor:pointer !important}' +
-    // The construction-view overlay is our own UI, not inspectable page — give it a
-    // normal cursor (a higher-specificity rule beats the zoom-in above).
     'html.fy-insp-on [data-myapp-overlay],html.fy-insp-on [data-myapp-overlay] *{cursor:default !important}' +
+    'html.fy-insp-on .fy-insp-badge,html.fy-insp-on .fy-insp-crumb{cursor:pointer !important}' +
     // Reverse highlight (editor cursor → element), shown only while inspecting;
     // soft frame on every component instance, strong box + pulse on the element.
     '.fy-insp-zoom{position:fixed;z-index:2147483640;pointer-events:none;' +
@@ -77,7 +78,13 @@
   var label = el('div', 'fy-insp-label');
   var badge = el('div', 'fy-insp-badge');
   var toast = el('div', 'fy-insp-toast');
-  [box, label, badge, toast].forEach(function (n) { document.body.appendChild(n); });
+  // data-myapp-overlay is the shared contract for client-injected dev UI: the
+  // server's HTML never contained these nodes, so the dev-reload body morph
+  // must not remove them, and sibling overlays don't swallow each other's clicks.
+  [box, label, badge, toast].forEach(function (n) {
+    n.setAttribute('data-myapp-overlay', '1');
+    document.body.appendChild(n);
+  });
 
   function el(tag, cls) { var n = document.createElement(tag); n.className = cls; return n; }
   // Treat our own UI AND any sibling dev overlay (e.g. the construction view,
@@ -395,7 +402,12 @@
       document.querySelectorAll('[' + attr + '="' + attrEsc(val) + '"]')) : [];
   }
   function grow(pool, cls, n) {
-    while (pool.length < n) { var b = el('div', cls); document.body.appendChild(b); pool.push(b); }
+    while (pool.length < n) {
+      var b = el('div', cls);
+      b.setAttribute('data-myapp-overlay', '1');   // body-mounted dev UI: survives the dev-reload body morph
+      document.body.appendChild(b);
+      pool.push(b);
+    }
     return pool;
   }
   function place(boxEl, r) {

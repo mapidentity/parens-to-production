@@ -565,7 +565,16 @@
       cell.title = s.name + (s.instance != null ? "  #" + s.instance : "") + "  ·  " + s.ns + "  — click to select";
       cell.addEventListener("mouseenter", function () { peekFrame(s); });
       cell.addEventListener("mouseleave", function () { peekClear(); });
-      cell.addEventListener("click", function (e) { e.stopPropagation(); openSrc(s["call-src"] || s.src); setSelected(id, true); });
+      cell.addEventListener("click", function (e) {
+        e.stopPropagation(); openSrc(s["call-src"] || s.src); setSelected(id, true);
+        // Icicle focus: light the clicked frame's subtree + ancestor path and dim
+        // the other overview cells. dimRows stays false — the tree keeps full
+        // contrast; only value-threading (which isolates a flow) dims rows too.
+        var set = {};
+        (function sub(x) { set[x] = true; var sp = trace.spans[x]; if (sp) childrenOf(sp).forEach(sub); })(id);
+        for (var p = parentById[id]; p != null; p = parentById[p]) set[p] = true;
+        applyDOI(set, false);
+      });
       icicleCellById[id] = cell; cont.appendChild(cell);
       var kids = childrenOf(s), sizes = kids.map(function (c) { return subtreeSize(c, cache); });
       var sum = sizes.reduce(function (a, b) { return a + b; }, 0), cx = x;
@@ -577,10 +586,10 @@
     cont.style.height = Math.min((maxD + 1) * rowH + 2, 240) + "px";   // size to content (full depth), capped → scroll if very deep
     return cont;
   }
-  // ---- degree-of-interest focus+context (value-threading) ----
+  // ---- degree-of-interest focus+context (icicle clicks + value-threading) ----
   // dim the icicle cells outside `set`; only dim the TREE ROWS too when dimRows is
-  // set (value-threading isolates a flow). The page-hovered row is never dimmed so
-  // inspect-sync stays clearly visible.
+  // set (value-threading isolates a flow; an icicle click keeps the tree fully
+  // readable). The page-hovered row is never dimmed so inspect-sync stays visible.
   function applyDOI(set, dimRows) {
     Object.keys(trace.spans).forEach(function (id) {
       var on = !set || set[id];

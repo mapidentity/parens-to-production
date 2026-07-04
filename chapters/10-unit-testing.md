@@ -2,7 +2,7 @@
 
 You have a web app. It loads config, connects to Datomic, defines routes, renders pages. It works when you try it in the browser. But "works when I try it" is not a testing strategy. The moment you refactor a handler or change a route, you need something that tells you -- in seconds -- whether you broke anything.
 
-This chapter covers the testing infrastructure we put in place early: a test helpers module with fixtures for fresh in-memory databases and deterministic config, a set of initial tests for configuration and routing, a coverage tool with a minimum threshold, and a shell script that ties it all together. None of this is exotic. That is the point. Setting up boring, reliable test infrastructure early pays dividends for every feature that follows.
+This chapter covers the testing infrastructure we put in place early: a test helpers module with fixtures for fresh in-memory databases and deterministic config, a set of initial tests for configuration and routing, a coverage tool with a minimum threshold, and the two `deps.edn` aliases that run it all. None of this is exotic. That is the point. Setting up boring, reliable test infrastructure early pays dividends for every feature that follows.
 
 ## The testing philosophy: fresh state per test
 
@@ -14,7 +14,7 @@ This matters more than it sounds. When tests share a database, you get two failu
 
 ## The test helpers module
 
-All shared test infrastructure lives in a single file: `test/myapp/test_helpers.clj`. It provides three things -- database fixtures, deterministic config, and a request builder.
+All shared test infrastructure lives in a single file: `test/myapp/test_helpers.clj`. It provides database fixtures, deterministic config, and a request builder.
 
 ```clojure
 (ns myapp.test-helpers
@@ -28,7 +28,7 @@ All shared test infrastructure lives in a single file: `test/myapp/test_helpers.
     [myapp.db.schema :as schema]))
 ```
 
-This `ns` form is the slice this chapter builds on; the file grows two requires beyond it as the app does. The request builder gains user resolution from the database once the auth chapters exist (a `myapp.auth.core` require), and a second database -- ours gains an analytics DB in [the admin dashboard chapter](23-admin-dashboard.md) -- takes one more require and one more fixture, shown together [below](#a-second-database-the-analytics-fixture). In the repo all of these are already in place.
+This `ns` form is the slice this chapter builds on; the file grows two requires beyond it as the app does. Once the auth chapters exist, the request builder resolves users from the database, which adds a `myapp.auth.core` require. When the app gains a second database (ours gains an analytics DB in [the admin dashboard chapter](23-admin-dashboard.md)), that adds a `myapp.analytics.db` require, a parallel fixture (shown [below](#a-second-database-the-analytics-fixture)), and an `:analytics-database-uri` key in the `test-config` map. In the repo all of these are already in place.
 
 ### The database fixture
 
@@ -177,6 +177,8 @@ These tests are straightforward, but they catch real problems:
 - `session-key-is-16-bytes` verifies the crypto key size constraint. Ring's default cookie store encrypts with AES-128, which needs a 16-byte key; a 15-byte key would cause a cryptic runtime error.
 - `get-config-nested-path` and `get-config-missing-key` verify the `get-config` accessor works for both present and absent keys. Note how these tests use `with-redefs` directly to set up minimal config -- they do not need the full test fixtures.
 
+The repo's `config-test` namespace carries one test beyond this listing: `prod-without-session-key-fails-fast`, which asserts that loading the `:prod` profile with no key material in the environment throws rather than falling back to a random key. That is the refuse-to-start policy from [the web server chapter](05-web-server.md), pinned down as a test.
+
 ## Example test: routes
 
 This section builds one self-contained example to teach a *technique*: data-driven route testing. In the companion repo the web layer is covered by `test/myapp/web/handler_smoke_test.clj` (each route returns a sane status) and `test/myapp/web/security_test.clj` (the CSP, auth gates, and escaping); the `routes-test` namespace below is the simplest place to show the pattern. Adapt its route list to whatever your app serves.
@@ -321,20 +323,7 @@ Why 50% and not 80% or 100%? At this stage of the project, the app has config, r
 
 ## Running the tests
 
-Two commands cover the two modes, both run from the project root:
-
-```bash
-clojure -X:test      # fast: run the suite, no coverage
-clojure -M:coverage  # run under Cloverage, enforce the coverage threshold
-```
-
-`clojure -X:test` is the quick feedback loop during development; `clojure -M:coverage` is what the commit gate and CI run, because it both runs the tests and fails if coverage drops below the threshold. The companion repo calls these commands directly rather than wrapping them in a script.
-
-If tests pass and coverage is above the threshold, exit code 0; otherwise non-zero. Because CI runs the very same command, local and CI behavior are identical.
-
-## The `deps.edn` test alias
-
-For running tests without coverage (faster feedback during development), there is also the `:test` alias:
+The `:coverage` alias is one of two test entry points in `deps.edn`. The other is `:test`, which runs the suite without instrumentation:
 
 ```clojure
 :test {:extra-paths ["test"]
@@ -346,21 +335,26 @@ For running tests without coverage (faster feedback during development), there i
        :exec-fn cognitect.test-runner.api/test}
 ```
 
-This uses Cognitect's test runner, which discovers and runs all `_test.clj` files under `test/`:
+This uses Cognitect's test runner, which discovers and runs all `_test.clj` files under `test/`. The alias declares both of the CLI's invocation styles. `:main-opts` serves `clojure -M:test`, which runs the runner's `-main` with flag-style arguments (the same `-M` mechanism `:coverage` uses to start cloverage). `:exec-fn` serves `clojure -X:test`, which calls the runner's API function and passes keyword arguments from the command line straight through. We prefer the `-X` form because those keyword arguments are how you narrow a run (`:nses`, `:dirs`, `:patterns` -- the in-file tests section below uses them).
+
+Day to day, two commands cover the two modes, both run from the project root:
 
 ```bash
-clojure -M:test
+clojure -X:test      # fast: run the suite, no coverage
+clojure -M:coverage  # run under Cloverage, enforce the coverage threshold
 ```
 
-The difference: `:test` runs fast without instrumentation. `:coverage` instruments every form for coverage tracking, which is slower. Use `clojure -X:test` during development, `clojure -M:coverage` before committing.
+`clojure -X:test` is the quick feedback loop during development: no instrumentation, straight through the suite. `clojure -M:coverage` is what you run before committing and what [the CI pipeline](26-ci-cd.md) runs, because it both runs the tests and fails if coverage drops below the threshold. Instrumenting every form is what makes it slower; the threshold is what makes it a gate. If tests pass and coverage is above the threshold, exit code 0; otherwise non-zero. Because CI runs the very same command, local and CI behavior are identical.
 
 ## In-file tests: co-locating quick tests with source
 
 Everything above lives in `test/`. That is the right home for most tests -- the database fixtures, the route table, the middleware checks -- and it is where this project keeps its suite. But there is a second place a test can live: directly underneath the function it tests, in the source file itself. The two approaches are complements, not substitutes, and the only real question is which job goes where; the co-located form is worth knowing for the specific cases below, even where you reach for it sparingly.
 
+Like the routes section, this one teaches the technique through a self-contained example. The companion repo keeps its whole suite under `test/`: the `tests` macro, its `myapp.inline-tests` home, and the `parse-port` example below exist only on this page, not in the repo's `src/`. What the repo does carry is the build-side binding that strips in-file tests from the artifact, shown in [Stripping for production](#stripping-for-production) below.
+
 The division of labor is worth stating plainly:
 
-- **In-file (co-located) tests** suit the light cases: example or doc-style tests, short assertions, and -- the one that earns its keep -- assertions on **private** functions. Inside the function's own namespace you call a `defn-` directly. No exposing it, no `(var myapp.ns/private-fn)` indirection. The test sits next to the code and reads as living documentation.
+- **In-file (co-located) tests** suit the light cases: example or doc-style tests, short assertions, and, above all, assertions on **private** functions. Inside the function's own namespace you call a `defn-` directly. No exposing it, no `(var myapp.ns/private-fn)` indirection. The test sits next to the code and reads as living documentation.
 - **Separate `test/` files** -- the approach built earlier in this chapter -- carry the heavy lifting: larger standalone tests, anything with substantial setup, and integration tests like the DB-fixture style above. Those do not belong in-file.
 
 The signal is the dependency. The only test-only dependency a light in-file test needs is `clojure.test` itself (`deftest`/`is`/`testing`), plus maybe a small helper or data generator. The moment a test reaches for something heavy -- a JDBC driver, testcontainers, anything not on the production classpath -- that is the cue to move it to a `test/` file. The macro below would technically strip it, but a test that needs that machinery is not an example anymore.
@@ -375,9 +369,13 @@ The catch is the `require`. A co-located test needs `clojure.test` (and maybe a 
 
 ### The macro: compile-time exclusion
 
-The fix leans on a built-in: `clojure.test/*load-tests*` is a dynamic var, default `true`, and when it is `false`, `deftest` expands to nothing. We extend that to arbitrary forms -- including the test-only `require` -- with one macro:
+The fix leans on a built-in: `clojure.test/*load-tests*` is a dynamic var, default `true`, and when it is `false`, `deftest` expands to nothing. We extend that to arbitrary forms, including the test-only `require`, with one macro. It needs a home namespace that requires `clojure.test`, because the `if` reads `*load-tests*` at the moment the macro itself is compiled:
 
 ```clojure
+(ns myapp.inline-tests
+  "In-file test support: include forms only when tests are loaded."
+  (:require [clojure.test]))
+
 (defmacro tests
   "Include body only when clojure.test/*load-tests* is true."
   [& body]
@@ -386,13 +384,17 @@ The fix leans on a built-in: `clojure.test/*load-tests*` is a dynamic var, defau
     `(comment ~@body)))
 ```
 
-The `if` runs at *macroexpansion* (compile) time. With `*load-tests*` true, `(tests (require '[clojure.test ...]) (deftest ...))` expands to `(do (require ...) (deftest ...))` -- it loads and runs exactly as written. With it false, the same form expands to `(clojure.core/comment (require ...) (deftest ...))`, and `comment` evaluates to `nil` and never evaluates its body. Even a `(require '[does.not.exist])` inside it is inert. So when `*load-tests*` is false at compile time, the entire block -- test-only requires and all -- is gone from the compiled output.
+The `if` runs at *macroexpansion* (compile) time. With `*load-tests*` true, `(tests (require '[clojure.test ...]) (deftest ...))` expands to `(do (require ...) (deftest ...))`, and it loads and runs exactly as written. That works where failure mode 2 failed because this `do` sits at the top level, and the compiler treats a top-level `do` specially: rather than compiling the whole form and then running it, it compiles and evaluates each child form in turn, as if each were itself top level. By the time the compiler reaches the `(deftest ...)` form, the `(require ...)` before it has already run, so `deftest` and `is` resolve. Move the same two forms inside a function body and compilation fails; that is exactly failure mode 2.
 
-Define (or require) `tests` before you use it. Here it is around a private helper:
+With `*load-tests*` false, the same form expands to `(clojure.core/comment (require ...) (deftest ...))`, and `comment` evaluates to `nil` and never evaluates its body. Even a `(require '[does.not.exist])` inside it is inert. So when `*load-tests*` is false at compile time, the entire block -- test-only requires and all -- is gone from the compiled output.
+
+To use it, refer the macro into the namespace and write the test under the function it covers:
 
 ```clojure
 (ns myapp.config
-  (:require [clojure.string :as str]))
+  (:require
+    [clojure.string :as str]
+    [myapp.inline-tests :refer [tests]]))
 
 (defn- parse-port
   "Parse a port string into an int, clamped to the valid TCP range."
@@ -410,7 +412,7 @@ Define (or require) `tests` before you use it. Here it is around a private helpe
     (is (= 65535 (parse-port "70000")))))  ; clamped down
 ```
 
-`parse-port` is private, and the test calls it directly -- no var gymnastics -- documenting the clamping behavior right where a reader will look for it.
+`parse-port` is private, and the test calls it directly -- no var gymnastics -- documenting the clamping behavior right where a reader will look for it. The `myapp.inline-tests` require does put `clojure.test` itself on the production load path. That is the one test dependency the pattern accepts: it ships with Clojure, and the macro cannot read `*load-tests*` without it. Everything else -- the test bodies and any heavier test-only requires -- is what the macro strips.
 
 ### Stripping for production
 
@@ -440,9 +442,9 @@ But `:patterns '[".*"]'` now loads *every* namespace under `src` as a test names
 clojure -X:test :nses '[myapp.config myapp.web.routes]'
 ```
 
-The same caveat applies to the commit gate. The coverage gate runs `clojure -M:coverage`, and cloverage finds tests via its own `--test-ns-path "test"` -- so in-file tests are skipped there too until you broaden that path (or its `--test-ns-regex`) as well. Either way, discovery stops being automatic and becomes something you maintain.
+The coverage run has the same blind spot. `clojure -M:coverage` finds tests via cloverage's own `--test-ns-path "test"`, so in-file tests are skipped there too until you broaden that path (or its `--test-ns-regex`) as well. Either way, discovery stops being automatic and becomes something you maintain.
 
-Co-location is convenient -- the test sits where you edit, and reads as documentation for the next person. That convenience is not free: it puts a test concern into a source file, and while the `tests` macro keeps the *dependency* out of the artifact, it cannot make discovery automatic. The trade is worth it for short, doc-style, and private-function checks. For anything heavier -- standalone or integration -- the separate `test/` file stays simpler, and discovery stays free. Keep it there.
+Co-location is convenient: the test sits where you edit, and reads as documentation for the next person. That convenience is not free: it puts a test concern into a source file, and while the `tests` macro keeps the *dependency* out of the artifact, it cannot make discovery automatic. The trade is worth it for short, doc-style, and private-function checks. For anything heavier -- standalone or integration -- the separate `test/` file stays simpler, and discovery stays free. Keep it there.
 
 ## The scaffold, whole
 

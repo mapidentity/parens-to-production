@@ -2,15 +2,17 @@
 
 The REPL closes the feedback gap for return values: you change a function, evaluate it, and the result appears in your editor. But a web application has a second surface that the REPL does not touch -- the browser. "Seeing the result" of a markup change or a handler change means the *page* updating, not a value printing. So the question for a server-rendered app is: how do you close the gap between saving a file and seeing it reflected in the browser, without leaving your flow state?
 
-There are three honest answers, and only one of them is good.
+There are three honest answers.
 
 **(a) Refresh by hand.** Save, alt-tab to the browser, hit reload. It works, and it costs you a context switch on every single edit. Over a day of iterating on markup that tax is enormous, and worse, it pulls you out of the editor every few seconds. We can do better.
 
-**(b) `clojure.tools.namespace` full refresh.** The standard reloaded workflow scans the whole source tree, computes the dependency graph, and reloads changed namespaces in dependency order. It is powerful, but it is also slow (it walks everything, every time) and occasionally surprising -- it tears down and rebuilds namespaces, which can wipe `defonce` state you were relying on. For a large app where you might edit one file, that is a lot of machinery and a lot of risk for one save.
+**(b) `clojure.tools.namespace` full refresh.** The standard reloaded workflow scans the source tree, computes the dependency graph, and reloads each changed namespace *and everything that depends on it*, in dependency order. The scan is the cheap part. The cost is the cascade: an edit near the root of the graph reloads everything downstream, and the teardown-and-rebuild can wipe `defonce` state you were relying on. But the cascade is not waste; it is a correctness guarantee. Reloading dependents is what keeps code compiled against your macros and protocols in step with their new definitions. Hold on to that, because it is exactly what the next option gives up.
 
-**(c) A targeted file watcher plus a WebSocket push.** Watch the source tree. When one file changes, load *exactly that file* and tell the browser to refresh. No tree scan, no dependency graph, no `defonce` reset -- just the one file you actually touched, and a message down a socket.
+**(c) A targeted file watcher plus a WebSocket push.** Watch the source tree. When one file changes, load *exactly that file* and tell the browser to refresh. No dependency graph, no cascade, no `defonce` reset: just the one file you actually touched, and a message down a socket.
 
-For a server-rendered app where you edit one file at a time, (c) wins decisively. The common case -- tweak a handler, save, see the page -- is a single `load-file` and a single socket message, both effectively instantaneous. We do not pay for the rest of the tree because we never look at it. That is the system this chapter builds: a Java NIO file watcher that detects the change and reloads the one file, and a WebSocket connection that tells the browser to reload itself.
+(c) is what this chapter builds, and the trade deserves to be stated precisely, because what it gives up is exactly what (b)'s cascade bought. `load-file` compiles one file in isolation; anything already compiled against the old definitions stays compiled against them. Edit a macro and its call sites keep running the old expansion until their own namespaces reload. Reload a file containing a `defprotocol` and every implementation compiled against the old protocol object is orphaned: calls fail with `No implementation of method` even though the code on disk is fine. Rename or delete a var and the old one stays interned, so stale references keep working in this JVM and break on the next one. And `load-file` knows nothing about dependency order. These failure modes are the reason `tools.namespace` exists.
+
+For a server-rendered app the trade is still right, because the edits it mishandles are rare and the edit it optimizes is nearly every save you make. The overwhelming majority of development edits change function bodies and markup, and for those recompiling the one file is fully correct: tweak a handler, save, see the page -- a single `load-file` and a single socket message, both effectively instantaneous. Macro and protocol edits are the exception, so we keep option (b) available as a manual command instead of paying its cascade on every save; the next section says where it lives. That is the system this chapter builds: a Java NIO file watcher that detects the change and reloads the one file, and a WebSocket connection that tells the browser to reload itself.
 
 ## dev/ classpath separation
 
@@ -29,7 +31,7 @@ All of the dev tooling lives in a `dev/` directory that is on the classpath *onl
                     cider/cider-nrepl {:mvn/version "0.58.0"}}}}
 ```
 
-Two of those deps serve later code. `tools.reader` is not used by the watcher -- it feeds the source inspector's loader ([the inspector](15-inspector.md)), which reads view files form-by-form. `tools.namespace` is the full-refresh library from option (b) above: the reload loop does not use it, but it stays available for the occasional manual `refresh` at the REPL. Neither ships in production.
+`tools.reader` is not used by the watcher; it feeds the source inspector's loader ([the inspector](15-inspector.md)), which reads view files form-by-form. `tools.namespace` is the full-refresh library from option (b) above. The reload loop does not use it, but it stays on the dev classpath for exactly the edits the per-file loop mishandles: a changed macro or protocol, a renamed or deleted var, or any moment running behavior stops matching the code on disk. In those cases, run its `refresh` from the REPL and let it reload the dependents the watcher skipped. `ring-devel` is Ring's own development bundle; its `wrap-reload` middleware is the conventional answer to this chapter's question -- reload changed namespaces when the *next request* arrives. That pull model closes only half the gap: the server catches up, but nothing tells the browser to ask. Nothing in this repo ever requires it; it stays in the alias as the standard alternative to measure this chapter against, and deleting the line breaks nothing. None of the three ships in production.
 
 Because `dev/` is an extra path, the namespaces in it -- `hot-reload`, `dev-reload`, `user` -- exist on the classpath when you develop with the `:dev` alias and do not exist at all in a production build. This is not a convention or a runtime flag; it is a structural fact about what code is present. We will lean on it twice: the WebSocket route and the browser-side script both check, at runtime, whether the dev namespace can be resolved, and both become inert when it cannot. A guarded `requiring-resolve` -- resolve, and treat failure as absence -- is the same guarantee viewed from the calling side.
 
@@ -96,7 +98,7 @@ We `load-file` the one path that changed -- not a tree refresh, just that file. 
 
 The failure path is the important detail. A broken file -- a syntax error, an unbalanced paren -- does not crash the watcher. The exception is caught and logged, the watcher keeps running, and your next save gets a fresh chance to succeed. A crash-on-error watcher that you have to restart every time you fat-finger a paren would defeat the entire purpose.
 
-> This `load-changed-file` is deliberately the *basic* path: one branch, full reload. The skeleton stays exactly this even once different edits start getting different responses.
+> This `load-changed-file` is deliberately the *basic* path: one branch, full reload. Later chapters grow the one branch into several and hang hooks around the load, but the detect-load-notify-catch shape survives unchanged.
 
 ### Registering directories and the watch loop
 
@@ -155,7 +157,7 @@ The details worth calling out -- the first three are the `java.nio.file` interop
 - **Registering the tree means walking it first.** A `WatchService` watches *directories*, not whole trees, so before the loop can run we enumerate every subdirectory under `src/` and `.register` each one. `Files/find` does the walk; its filter argument is a Java `BiPredicate` of `(path, attrs)`, which Clojure has no literal for, so we `reify` one and keep only entries whose `BasicFileAttributes` report `isDirectory`.
 - **The empty `(make-array …)` calls pass "no varargs" across interop.** `Files/find` and `Files/isDirectory` both end in a Java varargs parameter (`FileVisitOption…`, `LinkOption…`). Clojure does not splat into Java varargs, so the way to pass *none* is to hand over a zero-length array of exactly that element type -- `(make-array java.nio.file.FileVisitOption 0)`. It reads oddly the first time; it is just the standard shim for an empty varargs tail.
 - **An event carries a name, not a path.** A `WatchEvent`'s `.context` is the changed entry *relative to the directory the key was registered on*, so we recover the absolute path by taking the key's `.watchable` (that directory) and `.resolve`-ing the context against it. If the new entry is itself a directory, the loop `.register`s it on the spot -- which is what lets a brand-new namespace package be watched without a restart. There is an inherent race here: a file created inside that directory in the same instant, before the `.register` lands, is missed. In a dev file-watcher that is a non-issue -- you save the new file a moment later and that event is caught -- but it is the reason this pattern is not a basis for anything that must observe *every* change.
-- **We register both `ENTRY_MODIFY` and `ENTRY_CREATE`.** Modify is the everyday save; create is what fires when a new file or directory appears, so the watcher reacts to additions, not just edits.
+- **We register both `ENTRY_MODIFY` and `ENTRY_CREATE`.** Modify is the everyday save; create is what fires when a new file or directory appears, so the watcher reacts to additions, not just edits. Notice how the two listings meet, though: the loop tags *every* event `{:event-type :modify}`, creates included, because a brand-new `.clj` file wants exactly the response an edited one gets -- load it, refresh the browser. The `(when (= event-type :modify))` guard in `load-changed-file` therefore never rejects anything; it records the shape of the event map rather than filtering it.
 - **A single save can fire several events, and we let it.** Editors often write a file in more than one step -- truncate, write, rename, touch the mtime -- so one save can surface as two or three `ENTRY_MODIFY` events, each triggering a reload. We deliberately don't debounce: a redundant `load-file` plus browser refresh costs a few milliseconds in dev, and the coalescing machinery would be more code than the duplication is worth. A busier watcher, or a more expensive per-change action, would want to collect events on a short timer and act once after the burst -- which is exactly what the CSS hot-swap in [the morph-reload chapter](18-morph-reload.md) does for its own reason.
 - **The poll thread is a daemon thread.** It dies when the JVM exits, so a forgotten watcher never keeps the process alive.
 - **`.take` is blocking.** The thread sleeps until there is an event, consuming zero CPU while idle.
@@ -197,7 +199,7 @@ The watcher knows *that* a file changed. The browser needs to be *told*. That is
   (atom #{}))
 ```
 
-That `jsonista.core` require is the one new dependency this namespace pulls in: jsonista is a fast JSON codec. The trivial health response in [the web-server chapter](05-web-server.md) used `clojure.data.json` to serialize a one-off status map; the dev tooling is the first place the project reaches for jsonista, and because the application leans on it later too, it earns a place as a regular project dependency. Add `metosin/jsonista {:mvn/version "0.3.12"}` to the top-level `:deps` map in `deps.edn` (it is a regular project dependency, not a `:dev`-only one -- the application reaches for it later too). With that in place, `(require '[jsonista.core :as json])` resolves and the namespace compiles.
+That `jsonista.core` require is the one new dependency this namespace pulls in: jsonista is a fast JSON codec. The trivial health response in [the web-server chapter](05-web-server.md) used `clojure.data.json` to serialize a one-off status map; the dev tooling is the first place the project reaches for jsonista. Add `metosin/jsonista {:mvn/version "0.3.12"}` to the top-level `:deps` map in `deps.edn` -- top-level, not `:dev`-only, because the application leans on it later too. With that in place, `(require '[jsonista.core :as json])` resolves and the namespace compiles.
 
 `websocket-clients` is a set of http-kit channels, one per connected browser tab. It is a `defonce` for the same reason the watcher atom is: reloading the `dev-reload` namespace must keep your live connections, not orphan them into a fresh empty atom and leave every open tab silently disconnected.
 
@@ -299,7 +301,7 @@ The same guard governs whether the browser even loads the dev script. The base l
   (dev-reload-script))
 ```
 
-In production the guard yields nil and no dev `<script>` appears in the rendered HTML. The entire client side of this system is structurally absent from a production page.
+In production the guard yields nil and no dev `<script>` appears in the rendered HTML. The entire client side of this system is structurally absent from a production page. One asymmetry between the two guards is incidental rather than meaningful: the route catches `Throwable`, the layout `Exception`. A namespace missing from the classpath surfaces as a `java.io.FileNotFoundException`, which both spellings catch, and either reads the failure as absence; nothing hangs on the difference.
 
 ## The client side
 
@@ -331,6 +333,8 @@ ws.onerror = function (error) { console.log('WebSocket error:', error); };
 
 The scroll stash goes into `sessionStorage` -- it has to survive the page navigation that `reload()` causes, so an in-memory variable would not do. On the next page load we read it back, scroll to it, and clear it. The full reload is correct and total: the whole page comes back fresh, just where you left it vertically.
 
+The script opens its socket exactly once: there is no `onclose` handler and no reconnect. The omission is deliberate, and its cost is real. Restart the server (a routine REPL event) and every open tab's socket dies silently; live reload in those tabs stays dead until you refresh them by hand. The retry timer itself would be a few lines, but a correct one is not. Naive infinite retries leave every tab from yesterday's session hammering a dead port, so you owe backoff and a cap. And a tab that reconnects has still missed whatever was pushed while it was down, so it may already be stale. Fixing *that* means reloading on every reconnect, which turns each server restart into every open tab reloading at a moment you did not choose. One manual refresh per restart reconnects the socket and freshens the page in the same gesture. That is cheaper than the machinery, and the final client in the repo makes the same call.
+
 ## The REPL entry point
 
 The last piece ties it together into a single command. `user.clj` loads when you start a REPL and exposes a `start!`:
@@ -339,12 +343,13 @@ The last piece ties it together into a single command. `user.clj` loads when you
 (ns user
   "Development REPL helpers"
   (:require
-    [myapp.core :as core]
     [hot-reload]))
 
 (defn start! [] (hot-reload/start))
 (defn reload! [] (hot-reload/reload!))
 ```
+
+`hot-reload/reload!` is a one-line delegator to the `dev-reload/reload!` trigger shown earlier: `user` requires only `hot-reload`, and `hot-reload` already requires `dev-reload`, so the manual trigger rides that require chain rather than adding another.
 
 This is the rewiring the [web-server chapter](05-web-server.md) promised: `start!` now goes through `hot-reload/start` instead of calling `core/start-server!` directly. That entry point calls a small new function in `myapp.core` -- `start-dev-server`, which flips the `myapp.dev` system property on (later chapters read it to decide whether to mount dev-only affordances) and then delegates to the same `start-server!` from the previous chapter:
 
@@ -372,7 +377,7 @@ And `hot-reload/start` brings up the server and the watcher:
      :watch-path "/src"}))
 ```
 
-Open a REPL, type `(start!)`, and the whole loop is live: the server is up, the watcher is watching `src/`, and any connected browser tab will reload when you save.
+Open a REPL, type `(start!)`, and the whole loop is live: the server is up, the watcher is watching `src/`, and any connected browser tab will reload when you save. (The two log lines label the same tree differently, `"src"` from the watcher and `"/src"` in this summary map; the strings are display labels, and nothing reads them.)
 
 ## Where this goes next
 
