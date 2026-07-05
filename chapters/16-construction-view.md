@@ -159,7 +159,7 @@ The shape it returns is the vocabulary for everything that follows: `:calls` map
 
 ## Per-request scoping, and the gift of a synchronous handler
 
-Where do `start` and `end` come from? A Ring middleware, placed outermost, records the thread's timeline length before and after the handler. This is the one piece on the request hot path, so it does as little as possible. It does **not** build the tree; it stores a four-field descriptor and returns:
+Where do `start` and `end` come from? A Ring middleware, placed outermost, records the thread's timeline length before and after the handler. This is the one piece on the request hot path, so it does as little as possible. It does **not** build the tree; it stores a small descriptor (the thread id and window bounds, plus the request's own metadata) and returns:
 
 ```clojure
 (defn- record-page [handler req]
@@ -303,7 +303,7 @@ The descriptors live in a small bounded ring buffer (newest-wins, capped), keyed
     (catch Throwable _ nil)))
 ```
 
-> **What bounds memory -- two caps, on two different things.** The timeline's cap is the gating you have already seen: recording is on only for the span of a render, and a full navigation evicts the previous visit, so the recorder holds at most the current visit (the page plus any morphs layered onto it since). The ring buffer is a *second*, independent cap on a much smaller thing: the four-field `{:tid :start :end}` descriptors, of which we keep the newest 256. The `clear-recordings!` handle and its `/dev/__trace-clear` endpoint remain as an escape hatch, not a discipline you have to remember.
+> **What bounds memory -- two caps, on two different things.** The timeline's cap is the gating you have already seen: recording is on only for the span of a render, and a full navigation evicts the previous visit, so the recorder holds at most the current visit (the page plus any morphs layered onto it since). The ring buffer is a *second*, independent cap on a much smaller thing: the compact `{:tid :start :end …}` descriptors, of which we keep the newest 256. The `clear-recordings!` handle and its `/dev/__trace-clear` endpoint remain as an escape hatch, not a discipline you have to remember.
 
 Everything else in `trace.clj` is a *projection*: a pure function from a stored descriptor to JSON. They all start the same way: resolve the descriptor, `read-window` its slice, build something, serialize. The top-level one is `project`, which we assemble piece by piece over the next sections; here is the endpoint wrapper that serializes it:
 
@@ -463,12 +463,12 @@ The basis-t is the other half of a useful db-op. We want the t the read actually
      :result (summarize (:result e))}))
 ```
 
-So a `version-history` frame handed an `as-of` db passes that db down to its `pull`, and `nearest-db-basis` picks up the historical t automatically; each query is labeled with the point it actually read at:
+So a `version-history` frame handed an `as-of` db passes that db down to its `pull`, and `nearest-db-basis` picks up the historical t automatically; each query is labeled with the point it actually read at -- note `version-history`'s `as-of` read landing on an earlier `@t1007` while the live reads sit at `@t1031`:
 
 ```
 recipe-by-id     (d/entid db [:recipe/id id])                                         @t1031
 forks            (d/q '[:find [?c ...] :in $ ?e :where [?c :recipe/forked-from ?e]] …) @t1031
-version-history  (d/as-of db tx)  → db                                                @t1031
+version-history  (d/as-of db tx)  → db                                                @t1007
 pull*            (d/pull db pattern eid)  → {n=10}                                     @t1031
 ```
 
@@ -476,7 +476,93 @@ pull*            (d/pull db pattern eid)  → {n=10}                            
 
 ## Building the construction tree
 
-Everything so far reads the recording one fact at a time. `build-spans` is where those facts become the structure the overlay actually renders: it takes a `read-window` result and returns the middleware-to-view call tree as a map of span-id → span plus the root ids, each node carrying its name, summarized args and return, db-ops, and the flags the UI keys off. It is the densest function in `trace.clj`, and rather than walk every local here I'll lay out its shape and the three tricks that make it more than a `:parent-idx` reduce. The full defn lives in `dev/trace.clj` (search for `build-spans`); it reads best with the whole function in front of you, so open it there as you follow along.
+Everything so far reads the recording one fact at a time. `build-spans` is where those facts become the structure the overlay actually renders: it takes a `read-window` result and returns the middleware-to-view call tree as a map of span-id → span plus the root ids, each node carrying its name, summarized args and return, db-ops, and the flags the UI keys off. It is the densest function in `trace.clj`, so here it is in full -- the purely mechanical plumbing marked `,,,`, and the three tricks that make it more than a `:parent-idx` reduce left whole:
+
+```clojure
+(defn- build-spans
+  "Build the construction tree for a timeline window, as a map of
+   span-id -> span plus the root ids."
+  [{:keys [calls at] :as w}]
+  (let [;; kept frames + nearest-kept re-parenting: the plain temporal tree.
+        ;; a frame survives if it is neither noise nor a folded duplicate;
+        ;; eff-parent climbs to the nearest survivor so dropping noise never
+        ;; severs the tree.
+        kept?      (fn [i] (when-let [m (calls i)]
+                             (and (not (noise? m)) (not (folded? calls i)))))
+        eff-parent (fn ep [i]
+                     (let [p (:parent-idx (calls i))]
+                       (cond (nil? p) nil
+                             (not (calls p)) nil
+                             (kept? p) p
+                             :else (ep p))))
+        kept-idxs  (sort (filter kept? (keys calls)))
+        nm-of      (fn [i] (frame-name (calls i)))
+        el?        (fn [i] (inspector/element?
+                             (some-> (:ret-idx (calls i)) at :result)))
+
+        ;; per-instance rank: the k-th element-producing frame of a given name
+        ;; is the k-th matching DOM node. folding (above) is what keeps this
+        ;; count equal to the DOM-node count, so "the third recipe-card" resolves.
+        instance-of (->> (filter el? kept-idxs)
+                         (group-by nm-of)
+                         (mapcat (fn [[_ idxs]]
+                                   (map-indexed (fn [k i] [i k]) (sort idxs))))
+                         (into {}))
+
+        ;; lexical re-parenting of lazily-realized frames. a (for …) body is a
+        ;; lazy seq realized during HTML serialization under tag-tree, so its
+        ;; runtime parent is the renderer, not the fn that wrote it. if the path
+        ;; to the runtime parent crosses an `iter--` frame AND the for-body's
+        ;; owning fn is unique (so the move is unambiguous), attribute the frame
+        ;; to that owner instead.
+        nm->kept     (reduce (fn [acc i] (update acc (nm-of i) (fnil conj []) i)) {} kept-idxs)
+        iter-owner   (fn [i] ,,,)          ; owning fn across the nearest iter-- frame, else nil
+        runtime-anc? (fn ra? [anc i] ,,,)  ; guards against re-parenting into a cycle
+        lex-parent  (fn [i]
+                      (when-let [owner (iter-owner i)]
+                        (let [cands (get nm->kept owner)]
+                          (when (= 1 (count cands))            ; unique owner ⇒ unambiguous
+                            (let [c (first cands)]
+                              (when (and (not= c i) (not (runtime-anc? i c))) c))))))
+        tree-parent (fn [i] (or (lex-parent i) (eff-parent i)))
+
+        ops-by-call (->> (collect-db-exprs w) ,,,)  ; re-attach folded ops upward, group by call
+        throw-idx   ,,,                    ; nearest kept frame of the innermost :fn-unwind
+        throw-info  ,,,                    ; {:type :msg :form :at} for that throw origin
+
+        ;; assemble one span per kept frame; conditional keys appear only when they apply.
+        ->span (fn [i]
+                 (let [m    (calls i)
+                       inst (instance-of i)
+                       lz   (lex-parent i)          ; non-nil ⇒ realized lazily (re-parented)
+                       rb   (when lz (eff-parent i))] ; ...and this is where it actually ran
+                   (cond-> {:id (str i) :name (nm-of i) :ns (:fn-ns m) :fn (:fn-name m)
+                            :short (short-name (nm-of i))
+                            :args  (mapv summarize (:fn-args m))
+                            :ret   (summarize (some-> (:ret-idx m) at :result))}
+                     (defn-src (:form-id m)) (assoc :src ,,,)          ; the defn (home)
+                     (call-site w i)         (assoc :call-src ,,, :call-form ,,,) ; the call site
+                     inst            (assoc :instance inst)
+                     lz              (assoc :lazy true
+                                       :realized-by (short-name (frame-name (calls rb))))
+                     (= i throw-idx) (assoc :threw throw-info)
+                     ,,,)))                 ; :morph and :db-ops likewise, when present
+
+        ;; two child maps and two root lists: lexical (re-parented) and temporal (where it ran).
+        children    (reduce (fn [acc i] (if-let [p (tree-parent i)]
+                                          (update acc p (fnil conj []) i) acc)) {} kept-idxs)
+        children-rt (reduce (fn [acc i] (if-let [p (eff-parent i)]
+                                          (update acc p (fnil conj []) i) acc)) {} kept-idxs)
+        spans (reduce (fn [acc i]
+                        (assoc acc (str i)
+                          (assoc (->span i)
+                            :children    (mapv str (get children i []))
+                            :children-rt (mapv str (get children-rt i [])))))
+                      {} kept-idxs)]
+    {:roots    (mapv str (remove tree-parent kept-idxs))   ; roots of the lexical tree
+     :roots-rt (mapv str (remove eff-parent kept-idxs))    ; roots of the temporal tree
+     :spans    spans}))
+```
 
 Think of it as **two passes layered into one `let`**. The first pass is the plain tree: a frame is *kept* if it is neither noise nor a folded duplicate, and `eff-parent` re-parents each survivor onto its nearest kept ancestor so dropping a noise frame never severs the tree. That alone gives a correct call tree: `:roots-rt` and `:children-rt`, the *temporal* parenting, "where each frame actually ran." The second pass is the corrections that make the tree read the way a human expects, and it is where the interesting work is.
 
@@ -644,13 +730,12 @@ mw (if-let [wt (when (System/getProperty "clojure.storm.instrumentEnable")
 With one dev alias, the `trace` namespace, and one route, a request under `clojure -M:dev:storm:repl` records itself, and `GET /dev/__trace/:id` returns the whole construction as JSON: the middleware-to-handler-to-domain-to-view call tree, each frame's recorded args and return summarized as ValueRefs, every Datomic read as real Datalog at its basis-t (including the raw `d/as-of`/`d/history` time-travel reads a wrapper allowlist would miss), plus an N+1 signal, both lexical and temporal parentings, and the throw site if the request 500'd.
 
 ```
-wrap-locale › … › recipes-index
-  recipe-show
-    recipe-by-id        ⛁ (d/entid …) → 17592186045442   ⛁ pull* (d/pull …) → {n=10} @t1031
-    forks               ⛁ (d/q '[:find [?c ...] …]) → [] @t1031
-    version-history     ⛁ (d/history db) → db   ⛁ (d/as-of db tx) → db   ⛁ (d/pull …) @t1031
-    recipe-detail
-      author-name → "Bob"   text-block → 3   app-layout › base-layout › …
+wrap-locale › … › recipe-show
+  recipe-by-id        ⛁ (d/entid …) → 17592186045442   ⛁ pull* (d/pull …) → {n=10} @t1031
+  forks               ⛁ (d/q '[:find [?c ...] …]) → [] @t1031
+  version-history     ⛁ (d/history db) → db   ⛁ (d/as-of db tx) → db   ⛁ (d/pull …) @t1007
+  recipe-detail
+    author-name → "Bob"   text-block → 3   app-layout › base-layout › …
 ```
 
 That JSON is the descriptive whole-page view. [The next chapter](17-construction-view-overlay.md) adds the *targeted* projections over the same recording, flow mode and the dossier, and renders all of it in the page.

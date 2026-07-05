@@ -382,8 +382,9 @@
                base-mw)]
       (ring/ring-handler
         ;; `:conflicts nil` tolerates the static `/recipes/new` vs dynamic
-        ;; `/recipes/:id` overlap — reitit routes the static path first, so only
-        ;; non-\"new\" ids fall through to `recipe-show`.
+        ;; `/recipes/:id` overlap — reitit matches conflicting routes in
+        ;; declaration order, so `/recipes/new` (declared first) wins and only
+        ;; other ids fall through to `recipe-show`.
         (ring/router routes {:conflicts nil})
         ;; Serve static assets (CSS, JS, SVGs, fonts) from the static/ dir, then
         ;; fall back to the default 404 handler.

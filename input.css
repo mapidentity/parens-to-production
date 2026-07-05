@@ -1,9 +1,13 @@
 @import "tailwindcss" source("./src");
 
-/* The dev-only source inspector uses its own injected `.fy-insp-*` styles, never
-   Tailwind utilities. Excluding it keeps a false-positive `resize` token (from its
-   `addEventListener('resize', …)`) out of the production bundle — zero prod footprint. */
+/* The dev-only inspector and construction-view overlay use their own injected
+   styles, never Tailwind utilities, but both call `addEventListener('resize', …)`,
+   and Tailwind's scanner would emit a stray `resize` utility from that token.
+   Excluding both dev-only scripts keeps the false positive out of the production
+   bundle — zero prod footprint. (Exclude BOTH: the token lives in each, so
+   dropping only one still leaks `.resize`.) */
 @source not "./src/myapp/web/inspector.js";
+@source not "./src/myapp/web/trace-overlay.js";
 
 @view-transition {
   navigation: auto;

@@ -233,16 +233,19 @@ services:
     entrypoint: ["/bin/bash"]
     command: ["-c", "/workspace/.devcontainer/importcerts.sh && tail -f /dev/null"]
     environment:
+      - DISPLAY=$DISPLAY
+      - XAUTHORITY=/tmp/.Xauthority
       - CA_CERTS=/certificates/rootCA.crt
     volumes:
       - .:/workspace:cached
       - certificates:/certificates
+      - /tmp/.X11-unix:/tmp/.X11-unix/
     networks:
       default:
       myapp-network:
 ```
 
-The app container waits for the `certificates` service to complete (more on that below), then runs `importcerts.sh` to trust the development CA, and finally `tail -f /dev/null` to keep the container running. VS Code attaches to this container and takes over from there.
+The app container waits for the `certificates` service to complete (more on that below), then runs `importcerts.sh` to trust the development CA, and finally `tail -f /dev/null` to keep the container running. VS Code attaches to this container and takes over from there. (`DISPLAY`, `XAUTHORITY`, and the `/tmp/.X11-unix` mount wire up the in-container browser this chapter reaches further down; they sit idle until then.)
 
 The `:cached` flag on the workspace mount is a consistency hint aimed at Docker Desktop's file sharing: it declares the host's view of the files authoritative and allows the container's view to lag behind it, which bought faster reads inside the container in the era when macOS bind mounts went through `osxfs`. Docker Desktop's current sharing layer (VirtioFS) accepts the flag and ignores it, and a native Linux engine never consulted it -- a bind mount there is the same filesystem, not a synchronized copy. The flag stays because it costs nothing and still helps anyone on an older Docker Desktop.
 
@@ -268,12 +271,17 @@ The certificate setup has three parts.
       - ./certificates/openssl.cnf:/opt/openssl.cnf:ro
 ```
 
-This container runs once, creates the certificates in a shared Docker volume, and exits. The script is idempotent -- if the root CA key already exists, it skips everything:
+This container runs once, creates the certificates in a shared Docker volume, and exits. It drives the `openssl` CLI. The `eclipse-temurin:25-jre-alpine` base already includes it, but the script installs it when missing anyway, so it stays correct on a leaner base image, before doing anything else. The script is idempotent -- if the root CA key already exists, it skips everything:
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR=$(dirname "$0")
+
+# eclipse-temurin:25-jre-alpine already ships the openssl CLI this script drives,
+# but install it when missing so the script still works on a leaner base image
+# (a no-op when openssl is already present).
+command -v openssl >/dev/null 2>&1 || apk add --no-cache openssl
 
 HOSTS='myapp.lan mailpit.lan'
 
@@ -409,7 +417,7 @@ We use `expose` (not `ports`), and the choice decides more than it appears to. `
 
 The answer this repository is built around keeps the browser inside the topology, where the names resolve and the CA is already trusted. The app image installs Google Chrome, `importcerts.sh` has put the development CA into its NSS store, and `compose.yml` hands the container the host's `DISPLAY` together with a `/tmp/.X11-unix` mount. On a Linux host, allow the connection once with `xhost +local:` (the comment in `compose.yml` says so), then run `google-chrome --no-sandbox https://myapp.lan` from a devcontainer terminal: a window opens on your own screen showing the app through the real HTTPS front door. (`--no-sandbox` is a cost of the `remoteUser: root` decision above; Chrome refuses to run its sandbox as root.) The `browser` service the [Networks](#networks) section describes is the same idea packaged as a separate, locked-down container. This is a Linux-host mechanism by design: sharing the X socket is native there and contrived anywhere else.
 
-Everywhere else, the path is the editor. VS Code forwards ports out of the container it is attached to: it detects the server listening on 3000 and maps it, so `http://localhost:3000` in the host browser reaches the app on macOS and Windows exactly as on Linux (the `forwardPorts` field of `devcontainer.json` exists to pin that forwarding explicitly; we rely on detection). Be clear about what that window is: plain HTTP straight into the application, bypassing Caddy, so no TLS and none of what this chapter set TLS up *for*. The `secure` session cookie of [the web-server chapter](05-web-server.md) is never sent over it, so authenticated flows will not work there. It is a quick check, not the front door. Putting your host browser on `https://myapp.lan` itself takes exactly the per-machine state this chapter refuses: a `ports:` mapping publishing Caddy's 443, `/etc/hosts` entries pointing the `.lan` names at `127.0.0.1`, and `rootCA.crt` trusted in the host's certificate store. Nothing stops you, but every item on that list lives outside the repository, unenforced by the definition -- the exact disease this chapter set out to cure. The checked-in answer keeps the browser in the container instead.
+Everywhere else, the path is the editor. VS Code forwards ports out of the container it is attached to: it detects the server listening on 3000 and maps it, so `http://localhost:3000` in the host browser reaches the app on macOS and Windows exactly as on Linux (the `forwardPorts` field of `devcontainer.json` exists to pin that forwarding explicitly; we rely on detection). Be clear about what that window is: plain HTTP straight into the application, bypassing Caddy, so no TLS and none of what this chapter set TLS up *for*. (The `secure` session cookie of [the web-server chapter](05-web-server.md) is still sent -- Chrome, Edge, and Firefox treat `localhost` as a potentially-trustworthy origin -- so a session set here does stick in those browsers; Safari is the exception and drops a `secure` cookie even on `http://localhost`, so on macOS use the `https://myapp.lan` front door for a session that sticks. What the port lacks is TLS and the `.lan` front door, not the cookie.) It is a quick check, not the front door. Putting your host browser on `https://myapp.lan` itself takes exactly the per-machine state this chapter refuses: a `ports:` mapping publishing Caddy's 443, `/etc/hosts` entries pointing the `.lan` names at `127.0.0.1`, and `rootCA.crt` trusted in the host's certificate store. Nothing stops you, but every item on that list lives outside the repository, unenforced by the definition -- the exact disease this chapter set out to cure. The checked-in answer keeps the browser in the container instead.
 
 The Caddyfile itself is straightforward -- shown here as this chapter creates it; [the asset-pipeline chapter](24-asset-pipeline.md) later adds a block of request-invariant security headers (HSTS, `nosniff`, COOP/CORP) and an immutable-cache rule for the vendored morphing library:
 

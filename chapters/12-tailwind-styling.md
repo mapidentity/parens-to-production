@@ -68,7 +68,7 @@ Working down the file:
 
 **`@import "tailwindcss" source("./src")`** -- This tells Tailwind v4 to scan the `./src` directory for utility classes. It will find class names in your `.clj` files, inside Hiccup vectors like `[:div.mt-4 ...]` or `[:div {:class "flex items-center"} ...]`.
 
-**`@source not "./src/myapp/web/inspector.js"`** -- A targeted exclusion. The dev-only source inspector is a JS file under `src/`, and Tailwind's scanner would otherwise see a `resize` substring in its `addEventListener('resize', ...)` and emit a stray `resize` utility. Excluding the file keeps that false positive out of the production stylesheet at zero cost.
+**`@source not "./src/myapp/web/inspector.js"`** (with a matching line for `trace-overlay.js`) -- A targeted exclusion. The dev-only source inspector and the construction-view overlay are JS files under `src/`, and Tailwind's scanner would otherwise extract the token `resize` from their `addEventListener('resize', ...)` calls and emit a stray `resize` utility. Both files carry that token, so both must be excluded -- dropping only one still leaks the utility -- and since these dev-only scripts never hold real Tailwind classes, excluding them costs nothing in production.
 
 **`@view-transition { navigation: auto }`** -- Opts the site into the browser's native cross-document view transitions, so a full server-rendered navigation cross-fades instead of flashing white. This is the no-JavaScript baseline of the app's page-transition story: it works on a plain link click with no script at all. The morph dispatcher ([chapter 14](14-morph-dispatcher.md)) layers smoother in-place updates on top, and the full stylesheet adds `::view-transition` rules and a `prefers-reduced-motion` guard. Where a browser does not support it, the directive is simply ignored and navigation behaves as before.
 
@@ -96,6 +96,8 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 ```
 
 Each of these earns its place outside the utility system for a concrete reason. The press/focus rules are *cross-cutting*: they apply to every button and link on the site, so a selector states them once where a utility class would repeat the same string on hundreds of elements (and silently miss the next one). The `.diff-add`/`.diff-del` classes are *semantic*: the diff renderer emits `class="diff-add"` from the server, and a name that says what the row *is* outlives whatever colors we paint it. And note both still reach into the `@theme` tokens -- `var(--color-primary)`, `var(--color-positive)` -- so even the hand-written CSS shares one palette with the utilities. The token block is the source of truth; the utilities and the plain CSS are two ways of spending it.
+
+It is worth admitting what the semantic classes cost, because it is the very thing this chapter docked BEM for: `.diff-add` lives in a file separate from the markup that emits it, so delete the diff renderer and the rules linger, with no compiler to flag them. The trade is worth making only because the set is tiny, cross-cutting, and genuinely semantic -- the narrow cases where a hand-written class earns its keep. Each such class is a drift risk taken on with eyes open, not a licence to grow a parallel stylesheet beside the utilities.
 
 ## Extending the tokens, and the responsive prefixes
 

@@ -24,8 +24,11 @@
 
 (deftest base64-url-safe
   (testing "No +, /, or = in output"
-    ;; Use bytes that would produce +, / in standard base64
-    (let [encoded (auth/base64-encode (byte-array (map unchecked-byte [255 239 191 253 251 247])))]
+    ;; 5 bytes (length not a multiple of 3) whose STANDARD base64 is "/+gA+/A=":
+    ;; it carries +, /, and a trailing = pad. URL-safe encoding must swap +/ for
+    ;; -_, and .withoutPadding must drop the = — so none of the three may appear.
+    ;; (A multiple-of-3 length never pads, which would make the = check vacuous.)
+    (let [encoded (auth/base64-encode (byte-array (map unchecked-byte [255 232 0 251 240])))]
       (is (not (str/includes? encoded "+")))
       (is (not (str/includes? encoded "/")))
       (is (not (str/includes? encoded "="))))))

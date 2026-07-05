@@ -67,7 +67,7 @@ The imports tell the story. We need `Session` to configure the SMTP connection, 
       (Session/getInstance props))))
 ```
 
-The branch on whether `user` is present is deliberate. In development, we connect to Mailpit without authentication. In production, we use authenticated SMTP with STARTTLS. The same code handles both; the config drives the behavior.
+The branch on whether `user` is present is intentional. In development, we connect to Mailpit without authentication. In production, we use authenticated SMTP with STARTTLS. The same code handles both; the config drives the behavior.
 
 So is the `^Session` type hint on the return value. With `*warn-on-reflection*` set to true, the Clojure compiler will tell us if we miss a hint that causes reflective method lookup. In a namespace full of Java interop, this matters for both performance and correctness.
 
@@ -104,6 +104,38 @@ Each of the choices folded into those few lines is a small refusal of a more ela
 **i18n from the start.** The subject and body come from translation maps via the `t` function. The body template uses `%s` for the magic link URL, filled in with `format`. This means Dutch users get Dutch emails and English users get English ones. Adding this later would mean touching every email template. Adding it now costs nothing.
 
 **Return value, not exception.** The function returns `{:error :SUCCESS}` or `{:error :FAIL :message "..."}`. The caller can decide what to do. In our case, the handler always shows the "check your email" page regardless: we do not want to leak information about whether an email address is registered. The shape has a naming wart worth owning -- a key called `:error` whose value can be `:SUCCESS` reads backwards, and screaming keywords are unidiomatic Clojure. Read the pair as a status code (the map answers "what went wrong?", and `:SUCCESS` means "nothing"), or rename it `{:ok? true}` in your own code. The property that matters is that failure is a value the caller inspects, not an exception that unwinds the handler.
+
+## Deliverability: SPF, DKIM, and DMARC
+
+`send-magic-link!` ends at the relay's door; whether the message reaches the inbox is decided outside the application, by DNS you publish and the reputation of the IP that sends it. For most apps that is a marketing concern. Here it is a security one: the login *is* the email, so a magic link that lands in spam is not a cosmetic annoyance -- it is a failed authentication the user cannot retry their way out of. Three DNS records stand between a passwordless login and the junk folder.
+
+**SPF (Sender Policy Framework)** publishes, as a TXT record on your domain, which servers are allowed to send mail for it. A receiver checks the sending IP against that list and treats mail from an unlisted server as suspect:
+
+```
+example.com.  TXT  "v=spf1 include:amazonses.com -all"
+```
+
+`include:` delegates to your relay's own SPF record; `-all` means "anything not listed, reject." Swap the include for your provider's.
+
+**DKIM (DomainKeys Identified Mail)** has your relay sign every outgoing message with a private key; you publish the matching public key in DNS, and receivers verify that the signature is valid and the body was not altered in transit:
+
+```
+selector._domainkey.example.com.  TXT  "v=DKIM1; k=rsa; p=MIGfMA0GCSq...QAB"
+```
+
+The relay gives you the `selector` and the key; you paste the record.
+
+**DMARC** ties the two together and tells receivers what to do when a message disagrees with its visible `From:` address. It requires that a passing SPF or DKIM result be *aligned* with the From domain -- so an attacker cannot pass SPF for their own domain while spoofing yours -- sets a policy for failures, and asks for aggregate reports:
+
+```
+_dmarc.example.com.  TXT  "v=DMARC1; p=reject; rua=mailto:dmarc@example.com; adkim=s; aspf=s"
+```
+
+Start at `p=none` while you read the reports and confirm your own mail passes, then tighten to `quarantine` and finally `p=reject`.
+
+Records aside, one operational choice dominates: **send through a reputable relay, not a fresh VPS.** A brand-new IP that suddenly starts emitting login links to strangers' inboxes looks, to a spam filter, exactly like a spam run -- because behaviorally it is indistinguishable from one. A managed sender (Amazon SES, Postmark, Mailgun, and their peers) brings warmed IP reputation, per-message DKIM signing, bounce and complaint handling, and the deliverability monitoring you would otherwise build and babysit yourself. `smtp-session` already speaks authenticated STARTTLS to any of them; only the host, port, and credentials change between Mailpit in development and the relay in production.
+
+The application's own contribution is small but real: a plain-text, single-purpose message with no tracking pixel, no image payload, and no link farm -- the shape we already built -- is the one least likely to trip a content filter. The rest lives in DNS and operations, not in Clojure, which is exactly why it is easy to forget until a user writes in that the link never arrived. On a passwordless app, treat these three records as part of the authentication system, because they are.
 
 ## The handler layer
 
@@ -183,11 +215,19 @@ The in-process counter is the right default -- one instance, no external depende
 Because the *key* carries the dimension (`ml-ip:…`, `ml-email:…`) and the policy (which dimensions, what limits, what window) lives entirely in the caller, swapping the backing store is a body-only change behind that same signature. A Redis implementation is the canonical one: a counter per key with an atomic increment and a TTL that *is* the window. The sketch below uses Carmine, the de facto Clojure Redis client, where `car/wcar` runs the enclosed commands against the connection spec `conn`. (This is a true fixed window rather than the in-process sliding log: it is slightly bursty at the window boundary, an acceptable trade for a coarse cross-instance abuse limit.)
 
 ```clojure
-;; INCR returns the new count; on the first hit, stamp the TTL to the window.
+;; One atomic round trip: INCR, and — only on the first hit — stamp the TTL, in
+;; a single Lua script (Redis runs each script atomically). Splitting this into
+;; an INCR then a separate PEXPIRE would reopen the very window the nonce CAS
+;; closes: a crash between the two calls leaves the key with no expiry, throttling
+;; that dimension forever. Carmine's `lua` maps `_:k` to KEYS and `_:window` to ARGV.
+(def ^:private allow-script
+  "local n = redis.call('incr', _:k)
+   if n == 1 then redis.call('pexpire', _:k, _:window) end
+   return n")
+
 (defn allow? [key limit window-ms]
-  (let [n (car/wcar conn (car/incr key))]
-    (when (= n 1) (car/wcar conn (car/pexpire key window-ms)))
-    (<= n limit)))
+  (<= (car/wcar conn (car/lua allow-script {:k key} {:window window-ms}))
+      limit))
 ```
 
 A Datomic-backed counter or a Postgres `UPDATE … RETURNING` works the same way; the only requirement is that the increment-and-read is atomic so two simultaneous requests cannot both read "under the limit." The decision the chapter made -- per-email *and* per-IP, fail-closed, same redirect either way -- is independent of all of this. That is the payoff of routing both checks through one `allow?`: the security policy is fixed in the handler, and the store is a deployment detail you change once, in one namespace, the day you add the second instance.
@@ -277,7 +317,7 @@ The three gates run in order, short-circuiting on the first failure:
 
 Crucially, every failure path produces the *same* generic error page. We never tell the caller whether the token was forged, expired, or already used -- that would hand an attacker a probe.
 
-The same discipline extends to the failures nobody anticipated. `wrap-errors`, the middleware mounted innermost in the app's stack (the session-management listing below shows it), catches anything a handler throws, logs the stack trace where an operator can read it, and serves the same styled `error-page` as a 500. That page reveals nothing: not the exception class, not the message, not a frame. Without it, an uncaught exception would fall through to `http-kit`'s default: an unstyled 500 carrying none of the app's headers. The placement is the deliberate part: innermost means the error response exits through the CSP and cache-control layers like any other HTML, so even the failure path wears the full security envelope.
+The same discipline extends to the failures nobody anticipated. `wrap-errors`, the middleware mounted innermost in the app's stack (the session-management listing below shows it), catches anything a handler throws, logs the stack trace where an operator can read it, and serves the same styled `error-page` as a 500. That page reveals nothing: not the exception class, not the message, not a frame. Without it, an uncaught exception would fall through to `http-kit`'s default: an unstyled 500 carrying none of the app's headers. The placement is the load-bearing part: innermost means the error response exits through the CSP and cache-control layers like any other HTML, so even the failure path wears the full security envelope.
 
 And when one of the gates does refuse and you want to know which, the [construction view](16-construction-view.md) answers without adding a single log line. Replay a used link under the `:storm` alias and the recorded tree shows `verify-token` returning the decoded claims (the signature is fine) and `consume-magic-link-nonce!` returning `false`, the CAS refusing a nonce that is already stamped. The generic page tells the visitor nothing; the recording tells *you* everything; the asymmetry is the point. The two halves of the design -- opaque outside, transparent inside -- are the same decision made twice.
 
@@ -428,9 +468,9 @@ All auth-related routes in one place:
 ["/terms/accept" {:post handler/accept-terms}]
 ```
 
-> **Handler-gated here, middleware-gated in the repo.** The handlers above each read `[:session :user-email]` and run their own "are you signed in? have you accepted terms?" checks inline, which keeps this chapter self-contained -- every handler is readable on its own. The companion repo factors those two questions out into middleware instead: a `wrap-auth` resolves the signed-in user once and puts `:user-email`/`:user-eid` directly on the request (redirecting to `/` if there is none), and a `wrap-terms-accepted` enforces the terms gate (redirecting to `/terms/welcome` until `:user/terms-accepted-at` is set). The route tree then nests the protected routes under those wrappers, and the handlers shrink to their actual work -- `dashboard` becomes a three-line render that trusts `(:user-email request)` is present. It is the same logic, lifted from each handler into one place so it cannot be forgotten on a new route; the [admin chapter](23-admin-dashboard.md)'s `wrap-admin` is the next layer in that same stack. If you have built the middleware, prefer it; the inline form here is the minimal equivalent.
+> **Handler-gated here, middleware-gated in the repo.** The handlers above each read `[:session :user-email]` and run their own "are you signed in? have you accepted terms?" checks inline, which keeps this chapter self-contained -- every handler is readable on its own. The companion repo factors those two questions out into middleware instead: a `wrap-current-user` resolves the signed-in user once and puts `:user-email`/`:user-eid` (and `:admin?`) on the request, a `wrap-auth` then hard-gates the protected routes (redirecting to `/` when no user is present), and a `wrap-terms-accepted` enforces the terms gate (redirecting to `/terms/welcome` until `:user/terms-accepted-at` is set). The route tree then nests the protected routes under those wrappers, and the handlers shrink to their actual work -- `dashboard` becomes a three-line render that trusts `(:user-email request)` is present. It is the same logic, lifted from each handler into one place so it cannot be forgotten on a new route; the [admin chapter](23-admin-dashboard.md)'s `wrap-admin` is the next layer in that same stack. If you have built the middleware, prefer it; the inline form here is the minimal equivalent.
 
-State-changing operations the browser originates (request link, logout, accept terms) are POST, and the plain reads (sent page, welcome page) are GET. `/auth/verify` is the deliberate exception, and it deserves to be named as one: it is a GET that changes state -- consumes the nonce, creates the user, issues the session -- because the user reaches it by clicking a link in an email, and email clients do not POST. A mutating GET forfeits the safety GET is supposed to promise, and the forfeit has a well-known production face: corporate mail gateways (Microsoft Defender's link scanning among them) GET every URL in an inbound message to inspect it, before the user ever sees the email. Against a strictly one-shot nonce, the scanner consumes the link and the human's click a minute later lands on the generic error page. The standard escapes are an interstitial -- the GET renders a harmless page whose button POSTs the token, so only a deliberate click consumes the nonce -- or scanner-tolerant nonce semantics, where consumption is bound to the session actually issued rather than to the first fetch. (Our own speculation rules in [the progressive-enhancement chapter](19-progressive-enhancement.md) already refuse to prerender `/auth/*` for exactly this reason: a prerender is a GET the user has not meant yet.) This app accepts the failure mode instead: the error page says to request a new link, and a new link costs one click. For an audience on personal email that is the right trade; the day your users live behind a corporate mail filter is the day you buy the interstitial.
+State-changing operations the browser originates (request link, logout, accept terms) are POST, and the plain reads (sent page, welcome page) are GET. `/auth/verify` is the deliberate exception, and it deserves to be named as one: it is a GET that changes state -- consumes the nonce, creates the user, issues the session -- because the user reaches it by clicking a link in an email, and email clients do not POST. A mutating GET forfeits the safety GET is supposed to promise, and the forfeit has a well-known production face: corporate mail gateways (Microsoft Defender's link scanning among them) GET every URL in an inbound message to inspect it, before the user ever sees the email. Against a strictly one-shot nonce, the scanner consumes the link and the human's click a minute later lands on the generic error page. The standard escapes are an interstitial -- the GET renders a harmless page whose button POSTs the token, so only an intentional click consumes the nonce -- or scanner-tolerant nonce semantics, where consumption is bound to the session actually issued rather than to the first fetch. (Our own speculation rules in [the progressive-enhancement chapter](19-progressive-enhancement.md) already refuse to prerender `/auth/*` for exactly this reason: a prerender is a GET the user has not meant yet.) This app accepts the failure mode instead: the error page says to request a new link, and a new link costs one click. For an audience on personal email that is the right trade; the day your users live behind a corporate mail filter is the day you buy the interstitial.
 
 ## Testing with GreenMail
 

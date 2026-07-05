@@ -17,7 +17,7 @@ This architecture keeps E2E concerns completely separate from your production co
 
 ## The E2E server
 
-The heart of the setup is a dedicated server entry point. It looks like your production server, but with deliberate differences: in-memory databases, stubbed email sending, and extra routes for test control.
+The heart of the setup is a dedicated server entry point. It looks like your production server, but with three differences: in-memory databases, stubbed email sending, and extra routes for test control.
 
 ```clojure
 (ns myapp.e2e-server
@@ -124,7 +124,7 @@ The E2E server uses hardcoded configuration instead of reading from environment 
           :from "test@myapp.lan"}})
 ```
 
-Four choices in that block are deliberate:
+Four choices in that block are worth spelling out:
 
 - **Port 9876** is fixed. The Playwright config needs to know where to find the server.
 - **In-memory Datomic** (`datomic:mem://`) means every test run starts fresh. No leftover data from previous runs, no database cleanup scripts.
@@ -143,8 +143,9 @@ The app handler is assembled the same way as production, but using the extended 
   (let [session-store (cookie/cookie-store
                         {:key (config/get-config :session-key)})]
     (ring/ring-handler
-      ;; `:conflicts nil` mirrors prod — tolerates static-vs-dynamic
-      ;; route overlaps (static path wins, dynamic ids fall through).
+      ;; `:conflicts nil` mirrors prod — tolerates the static-vs-dynamic
+      ;; overlap, matching conflicting routes in declaration order (so
+      ;; `/recipes/new`, declared first, wins and other ids fall through).
       (ring/router e2e-routes {:conflicts nil})
       (ring/routes
         (ring/create-file-handler
@@ -165,9 +166,9 @@ The app handler is assembled the same way as production, but using the extended 
                     [routes/wrap-csp]]})))
 ```
 
-The middleware stack is real. The session handling is real. The cookie store is real (just with a deterministic key). This is important: the E2E server must exercise the same middleware chain as production, or you are not testing what you think you are testing. The only differences should be external integrations (email, databases) and the addition of test control endpoints.
+The middleware stack is real. The session handling is real. The cookie store is real (just with a deterministic key). This is important: the E2E server must exercise essentially the same middleware chain as production, or you are not testing what you think you are testing. The differences are external integrations (email, databases) and the test-control endpoints -- plus one middleware layer: production's innermost `wrap-errors` is absent, so these tests cover every layer except the styled-500 path (a raw exception in a failing test is what you want anyway).
 
-We keep `:same-site :lax` to match production -- the magic-link flow is a cross-context GET, and `:strict` would block the cookie on that navigation (more on this in [the email login-flow chapter](21-auth-email-flow.md)). Note too that `:secure` is *absent* from those attrs -- deliberately, because the e2e server runs over plain HTTP on `localhost`, where a `:secure` cookie would never be sent. Those are the only deliberate cookie differences.
+We keep `:same-site :lax` to match production -- the magic-link flow is a cross-context GET, and `:strict` would block the cookie on that navigation (more on this in [the email login-flow chapter](21-auth-email-flow.md)). Note too that `:secure` is *absent* from those attrs -- on purpose, because the e2e server runs over plain HTTP on `localhost`, where a `:secure` cookie would never be sent. That, plus the omitted explicit `:cookie-name` and 30-day `:max-age`, is where the e2e cookie departs from production.
 
 ### The start function
 
@@ -327,7 +328,7 @@ This walks through the entire registration: enter email, get the magic link from
 
 The tempting move is a `beforeEach` that wipes the inbox with an unscoped `DELETE /test/emails` before every test. The handler's own docstring warns you off: without `?to=`, a clear is only safe in serial runs -- and this suite is not serial. The config sets neither `workers` nor `fullyParallel`, so Playwright's defaults apply: tests within a file run in order, but separate spec files land in separate workers and run concurrently. One worker's blanket clear can land between another worker's form submission and its `getMagicLink` call, wiping the email it was about to read -- the kind of race that fails one run in twenty and never on your machine.
 
-So the specs clear nothing. Isolation comes from never sharing state in the first place: every test generates a unique address, reads back only that address through the `?to=` filter, and takes the most recent match. The atom only ever grows, and that is fine -- entries from other tests, other workers, or (under `reuseExistingServer`) earlier runs are invisible behind the filter. No test mutates state another test can see, so no interleaving of workers can break one. The `DELETE` endpoint stays available for a suite that does accumulate enough state to care, and its `?to=` scoping keeps even that operation parallel-safe.
+So the specs clear nothing. Isolation comes from never sharing state in the first place: every test generates a unique address, reads back only that address through the `?to=` filter, and takes the most recent match. The atom only ever grows, and that is fine -- entries from other tests, other workers, or (under `reuseExistingServer`) earlier runs are invisible behind the filter. No test can read *mail* another test wrote, so interleaved workers never cross wires in the inbox. (One caveat keeps this honest: it is not literally shared-nothing. The per-IP magic-link rate limiter -- ten sends per IP per fifteen minutes -- is a single process-global bucket every worker shares, since they all sign in from the same loopback address. It is the one place a large enough parallel suite could interfere with itself, and that limit is the number to raise for the e2e profile if it ever does.) The `DELETE` endpoint stays available for a suite that does accumulate enough state to care, and its `?to=` scoping keeps even that operation parallel-safe.
 
 ### Test: new user registration
 
@@ -447,7 +448,7 @@ A green suite tells you little; a red one is where the harness has to prove it w
 
 To reproduce a failure interactively, three flags open the run up. `--headed` runs the browser visibly instead of headless. `--ui` opens Playwright's watch-mode interface, where you step through actions and re-run a single test in isolation. `--debug` launches the inspector with the run paused, so you can advance action by action and try selectors against the live page.
 
-What the config deliberately does not set is retries.
+What the config does not set is retries.
 
 > **Decision -- why retries stay at 0.** Playwright can re-run a failed test several times and pass the suite if any attempt succeeds. We leave that off. A flaky E2E test is a defect, not weather: a bug in the test or in the app, of exactly the kind the isolation section dissected, a cross-worker race, an ordering assumption, a missing wait. Retrying does not fix the defect; it hides it, letting a real bug reach users because the build stayed green. The cost of refusing retries is honest and worth stating: a genuinely environmental flake, a CI runner that stalls or a port slow to free, fails the whole build instead of passing on the second try. We take that cost, because a suite that retries its way to green is a suite that lies about how reliable the application is. When a test does flake, the trace tells you which kind you are looking at.
 

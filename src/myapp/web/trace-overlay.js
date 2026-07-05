@@ -703,7 +703,7 @@
     flowEl.appendChild(close);
     if (!f) { flowEl.appendChild(el("div", "color:#9ca3af;", "No recorded frame for this element.")); document.body.appendChild(flowEl); return; }
     if (f.ambiguous) {
-      flowEl.appendChild(el("div", "color:#fbbf24;font-weight:600;", "↳ " + ((f.component && f.component.short) || f.component || f.name || "?") + "  —  " + f.instances + " instances, couldn't resolve which one (conditional render)"));
+      flowEl.appendChild(el("div", "color:#fbbf24;font-weight:600;", "↳ " + ((f.component && f.component.short) || f.component || f.name || "?") + "  —  " + f.instances + " instances, couldn't resolve which one (render reordering)"));
       document.body.appendChild(flowEl); return;
     }
     flowEl.appendChild(el("div", "color:#34d399;font-weight:600;", "↳ " + f.span.short + "  #" + (f.instance + 1) + "/" + f.instances));

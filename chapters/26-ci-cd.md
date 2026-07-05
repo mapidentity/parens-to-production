@@ -12,13 +12,13 @@ Forgejo is a self-hosted Git forge (a fork of Gitea) that includes a built-in CI
 
 The cost is worth naming, because it is real. A host runner you own is one more machine to patch, secure, and keep online, and you forgo the elastic, zero-maintenance capacity that a hosted service like GitHub Actions gives you for nothing. The trade pays off precisely when you *already* self-host the forge -- the runner is then marginal infrastructure rather than new infrastructure. If you do not, hosted CI is the lower-effort answer, and the workflow below ports to it almost unchanged, since the syntax is shared.
 
-> **The port, made concrete.** "Almost unchanged" is checkable, so here is the whole diff for running this pipeline on GitHub Actions. Change `runs-on: host` to `runs-on: ubuntu-latest`. Swap Podman for the runner's Docker (`podman run` becomes `docker run`, and the `:Z` volume suffix -- an SELinux label -- simply goes away). Replace the host-mounted `.m2`/`.gitlibs` cache volumes with `actions/cache` steps keyed on `deps.edn`, since a hosted runner keeps nothing between jobs. Move the deploy key -- which the self-hosted runner keeps pre-installed as a file -- into the repository's encrypted secrets, with a step that writes it back to a key file before the `scp`. Everything else -- `on:`, `jobs:`, `steps:`, the container-per-step discipline, the gate order -- is identical, because Forgejo Actions deliberately speaks GitHub's dialect. What does *not* port is the trust model: your source, secrets, and deploy key now transit GitHub's infrastructure, which is exactly the trade the self-hosted runner exists to refuse. Neither answer is wrong; they price privacy and maintenance differently.
+> **The port, made concrete.** "Almost unchanged" is checkable, so here is the whole diff for running this pipeline on GitHub Actions. Change `runs-on: host` to `runs-on: ubuntu-latest`. Swap Podman for the runner's Docker (`podman run` becomes `docker run`, and the `:Z` volume suffix -- an SELinux label -- simply goes away). Replace the host-mounted `.m2`/`.gitlibs` cache volumes with `actions/cache` steps keyed on `deps.edn`, since a hosted runner keeps nothing between jobs. Move the deploy key -- which the self-hosted runner keeps pre-installed as a file -- into the repository's encrypted secrets, with a step that writes it back to a key file before the `scp`. Everything else -- `on:`, `jobs:`, `steps:`, the container-per-step discipline, the gate order -- is identical, because Forgejo Actions speaks GitHub's dialect by design. What does *not* port is the trust model: your source, secrets, and deploy key now transit GitHub's infrastructure, which is exactly the trade the self-hosted runner exists to refuse. Neither answer is wrong; they price privacy and maintenance differently.
 
 The key difference from GitHub Actions is the runner model. Instead of ephemeral VMs, Forgejo Actions can run directly on the host machine. We use `runs-on: host` because our pipeline runs each step inside a Podman container anyway -- the host is just the orchestrator. This gives us full control over caching, networking, and the container runtime.
 
 ## The CI container image
 
-Every step that actually exercises the code runs inside a purpose-built container: formatting, linting, the asset build and its verification, tests, Lighthouse, and the uberjar. The few that do not -- checkout, creating the cache directories, building the CI image itself, the `test -f` jar check, and the deploy -- run on the host, where a container would add nothing. This keeps the CI environment reproducible and isolated from whatever is installed on the host. Here is the Dockerfile:
+Every step that actually exercises the code runs inside a purpose-built container: formatting, linting, dependency scanning, the asset build and its verification, tests, Lighthouse, and the uberjar. The few that do not -- checkout, creating the cache directories, building the CI image itself, the `test -f` jar check, and the deploy -- run on the host, where a container would add nothing. This keeps the CI environment reproducible and isolated from whatever is installed on the host. Here is the Dockerfile:
 
 ```dockerfile
 # CI build image for Forgejo Actions
@@ -105,7 +105,7 @@ A few design choices worth explaining.
 
 **Debian Trixie as the base.** We need a recent enough base to support current versions of Java, Node, and Chromium. Debian is stable, well-understood, and produces reasonably small images.
 
-**Versions: pinned where it counts, latest where it helps.** The major pieces are pinned: Adoptium's Temurin 25 JDK, the zprint binary at 1.3.0, nvm at v0.40.3. Several tools deliberately track the latest release instead: the Clojure CLI (`releases/latest`), Babashka and clj-kondo (their `master` install scripts), Node (`nvm install --lts`), and the global npm tools (`@playwright/test`, `@lhci/cli`, `tailwindcss`). That is a freshness-versus-reproducibility trade: it keeps the toolchain current, at the cost of two builds months apart not being guaranteed bit-for-bit identical. The drift is narrower than that sounds, and the reason is layer caching. The workflow rebuilds the image on every push (the `Build CI image` step below), but Podman re-executes a `RUN` layer only when its instruction text or a preceding layer changes; a `curl ... releases/latest` line is not re-fetched on an unchanged Dockerfile, the cached layer is reused byte-for-byte. So the `latest`- and `master`-tracking tools are effectively frozen at whenever their layer was last built, and they move only when you bust the cache: edit that line, prune the cache, or build `--no-cache`. If you need the stronger guarantee, pin those too: exact versions on the npm installs, a fixed Clojure CLI version, tagged (not `master`) install scripts, and a digest-pinned base image.
+**Versions: pinned where it counts, latest where it helps.** The major pieces are pinned: Adoptium's Temurin 25 JDK, the zprint binary at 1.3.0, nvm at v0.40.3. Several tools track the latest release instead: the Clojure CLI (`releases/latest`), Babashka and clj-kondo (their `master` install scripts), Node (`nvm install --lts`), and the global npm tools (`@playwright/test`, `@lhci/cli`, `tailwindcss`). That is a freshness-versus-reproducibility trade: it keeps the toolchain current, at the cost of two builds months apart not being guaranteed bit-for-bit identical. The drift is narrower than that sounds, and the reason is layer caching. The workflow rebuilds the image on every push (the `Build CI image` step below), but Podman re-executes a `RUN` layer only when its instruction text or a preceding layer changes; a `curl ... releases/latest` line is not re-fetched on an unchanged Dockerfile, the cached layer is reused byte-for-byte. So the `latest`- and `master`-tracking tools are effectively frozen at whenever their layer was last built, and they move only when you bust the cache: edit that line, prune the cache, or build `--no-cache`. If you need the stronger guarantee, pin those too: exact versions on the npm installs, a fixed Clojure CLI version, tagged (not `master`) install scripts, and a digest-pinned base image. That pinning is also a *supply-chain* control, not only a reproducibility one: an unpinned `curl … | bash` from `master` runs whatever that script says the day the layer is built, and an unpinned base image ships whatever vulnerabilities have landed in it since you last looked. Digest-pin the base image, prefer tagged installers over `master`, and pair both with the dependency scan below, so a known-vulnerable transitive dependency fails the build rather than riding it to production.
 
 **Playwright with Chromium.** The `playwright install --with-deps` command downloads Chromium and all its system dependencies (X11 libraries, fonts, etc.) into the container. The final `ln -s` creates a `/usr/local/bin/chromium` symlink so Lighthouse CI can find the browser without extra configuration.
 
@@ -169,6 +169,14 @@ jobs:
           $CI_IMAGE
           clj-kondo --lint src test
 
+      - name: Scan dependencies for CVEs
+        run: >
+          podman run --rm
+          -v ${{ github.workspace }}:/workspace:Z $CACHE_VOLS
+          -w /workspace/myapp
+          $CI_IMAGE
+          bash -c 'clojure -M:nvd "" "$(clojure -Spath)"'
+
       - name: Build static assets
         run: >
           podman run --rm
@@ -222,7 +230,7 @@ jobs:
         run: test -f myapp/target/myapp.jar
 ```
 
-> **A note on the `myapp/` path prefix.** This workflow assumes a *monorepo* layout where the application lives in a `myapp/` subdirectory (hence `-w /workspace/myapp`, `myapp/target/myapp.jar`, and the `myapp/**` path filters above). The book's companion repository is flat -- the app *is* the repo root -- so there the build writes `target/myapp.jar` and the path filters drop the `myapp/` segment. Adjust the prefix to match your own layout; the steps are otherwise identical.
+> **A note on the `myapp/` path prefix.** This workflow assumes a *monorepo* layout where the application lives in a `myapp/` subdirectory -- hence `-w /workspace/myapp`, `myapp/target/myapp.jar`, and the `myapp/**` path filters, which usefully scope CI to the app and ignore changes elsewhere in the repo. The book's companion repository is flat, though -- the app *is* the repo root -- so there the working directory is `/workspace`, the jar is `target/myapp.jar`, and the path filters name the app's own globs (`src/**`, `test/**`, `deps.edn`, `input.css`, `static/**`) rather than one directory. One path is *not* a plain prefix swap: the asset pipeline's output directory is itself named `myapp/static/` (see [the asset-pipeline chapter](24-asset-pipeline.md)), so under `-w /workspace/myapp` the built tree lands at `myapp/myapp/static/` and the static `scp` must point there -- whereas in the flat repo it is simply `myapp/static/` at the root, exactly as the deploy steps below write it. Match the paths to your own layout rather than copying the prefixes blindly.
 
 The deploy steps continue in the same job:
 
@@ -244,6 +252,16 @@ The deploy steps continue in the same job:
 ```
 
 > **One insecure default to close before production.** `StrictHostKeyChecking=no` disables SSH host-key verification on the deploy connection, which leaves it open to a man-in-the-middle on the runner-to-host path. It is the convenient choice for a first green pipeline, but it is the one place this otherwise-hardened workflow trusts the network. The fix is to pin the host's key: capture it once with `ssh-keyscan $APP_HOST` (verified out-of-band), store it as a secret, write it to `~/.ssh/known_hosts` in the job, and drop the flag (or use `StrictHostKeyChecking=yes` with that `known_hosts` in place). Treat the `no` above as a placeholder, not the recommendation.
+
+> **Supply-chain scanning: fail on a known-vulnerable dependency.** The pipeline lints your code and audits your assets, but a transitive dependency carrying a published CVE would sail through both untouched. The `Scan dependencies for CVEs` step closes that gap with [nvd-clojure](https://github.com/rm-hull/nvd-clojure), which walks the project's full classpath and checks every artifact against the National Vulnerability Database. It rides in as an alias, the same way `:build` and `:coverage` do:
+>
+> ```clojure
+> ;; deps.edn, under :aliases
+> :nvd {:replace-deps {nvd-clojure/nvd-clojure {:mvn/version "5.3.0"}}
+>       :main-opts    ["-m" "nvd.task.check"]}
+> ```
+>
+> `:replace-deps` matters: it keeps nvd-clojure's own dependency tree out of the classpath you are scanning, so the tool never reports on itself. The step then runs `clojure -M:nvd "" "$(clojure -Spath)"` -- the empty first argument selects nvd-clojure's default config file, `$(clojure -Spath)` hands `nvd.task.check` the application's classpath, and it fails the build when any dependency scores at or above the CVSS threshold you configure. Two caveats worth stating rather than hiding: the first run downloads the NVD data feed, so cache it between runs or supply an `NVD_API_KEY` to lift the anonymous rate limit; and the NVD carries false positives, so you will keep a small suppression file for advisories that do not apply to how you use the dependency. Neither is a reason to skip it -- both are cheaper than learning about a vulnerable dependency from an incident instead of from your own pipeline.
 
 The stages, in order.
 
@@ -528,23 +546,24 @@ It is deliberately small: the `systemd` unit owns restart-on-failure, logging, a
 
 Second, and this is the subtler trap the script exists to close: `systemctl start` returns the instant the process is *spawned*, not when the application is *serving*. A jar that boots and then dies three seconds later -- a bad config value, a schema mismatch, a port already bound -- would sail straight past a bare `systemctl is-active` check: the unit reads `active` for that instant, the deploy reports green, and the crash-loop surfaces only as a silent outage under the unit's own restart-on-failure. So the script does not ask whether the process spawned. It polls the app's own `/health` endpoint (the same endpoint the e2e server waits on in [the end-to-end-testing chapter](22-e2e-testing.md)) until it answers `200`, and only a real response counts. No healthy answer inside the 30-second window means the deploy failed: restore the previous jar (kept as `myapp.jar.prev`), restart, and exit non-zero. "The deploy succeeded" is thereby defined as *the service answered a request*, not merely *the process started*. The `deploy` user is granted exactly three passwordless `sudo` rights -- `/usr/bin/systemctl stop myapp`, `start myapp`, and `restart myapp`, the third existing only for the rollback line -- and nothing else; the health poll is an ordinary unprivileged HTTP request, so it needs no privilege at all.
 
-Static assets are served by Caddy, not by the JVM. In the companion repository's Caddyfile, the proxy applies `Cache-Control: public, max-age=31536000, immutable` to any content-hashed filename (the `\.([a-f0-9]{8})\.(css|js)$` pattern) and to the version-pinned `idiomorph-*.min.js`, and it sets the long-lived security headers (HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, and the `Cross-Origin-Opener-Policy`/`Cross-Origin-Resource-Policy` isolation pair). It deliberately does **not** set a Content-Security-Policy: the per-document CSP carries the SHA-256 hashes of the application's inline scripts and import map, so the *application* must own it. This is why immutable caching and asset integrity are two sides of one coin -- once a hashed file is out, browsers may cache it for a year, so `verify-assets` is the last chance to catch a hash that does not match its bytes.
+Static assets are served by Caddy, not by the JVM. In the companion repository's Caddyfile, the proxy applies `Cache-Control: public, max-age=31536000, immutable` to any content-hashed filename (the `\.([a-f0-9]{8})\.(css|js)$` pattern) and to the version-pinned `idiomorph-*.min.js`, and it sets the long-lived security headers (HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, and the `Cross-Origin-Opener-Policy`/`Cross-Origin-Resource-Policy` isolation pair). It does **not** set a Content-Security-Policy: the per-document CSP carries the SHA-256 hashes of the application's inline scripts and import map, so the *application* must own it. This is why immutable caching and asset integrity are two sides of one coin -- once a hashed file is out, browsers may cache it for a year, so `verify-assets` is the last chance to catch a hash that does not match its bytes.
 
 The SSH key (`deploy_ed25519`) is pre-installed on the CI runner and grants access to a `deploy` user on the application server. This user has limited permissions -- it owns `/opt/myapp`, so the jar swap itself needs no privilege; beyond that it can write to the static directory and run the deploy script under the three `systemctl` sudo rights named above, nothing else.
 
 ## The pipeline order
 
-The stages are deliberately ordered from fastest to slowest, and from cheapest to most expensive:
+The stages are ordered from fastest to slowest, and from cheapest to most expensive:
 
 1. **Format check** -- Seconds. No dependencies needed. Catches formatting issues before anything else runs.
 2. **Lint** -- Seconds. Static analysis only. Catches code quality issues early.
-3. **Build assets** -- Seconds. Runs Tailwind once and esbuild per module to produce the hashed, minified served tree plus the manifest.
-4. **Verify asset integrity** -- A couple of seconds, almost all of it JVM startup. No new tools, just hashing: every content-hashed filename must match its bytes and every manifest target must exist.
-5. **Coverage** -- Tens of seconds. Runs the test suite. First stage that executes application code.
-6. **E2E tests** -- Minutes. Launches a browser and runs user flows. Expensive but catches integration bugs.
-7. **Lighthouse** -- Minutes. Launches a browser and audits performance. Catches regressions.
-8. **Uberjar** -- Tens of seconds. Compiles everything with strict flags. Produces the deployable artifact.
-9. **Deploy** -- Seconds. Copies files and restarts the app.
+3. **Scan dependencies for CVEs** -- Seconds once the NVD feed is cached (minutes on the first run, which downloads it). A static classpath check; catches a known-vulnerable transitive dependency before it ships.
+4. **Build assets** -- Seconds. Runs Tailwind once and esbuild per module to produce the hashed, minified served tree plus the manifest.
+5. **Verify asset integrity** -- A couple of seconds, almost all of it JVM startup. No new tools, just hashing: every content-hashed filename must match its bytes and every manifest target must exist.
+6. **Coverage** -- Tens of seconds. Runs the test suite. First stage that executes application code.
+7. **E2E tests** -- Minutes. Launches a browser and runs user flows. Expensive but catches integration bugs.
+8. **Lighthouse** -- Minutes. Launches a browser and audits performance. Catches regressions.
+9. **Uberjar** -- Tens of seconds. Compiles everything with strict flags. Produces the deployable artifact.
+10. **Deploy** -- Seconds. Copies files and restarts the app.
 
 If formatting is wrong, you find out in seconds, not after waiting for the entire test suite and build to run. This fast feedback loop makes CI less painful -- developers fix issues quickly because the pipeline tells them quickly.
 

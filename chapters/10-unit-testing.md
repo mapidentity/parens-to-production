@@ -174,7 +174,7 @@ The config tests verify that the configuration system works correctly -- loading
 These tests are straightforward, but they catch real problems:
 
 - `dev-profile-loads` ensures all required config keys exist. If someone removes `:smtp` from `config.edn`, this fails immediately.
-- `session-key-is-16-bytes` verifies the crypto key size constraint. Ring's default cookie store encrypts with AES-128, which needs a 16-byte key; a 15-byte key would cause a cryptic runtime error.
+- `session-key-is-16-bytes` verifies the crypto key size constraint. Ring's cookie store encrypts with AES-128, which needs a 16-byte key; a 15-byte key trips Ring's own assertion at cookie-store construction (`the secret key must be exactly 16 bytes`), so this test pins the length to keep that from ever reaching boot.
 - `get-config-nested-path` and `get-config-missing-key` verify the `get-config` accessor works for both present and absent keys. Note how these tests use `with-redefs` directly to set up minimal config -- they do not need the full test fixtures.
 
 The repo's `config-test` namespace carries one test beyond this listing: `prod-without-session-key-fails-fast`, which asserts that loading the `:prod` profile with no key material in the environment throws rather than falling back to a random key. That is the refuse-to-start policy from [the web server chapter](05-web-server.md), pinned down as a test.
@@ -207,8 +207,9 @@ Rather than testing each route individually, a data-driven approach lists all ex
 ```clojure
 (def ^:private router
   "The application router, built once for path-resolution tests."
-  ;; `:conflicts nil` mirrors prod -- tolerates static-vs-dynamic
-  ;; route overlaps (static path wins, dynamic ids fall through).
+  ;; `:conflicts nil` mirrors prod -- tolerates the static-vs-dynamic
+  ;; overlap by matching conflicting routes in declaration order, so
+  ;; `/recipes/new` (declared first) wins and other ids fall through.
   (ring/router routes/routes {:conflicts nil}))
 
 (defn- match
@@ -241,7 +242,7 @@ Rather than testing each route individually, a data-driven approach lists all ex
         (str "Route " method " " path " should have a handler")))))
 ```
 
-The `match` helper resolves a path against the same router the app uses (`reitit.core/match-by-path`), and the test then checks that the resolved match has a handler for the expected method. The `{:conflicts nil}` is not decoration: the route tree deliberately overlaps static paths (`/recipes/new`, `/recipes/reorder`) with the dynamic `/recipes/:id`, and without that option reitit refuses to build the router at all -- the namespace would fail to load before a single test ran.
+The `match` helper resolves a path against the same router the app uses (`reitit.core/match-by-path`), and the test then checks that the resolved match has a handler for the expected method. The `{:conflicts nil}` is not decoration: the route tree overlaps a static path (`/recipes/new`) with the dynamic `/recipes/:id`, and without that option reitit refuses to build the router at all -- the namespace would fail to load before a single test ran.
 
 This is one of those tests that seems almost too simple to be useful. It is not. Here is what it catches:
 

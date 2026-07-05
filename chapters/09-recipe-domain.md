@@ -96,7 +96,7 @@ Everything the domain reads goes through one pull pattern, so a recipe always ar
       (db/pull* db pull-pattern eid))))
 ```
 
-`recipe-by-id` resolves the entity id before pulling, rather than pulling on the lookup ref directly, for one specific reason: a pull on a lookup ref that matches nothing returns `{:db/id nil}`, a truthy map that has to be guarded against downstream. Resolving the id first means a missing or retracted recipe returns a plain `nil`, which `when-let` and every caller already handles. It is a small thing that prevents a `{:db/id nil}` from leaking into a view and rendering as a blank recipe page. Note the pull goes through `db/pull*`, the wrapper from the [Datomic chapter](08-datomic.md) that converts `java.util.Date` back to `java.time.Instant` on the way out -- the domain never sees a `Date`.
+`recipe-by-id` resolves the entity id before pulling, rather than pulling on the lookup ref directly, for one specific reason: a pull on a lookup ref that matches nothing returns `{:db/id nil}` -- because this pattern requests `:db/id`; without it the pull would be a plain `nil` -- a truthy map that has to be guarded against downstream. Resolving the id first means a missing or retracted recipe returns a plain `nil`, which `when-let` and every caller already handles. It is a small thing that prevents a `{:db/id nil}` from leaking into a view and rendering as a blank recipe page. Note the pull goes through `db/pull*`, the wrapper from the [Datomic chapter](08-datomic.md) that converts `java.util.Date` back to `java.time.Instant` on the way out -- the domain never sees a `Date`.
 
 The browse and dashboard lists are the same pull mapped over a query, and differ only in their sort. `all-recipes` returns everything most-recently-updated first. `recipes-by-user` returns one owner's recipes in dashboard order, and its `dashboard-order` comparator encodes one real rule: recipes with an explicit `:recipe/position` sort first, ascending, and recipes without one sort after them, most recently updated first (the comparator does not assume the attribute is present). The repository has both functions in full; the reads that *are* the point are the temporal ones.
 
@@ -153,7 +153,7 @@ Addressing a single past state directly is its own small function:
 
 ```clojure
 (defn version-as-of
-  "The state of recipe `id` as of basis point `t` (a basis-t, tx-eid, or Instant/Date)."
+  "The state of recipe `id` as of basis point `t` (a basis-t, tx-eid, or Date)."
   [db id t]
   (when-let [eid (d/entid db [:recipe/id id])]
     (db/pull* (d/as-of db t) pull-pattern eid)))

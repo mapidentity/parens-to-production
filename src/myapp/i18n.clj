@@ -37,7 +37,7 @@
   (try
     (when accept-language
       (let [ranges (Locale$LanguageRange/parse accept-language)
-            supported (mapv #(Locale. (name %)) (keys locale-vars))
+            supported (mapv #(Locale/of (name %)) (keys locale-vars))
             match (Locale/lookup ranges supported)]
         (when match (keyword (.getLanguage ^Locale match)))))
     (catch Exception _ nil)))

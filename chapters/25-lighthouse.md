@@ -99,8 +99,9 @@ The test server reconstructs the Ring handler from the same route table the prod
   []
   (let [session-store (cookie/cookie-store {:key (config/get-config :session-key)})]
     (ring/ring-handler
-      ;; `:conflicts nil` mirrors prod — tolerates static-vs-dynamic
-      ;; route overlaps (static path wins, dynamic ids fall through).
+      ;; `:conflicts nil` mirrors prod — tolerates the static-vs-dynamic
+      ;; overlap, matching conflicting routes in declaration order (so
+      ;; `/recipes/new`, declared first, wins and other ids fall through).
       (ring/router routes/routes {:conflicts nil})
       (ring/routes
         (ring/create-file-handler
@@ -224,7 +225,7 @@ Setting the thresholds is easy. The first time you point `lhci autorun` at an un
 
 ### The missing `lang`, viewport, and description
 
-Run the audit cold and the first things to fall are accessibility, SEO, and best practices, all on small omissions in the document head: no `lang` on `<html>`, no viewport meta, no description. Lighthouse checks these because they are not cosmetic -- `lang` is what tells a screen reader which language to pronounce and a search engine which language to index, the viewport tag is what makes the page render at device width instead of zoomed-out desktop, and the description is what a result snippet is built from. In Hiccup, the base layout fixes all three in one place:
+Run the audit cold and the first things to fall are accessibility, SEO, and best practices, all on small omissions in the document head -- but on *different* omissions, which is worth keeping straight. Accessibility and SEO fall on a missing `lang` on `<html>`, viewport meta, and description; best practices falls separately on a missing doctype and charset. Lighthouse checks these because they are not cosmetic -- `lang` is what tells a screen reader which language to pronounce and a search engine which language to index, the viewport tag is what makes the page render at device width instead of zoomed-out desktop, the description is what a result snippet is built from, and the doctype plus `<meta charset>` are what keep the browser out of quirks mode and its byte-level encoding unambiguous. In Hiccup, the base layout fixes all of them in one place:
 
 ```clojure
 (defn- base-layout
@@ -244,7 +245,7 @@ Run the audit cold and the first things to fall are accessibility, SEO, and best
       ]]))
 ```
 
-This is the same escaping `h/html` layout from [the Hiccup views chapter](13-hiccup-views.md) -- not `hiccup.page/html5`, which [the asset-pipeline chapter](24-asset-pipeline.md) deliberately dropped because it does not escape string content. Because these live in the shared base layout, every page gets them automatically, and a new page can never ship missing them. Re-run, and accessibility and SEO jump -- which surfaces the next failure, this one on performance.
+This is the same escaping `h/html` layout from [the Hiccup views chapter](13-hiccup-views.md) -- not `hiccup.page/html5`, which we dropped there because it does not escape string content. Because these live in the shared base layout, every page gets them automatically, and a new page can never ship missing them. Re-run, and accessibility, SEO, and best practices all jump -- which surfaces the next failure, this one on performance.
 
 ### Font display
 

@@ -22,15 +22,22 @@
 (defn-asset inspector-script "myapp/web/inspector.js")
 (defn-asset trace-overlay-script "myapp/web/trace-overlay.js")
 
-(def ^:private ^DateTimeFormatter dt-fmt
-  (.withZone
-    (DateTimeFormatter/ofPattern "d MMM yyyy, HH:mm" Locale/ENGLISH)
-    (ZoneId/of "Europe/Amsterdam")))
+(def ^:private formatter-for
+  "Localized date/time formatter for a locale keyword, in the display timezone.
+  Localizes month names (and weekday names when the pattern asks for them);
+  memoized, one formatter per locale."
+  (let [zone (ZoneId/of "Europe/Amsterdam")]
+    (memoize
+      (fn [locale]
+        (.withZone
+          (DateTimeFormatter/ofPattern "d MMM yyyy, HH:mm" (Locale/of (name locale)))
+          zone)))))
 
 (defn- fmt-time
-  "Format an Instant as a human date/time in the display timezone."
-  [^Instant inst]
-  (when inst (.format dt-fmt inst)))
+  "Format an Instant as a human date/time in the display timezone, localized to `locale`."
+  [locale ^Instant inst]
+  (when inst
+    (.format ^DateTimeFormatter (formatter-for (or locale :en)) inst)))
 
 (defn- author-name
   "Display name for a pulled `:recipe/user` map, falling back to the email local-part."
@@ -500,7 +507,7 @@
        {:href (str "/recipes/" (:recipe/id recipe) "/history")}
        (str (t locale :recipe/history) " (" version-count ")")]
       [:span.text-text-secondary
-       (t locale :recipe/updated) " " (fmt-time (:recipe/updated-at recipe))]]
+       (t locale :recipe/updated) " " (fmt-time locale (:recipe/updated-at recipe))]]
 
      [:section.mt-8
       [:h2.text-lg.font-semibold.text-text-primary.mb-3 (t locale :recipe/forks)]
@@ -602,7 +609,7 @@
                (str (t locale :recipe/version) " " (inc idx))]
               (when latest? [:span.text-xs.text-positive.font-medium (t locale :recipe/current)])
               (when first? [:span.text-xs.text-text-secondary (t locale :recipe/initial)])
-              [:span.text-sm.text-text-secondary (fmt-time (:instant v))]]
+              [:span.text-sm.text-text-secondary (fmt-time locale (:instant v))]]
              [:div.mt-1.flex.gap-4.text-sm
               [:a.text-primary-vivid.hover:text-primary
                {:href (str "/recipes/" rid "/at/" (:t v))} (t locale :recipe/view-this-version)]
@@ -623,7 +630,7 @@
     [:div.max-w-3xl.mx-auto
      [:div.mb-4.rounded-md.border.border-accent.bg-amber-50.px-4.py-2.text-sm.text-warning
       (t locale :recipe/viewing-historical) " "
-      [:span.font-medium (fmt-time instant)]
+      [:span.font-medium (fmt-time locale instant)]
       " · "
       [:a.underline {:href (str "/recipes/" (:recipe/id recipe))}
        (t locale :recipe/back-to-recipe)]]
@@ -683,7 +690,7 @@
      [:h1.text-2xl.font-bold.text-text-primary.mt-2
       (str (:recipe/title recipe) " — " (t locale :recipe/changes-title))]
      [:p.text-sm.text-text-secondary.mb-6
-      (fmt-time from-instant) " → " (fmt-time to-instant)]
+      (fmt-time locale from-instant) " → " (fmt-time locale to-instant)]
      (if (:changed? d)
        [:div
         [:div.flex.gap-4.text-xs.mb-4

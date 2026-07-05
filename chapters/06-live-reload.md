@@ -12,7 +12,7 @@ There are three honest answers.
 
 (c) is what this chapter builds, and the trade deserves to be stated precisely, because what it gives up is exactly what (b)'s cascade bought. `load-file` compiles one file in isolation; anything already compiled against the old definitions stays compiled against them. Edit a macro and its call sites keep running the old expansion until their own namespaces reload. Reload a file containing a `defprotocol` and every implementation compiled against the old protocol object is orphaned: calls fail with `No implementation of method` even though the code on disk is fine. Rename or delete a var and the old one stays interned, so stale references keep working in this JVM and break on the next one. And `load-file` knows nothing about dependency order. These failure modes are the reason `tools.namespace` exists.
 
-For a server-rendered app the trade is still right, because the edits it mishandles are rare and the edit it optimizes is nearly every save you make. The overwhelming majority of development edits change function bodies and markup, and for those recompiling the one file is fully correct: tweak a handler, save, see the page -- a single `load-file` and a single socket message, both effectively instantaneous. Macro and protocol edits are the exception, so we keep option (b) available as a manual command instead of paying its cascade on every save; the next section says where it lives. That is the system this chapter builds: a Java NIO file watcher that detects the change and reloads the one file, and a WebSocket connection that tells the browser to reload itself.
+For a server-rendered app the trade is still right, because the edits it mishandles are rare and the edit it optimizes is nearly every save you make. The overwhelming majority of development edits change function bodies and markup, and for those recompiling the one file is fully correct: tweak a handler, save, see the page -- a single `load-file` and a single socket message, both effectively instantaneous on Linux (a platform caveat the timing section returns to). Macro and protocol edits are the exception, so we keep option (b) available as a manual command instead of paying its cascade on every save; the next section says where it lives. That is the system this chapter builds: a Java NIO file watcher that detects the change and reloads the one file, and a WebSocket connection that tells the browser to reload itself.
 
 ## dev/ classpath separation
 
@@ -96,6 +96,8 @@ When a `.clj` file changes, we load it and then tell the browser to do a full re
 
 We `load-file` the one path that changed -- not a tree refresh, just that file. We then call `dev-reload/notify-reload!`, which pushes a reload message to every connected browser. The whole thing is wrapped in a timing block: during development you want to know how long a reload takes, and if it ever creeps above a fraction of a second something is wrong and you want to catch it early.
 
+One honest limit on that number: the timer starts when the watcher *receives* an event, so it measures load-and-notify, not save-to-detect. On Linux -- the devcontainer's world, where inotify delivers events in milliseconds -- the two are close and the figure means what it says. On a macOS *host* they can diverge: the JDK ships no native FSEvents `WatchService`, so it falls back to a polling watcher whose latency is measured in seconds, and events for host-edited, bind-mounted files can arrive late or not at all across the Docker boundary. Editing inside the container keeps reloads genuinely fast; editing on the host and syncing in is where a "fast" timing number can hide a slow save-to-screen, and the fix is a native-FSEvents watcher (`io.methvin/directory-watcher`) rather than the raw `WatchService`.
+
 The failure path is the important detail. A broken file -- a syntax error, an unbalanced paren -- does not crash the watcher. The exception is caught and logged, the watcher keeps running, and your next save gets a fresh chance to succeed. A crash-on-error watcher that you have to restart every time you fat-finger a paren would defeat the entire purpose.
 
 > This `load-changed-file` is deliberately the *basic* path: one branch, full reload. Later chapters grow the one branch into several and hang hooks around the load, but the detect-load-notify-catch shape survives unchanged.
@@ -163,7 +165,7 @@ The details worth calling out -- the first three are the `java.nio.file` interop
 - **`.take` is blocking.** The thread sleeps until there is an event, consuming zero CPU while idle.
 - **`ClosedWatchServiceException` is caught silently.** This is the normal shutdown path: when we close the WatchService, the blocking `.take` throws this exception, the loop exits, and the thread ends.
 
-We watch `src/` here. A later chapter, once the asset pipeline enters the picture, adds the `static/` tree as a second root so that built assets trigger refreshes too -- but for code reload, `src/` is all we need.
+We watch `src/` here. [The morph-reload chapter](18-morph-reload.md) later adds the `static/` tree as a second root, so built assets trigger refreshes too -- but for code reload, `src/` is all we need.
 
 Stopping the watcher is the mirror image:
 
@@ -351,7 +353,7 @@ The last piece ties it together into a single command. `user.clj` loads when you
 
 `hot-reload/reload!` is a one-line delegator to the `dev-reload/reload!` trigger shown earlier: `user` requires only `hot-reload`, and `hot-reload` already requires `dev-reload`, so the manual trigger rides that require chain rather than adding another.
 
-This is the rewiring the [web-server chapter](05-web-server.md) promised: `start!` now goes through `hot-reload/start` instead of calling `core/start-server!` directly. That entry point calls a small new function in `myapp.core` -- `start-dev-server`, which flips the `myapp.dev` system property on (later chapters read it to decide whether to mount dev-only affordances) and then delegates to the same `start-server!` from the previous chapter:
+This is the rewiring the [web-server chapter](05-web-server.md) promised: `start!` now goes through `hot-reload/start` instead of calling `core/start-server!` directly. That entry point calls a small new function in `myapp.core` -- `start-dev-server`, which sets the `myapp.dev` system property and then delegates to the same `start-server!` from the previous chapter (the dev-only affordances later chapters add gate on a classpath resource, not on this property):
 
 ```clojure
 ;; added to myapp.core

@@ -361,7 +361,7 @@ Three message types, four behaviors -- because `reload` forks on `morphable`. (O
 
 ### A view edit: morph `<body>` in place
 
-The most common edit during day-to-day work is to a view function -- tweak markup, adjust a class, restructure a fragment. For that case a full reload is overkill and actively annoying: it loses scroll, collapses open `<details>`, blurs the field you were typing in. So a `morphable` reload morphs the freshly rendered page into the live DOM instead, reusing the *production* navigation machinery:
+The most common edit during day-to-day work is to a view function -- tweak markup, adjust a class, restructure a fragment. For that case a full reload is overkill and actively annoying: it collapses open `<details>` and blurs the field you were typing in (scroll it would restore, via the stash from earlier -- but the rest it cannot). So a `morphable` reload morphs the freshly rendered page into the live DOM instead, reusing the *production* navigation machinery:
 
 ```javascript
 // A view-ns edit: morph the whole <body> in place via the dispatcher
@@ -395,7 +395,7 @@ The key point is that this is *not* a new mechanism. `fetchAndMorph` is the app'
 
 It also clears any leftover stale-warning banner first, because a morph (unlike a reload) does not navigate, so the banner would otherwise persist.
 
-> **Decision -- morph `<body>`, and teach the morph to spare the overlays.** An earlier cut of this function morphed `<main>`, the same region production navigation targets, and it looked like the narrowest correct response. It is not, because of what "view namespace" means in this app: `views.clj` owns the page chrome (`base-layout`, `top-nav`, the layout wrappers) as well as the content inside `<main>`. Edit the nav markup under a `<main>`-only morph and everything reports success -- the server reloads the namespace, sends `morphable: true`, the morph completes -- while the visible chrome stays stale, with no banner to say so. That is precisely the silent staleness this chapter builds `reload-error` to prevent, manufactured by the morph itself. So the target is the whole `<body>`; the `<head>` stays untouched, and the dispatcher copies the new `<title>` over as it does for every navigation. The widening has a cost the options list pays. The server's freshly rendered HTML never contained the dev tooling's client-injected nodes (the inspector's badge and highlight boxes, the construction-view panel), so to idiomorph they are cruft to delete. Every such node therefore carries `data-myapp-overlay`, and the `beforeNodeRemoved` callback vetoes their removal. The attribute is a contract: a future dev overlay that forgets to mark itself will be eaten by the next view save.
+> **Decision -- morph `<body>`, and teach the morph to spare the overlays.** An earlier cut of this function morphed `<main>`, the same region production navigation targets, and it looked like the narrowest correct response. It is not, because of what "view namespace" means in this app: `views.clj` owns the page chrome (`base-layout`, `top-nav`, the layout wrappers) as well as the content inside `<main>`. Edit the nav markup under a `<main>`-only morph and everything reports success -- the server reloads the namespace, sends `morphable: true`, the morph completes -- while the visible chrome stays stale, with no banner to say so. That is precisely the silent staleness this chapter builds `reload-error` to prevent, manufactured by the morph itself. So the target is the whole `<body>`; the `<head>` stays untouched, and the dispatcher copies the new `<title>` over as it does for every navigation. That leaves one honest residue the box's own logic should name: a view edit to the rest of `base-layout`'s `<head>` -- a meta description, an `og:` tag, a preload `<link>` -- is neither morphed nor title-synced, so it goes stale under a view save exactly as `<main>`-only chrome would, until the next full reload picks it up. Head edits are rare and never visible on the page, so the body morph accepts that residue rather than widening again to re-render `<head>`. The widening has a cost the options list pays. The server's freshly rendered HTML never contained the dev tooling's client-injected nodes (the inspector's badge and highlight boxes, the construction-view panel), so to idiomorph they are cruft to delete. Every such node therefore carries `data-myapp-overlay`, and the `beforeNodeRemoved` callback vetoes their removal. The attribute is a contract: a future dev overlay that forgets to mark itself will be eaten by the next view save.
 
 After the morph, `fetchAndMorph` fires a `dispatcher:morphed` event. The source inspector listens for it to re-attach its highlight to the freshly morphed DOM -- [the source inspector chapter](15-inspector.md), which precedes this one, owns that behavior. Here it is enough to know the morph announces itself.
 
@@ -479,7 +479,7 @@ The matrix adds two steps to the `hot-reload/start` [the live-reload chapter](06
   (log/info "Development environment ready"
     {:websocket-reload true
      :file-watcher true
-     :watch-path "/src"
+     :watch-path "src + static"
      :database "Datomic"}))
 ```
 

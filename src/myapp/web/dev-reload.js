@@ -47,6 +47,13 @@ function morphReload() {
             beforeNodeRemoved: function (node) {
               return !(node.nodeType === 1 && node.hasAttribute('data-myapp-overlay'));
             },
+            // A user-opened <details> reflects `open` onto the live node, but the
+            // server re-render has it closed — idiomorph would strip `open` and
+            // collapse the panel. Veto that one removal so an expanded <details>
+            // survives a view-edit morph (idiomorph has no built-in handling for it).
+            beforeAttributeUpdated: function (attr, node, mutationType) {
+              return !(mutationType === 'remove' && attr === 'open' && node.tagName === 'DETAILS');
+            },
           } });
     })
     .catch(function () { window.location.reload(); });

@@ -113,9 +113,9 @@ First, recognize an element literal -- not every vector is Hiccup (Datomic pull 
             [clojure.walk :as walk]))
 
 (def ^:private dev?
-  ;; Detect dev by a classpath resource, NOT requiring-resolve — see the design
-  ;; note at the end; requiring the hot-reload ns here can deadlock on a
-  ;; circular load and silently turn the whole feature off.
+  ;; Detect dev by a classpath resource, NOT requiring-resolve: requiring the
+  ;; hot-reload ns here can deadlock on a circular load and silently turn the
+  ;; whole feature off.
   (some? (io/resource "hot_reload.clj")))
 
 (def ^:private html-tags

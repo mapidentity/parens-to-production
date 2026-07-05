@@ -128,7 +128,7 @@ Concretely, a "type hint" is a `^Class` metadata tag that tells the compiler wha
 ;; Reflection warning: compiler does not know what `s` is, so the
 ;; `.length` call is resolved by scanning the class at runtime.
 (defn char-count [s] (.length s))
-;; => Reflection warning ... call to method length can't be resolved.
+;; => Reflection warning ... reference to field length can't be resolved.
 
 ;; Hinted: `^String` tells the compiler `s` is a String, so `.length`
 ;; compiles to a direct, warning-free call.
@@ -187,7 +187,7 @@ Here is a subtlety: `b/compile-clj` runs compilation in a subprocess. The warnin
 
 This function scans the captured stderr line by line. It filters for lines that are both a warning (reflection or boxed math) *and* come from our own code -- the warning line names a source file under `myapp/`. That second filter is important -- third-party libraries will emit their own warnings and you cannot fix those. You only fail on warnings you can actually act on.
 
-The `(take 50)` is a safety valve. The `myapp/` filter has already excluded anything a dependency emits, so the only code that can flood this list is your own, and realistically that happens in one scenario: retrofitting this gate onto a codebase that never ran it. In that case the first 50 warnings are a workable to-do list where the full dump is not. On a project that has carried the gate from the first commit, the list never gets near the cap.
+The `(take 50)` is a safety valve, and it bounds the warnings attached to the thrown `ex-info` -- not what you see, since the full captured stderr is already printed above. The `myapp/` filter has already excluded anything a dependency emits, so the only code that can flood that attached list is your own, and realistically that happens in one scenario: retrofitting this gate onto a codebase that never ran it. The console still shows every warning in full; the cap just keeps the failure's data payload from ballooning. On a project that has carried the gate from the first commit, the list never gets near it.
 
 When any hits are found, it throws an `ex-info` with the warnings attached as data. The build fails. No jar is produced. You fix the type hints, run again, and move on.
 
@@ -242,7 +242,7 @@ The choices that set the file's character:
 - **`:list {:hang? false :indent 2 :indent-arg 2}`** -- Disable hanging indentation globally. This is opinionated but it means function bodies always indent consistently at 2 spaces rather than aligning to the first argument.
 - **The `:fn-map`** -- Custom formatting for specific forms. Threading macros (`->`, `->>`, etc.) and `assoc` get hanging enabled because they read better that way. `cond` gets pair formatting. Datomic queries (`d/q`) get special vector handling because query vectors have their own structure.
 
-As the application grows, `:fn-map` grows with it: the repository's file adds rows for the `defview` macro from [the views chapter](13-hiccup-views.md), `db/transact*` from [the Datomic chapter](08-datomic.md), and the `log/*` macros. Same shape, more entries.
+As the application grows, `:fn-map` grows with it: the repository's file adds rows for the inspector's `defview` macro, `db/transact*` from [the Datomic chapter](08-datomic.md), and the `log/*` macros. Same shape, more entries.
 
 The `reformat` script applies zprint across the entire codebase:
 

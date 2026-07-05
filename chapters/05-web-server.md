@@ -154,6 +154,23 @@ Now the configuration namespace:
         {:profile profile
          :var var-name}))))
 
+(defn- require-session-key-length!
+  "Refuse a session key that is not exactly 16 bytes.
+
+  Ring's cookie session store uses AES-128, whose key is exactly 16 bytes. Ring
+  itself asserts this when the cookie store is built, throwing a bare
+  `AssertionError: the secret key must be exactly 16 bytes`. We check earlier,
+  during config resolution, so a misconfigured `SESSION_KEY` fails with a
+  domain-specific message before the middleware stack is even assembled."
+  ^bytes [^bytes k]
+  (when (not= (alength k) 16)
+    (throw
+      (ex-info
+        (str "Session key must be exactly 16 bytes (got " (alength k)
+             "). Ring's cookie store uses AES-128.")
+        {:length (alength k)})))
+  k)
+
 (defn- resolve-keys
   "Convert string keys to bytes, with profile-aware fallback policy.
 
@@ -164,11 +181,12 @@ Now the configuration namespace:
   (-> config
       (update :session-key
               (fn [^String k]
-                (or (when k (.getBytes k "ISO-8859-1"))
-                    (do (require-prod-key! profile "SESSION_KEY")
-                        (println "⚠️  Generating random session key (dev mode)")
-                        (println "⚠️  Sessions will not survive server restart")
-                        (generate-session-key)))))))
+                (require-session-key-length!
+                  (or (when k (.getBytes k "ISO-8859-1"))
+                      (do (require-prod-key! profile "SESSION_KEY")
+                          (println "⚠️  Generating random session key (dev mode)")
+                          (println "⚠️  Sessions will not survive server restart")
+                          (generate-session-key))))))))
 
 (defn load-config
   "Load and resolve config.edn for the given profile."
@@ -193,6 +211,7 @@ Key design decisions here:
 - **`config` is a `delay`**, not eagerly loaded at compile time. This matters because you don't want configuration loading to happen when the namespace is compiled -- only when it's first needed at runtime.
 - **`get-config` takes a variable path**, so `(get-config :server :port)` drills into nested maps naturally.
 - **Dev generates a random key; prod refuses to start without one.** Both policies live in one function: `resolve-keys` threads the active profile, and `require-prod-key!` throws in `:prod` rather than fall back -- a random key would silently log every user out on restart and diverge across the instances of a load-balanced deployment. So you can start a dev REPL without configuring anything, and you cannot forget the key in production. (The repository's `resolve-keys` later threads the auth signing key through the same policy, once [the auth chapter](20-auth-tokens.md) adds it.)
+- **The session key must be exactly 16 bytes.** Ring's cookie store encrypts with AES-128, whose key is 16 bytes, so `require-session-key-length!` checks the resolved key and refuses to start otherwise. The dev fallback is 16 bytes by construction; the guard earns its place for the production `SESSION_KEY`, where a wrong-length string would otherwise trip Ring's own 16-byte assertion when the cookie store is built -- our check just catches it earlier, during config resolution, with a domain-specific message instead of Ring's bare `AssertionError` -- the same fail-at-boot-not-in-production discipline `require-prod-key!` applies to the key's *absence*, applied to its *shape*.
 
 ## Routing with Reitit
 
@@ -286,9 +305,9 @@ The middleware stack, layer by layer:
 
 1. **`wrap-params`** -- Parses query string and form body parameters into a `:params` map on the request.
 2. **`wrap-keyword-params`** -- Converts string parameter keys to keywords, so you get `(:email params)` instead of `(get params "email")`.
-3. **`wrap-session`** -- Manages sessions using encrypted cookies; the session key comes from our config. Every cookie attribute is a security decision. `http-only` prevents JavaScript access, `secure` restricts the cookie to HTTPS, and `max-age` sets a 30-day expiry. `same-site :lax` is a partial mitigation of cross-site request forgery (CSRF), where another site causes your browser to submit a state-changing request that arrives carrying your ambient cookies. `:lax` withholds the cookie on cross-site subrequests but still sends it on top-level GET navigations, so it is a browser-enforced, defense-in-depth layer; [the email-flow chapter](21-auth-email-flow.md) weighs exactly what it covers and what it leaves on the table.
+3. **`wrap-session`** -- Manages sessions using encrypted cookies; the session key comes from our config. Every cookie attribute is a security decision. `http-only` prevents JavaScript access, `secure` restricts the cookie to secure contexts, and `max-age` sets a 30-day expiry. `same-site :lax` is a partial mitigation of cross-site request forgery (CSRF), where another site causes your browser to submit a state-changing request that arrives carrying your ambient cookies. `:lax` withholds the cookie on cross-site subrequests but still sends it on top-level GET navigations, so it is a browser-enforced, defense-in-depth layer; [the email-flow chapter](21-auth-email-flow.md) weighs exactly what it covers and what it leaves on the table.
 
-One consequence of `secure` is worth stating now: the browser will only *send the cookie back* over HTTPS, so authenticated flows must be reached over TLS. In dev that means the Caddy `.lan` hostname above (`https://myapp.lan`), not `http://localhost:3000`. The plain-`localhost` `curl` we run in a moment hits `/health`, which carries no session, so it is unaffected; but if you log in over plain HTTP and wonder why the session never sticks, this attribute is why. We keep `secure` on unconditionally rather than relaxing it in dev, because the dev environment is already HTTPS by design.
+One nuance about `secure` is worth stating now, because it is easy to get wrong: the attribute limits the cookie to *secure contexts*, and Chrome, Edge, and Firefox treat `http://localhost` as a potentially-trustworthy origin -- so a `secure` cookie set over `http://localhost:3000` is stored and sent back normally *there*, and a login reached that way sticks. This is a per-browser choice, not a guarantee (RFC 6265bis leaves what counts as a secure protocol to the user agent): Safari does *not* do it and drops the cookie even on `http://localhost`. On any *non-localhost* plain-HTTP origin every browser drops it. Dev still runs through the Caddy `.lan` hostname (`https://myapp.lan`) rather than `http://localhost:3000` for a broader reason than the cookie: it is the full TLS-and-proxy front door the app's own URLs -- magic links included -- are built around. (The plain-`localhost` `curl` we run in a moment hits `/health`, which carries no session, so none of this touches it.) We keep `secure` on unconditionally rather than relaxing it in dev, because the dev environment is already HTTPS by design.
 
 How the stack is built matters as much as what is in it:
 
@@ -381,7 +400,7 @@ Several important patterns here:
 
 **Var reference with `#'routes/app`.** We pass `#'routes/app` (the var itself) to http-kit, not `routes/app` (the current value). This is the key to REPL-driven development with http-kit. When you redefine `app` or any function it calls, the server automatically uses the new definition because it dereferences the var on each request. Without the `#'`, you'd have to restart the server after every code change.
 
-**http-kit's stop function.** `http-kit/run-server` returns a zero-argument function. Calling it stops the server. We store this function in the atom and call it in `stop-server!`. The `:timeout 100` gives existing connections 100ms to complete before being closed.
+**http-kit's stop function.** `http-kit/run-server` returns a stop function that takes an optional `:timeout` (milliseconds). Calling it stops the server. We store this function in the atom and call it in `stop-server!` as `(stop-fn :timeout 100)`, giving existing connections 100ms to complete before being closed.
 
 **`(:gen-class)`.** This tells the Clojure compiler to generate a Java class with a static `main` method, which is what `java -jar` expects when running the uberjar in production.
 

@@ -165,7 +165,7 @@
         txs))))
 
 (defn version-as-of
-  "The state of recipe `id` as of basis point `t` (a basis-t, tx-eid, or Instant/Date).
+  "The state of recipe `id` as of basis point `t` (a basis-t, tx-eid, or Date).
   nil if the recipe doesn't exist."
   [db id t]
   (when-let [eid (d/entid db [:recipe/id id])]

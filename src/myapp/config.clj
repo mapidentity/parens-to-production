@@ -40,6 +40,23 @@
         {:profile profile
          :var var-name}))))
 
+(defn- require-session-key-length!
+  "Refuse a session key that is not exactly 16 bytes.
+
+  Ring's cookie session store uses AES-128, whose key is exactly 16 bytes. Ring
+  itself asserts this when the cookie store is built, throwing a bare
+  `AssertionError: the secret key must be exactly 16 bytes`. We check earlier,
+  during config resolution, so a misconfigured `SESSION_KEY` fails with a
+  domain-specific message before the middleware stack is even assembled."
+  ^bytes [^bytes k]
+  (when (not= (alength k) 16)
+    (throw
+      (ex-info
+        (str "Session key must be exactly 16 bytes (got " (alength k)
+             "). Ring's cookie store uses AES-128.")
+        {:length (alength k)})))
+  k)
+
 (defn- require-signing-key-strength!
   "Refuse a HMAC-SHA256 signing key shorter than the 256-bit hash output.
 
@@ -67,11 +84,12 @@
   (-> config
       (update :session-key
               (fn [^String k]
-                (or (when k (.getBytes k "ISO-8859-1"))
-                    (do (require-prod-key! profile "SESSION_KEY")
-                        (println "⚠️  Generating random session key (dev mode)")
-                        (println "⚠️  Sessions will not survive server restart")
-                        (generate-session-key)))))
+                (require-session-key-length!
+                  (or (when k (.getBytes k "ISO-8859-1"))
+                      (do (require-prod-key! profile "SESSION_KEY")
+                          (println "⚠️  Generating random session key (dev mode)")
+                          (println "⚠️  Sessions will not survive server restart")
+                          (generate-session-key))))))
       (update :signing-key
               (fn [^String k]
                 (require-signing-key-strength!

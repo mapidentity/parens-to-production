@@ -2,6 +2,11 @@
 set -euo pipefail
 SCRIPT_DIR=$(dirname "$0")
 
+# eclipse-temurin:25-jre-alpine already ships the openssl CLI this script drives,
+# but install it when missing so the script still works on a leaner base image
+# (a no-op when openssl is already present).
+command -v openssl >/dev/null 2>&1 || apk add --no-cache openssl
+
 # Add additional hosts here
 HOSTS='myapp.lan mailpit.lan'
 

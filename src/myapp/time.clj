@@ -51,9 +51,12 @@
   "Run `body` with `c` as the active clock.
 
   Restores the previous value afterwards (even on exception). Atom-
-  based, so the rebind survives thread boundaries — important for any
-  work that crosses into the Datomic transactor. Tests should prefer
-  this over direct `set-clock!` so cleanup is automatic."
+  based, so the rebind is visible on every thread in this JVM —
+  including the http-kit worker threads a request runs on, and any
+  thread Clojure's binding conveyance (`future`, agent sends, `pmap`)
+  does not reach, which a thread-local `binding` would miss.
+  Tests should prefer this over direct `set-clock!` so cleanup is
+  automatic."
   [c & body]
   `(let [old# (current-clock)]
      (try

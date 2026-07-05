@@ -6,7 +6,7 @@ The [recording chapter](16-construction-view.md) made `GET /dev/__trace/:id` ret
 
 *Selecting a frame fills the dossier: call site, the eid-matched reads that produced its data, the queries behind them, and the value transforms -- the drill-downs this chapter builds over the recording.*
 
-Before the code, here is the finished tool end to end, so the pieces below have something to attach to. You load the recipe index under the `:storm` alias and press `Alt+Shift+I`. A panel docks to the right with the call tree for the request that built the page -- middleware narrowing to the handler, the handler to `all-recipes`, `all-recipes` to eight `recipe-card` frames. Hover a frame and its instance lights up on the page; click it and a details pane fills with that call's arguments and Hiccup return (navigable level by level), the `pull` and `d/q` that fed it as full Datalog, a `db→map→hiccup` transforms badge, and the conditionals in its body that rendered nothing. Alt+click a card on the page and a flow card pins that specific instance -- its ancestor path, the reads whose results contained its entity -- ending in a `d/history` pivot for the write behind it. An always-on icicle strip above the tree maps the request's shape at a glance, and a header toggle flips the tree between lexical and temporal parenting. The rest of the chapter assembles that tool in the order you'd build it.
+Before the code, here is the finished tool end to end, so the pieces below have something to attach to. You load the recipe index under the `:storm` alias and press `Alt+Shift+I`. A panel docks to the right with the call tree for the request that built the page -- middleware narrowing to the handler `recipes-index`, which fetches with `all-recipes` and renders the eight `recipe-card` frames. Hover a frame and its instance lights up on the page; click it and a details pane fills with that call's arguments and Hiccup return (navigable level by level), the `pull` and `d/q` that fed it as full Datalog, a `db→map→hiccup` transforms badge, and the conditionals in its body that rendered nothing. Alt+click a card on the page and a flow card pins that specific instance -- its ancestor path, the reads whose results contained its entity -- ending in a `d/history` pivot for the write behind it. An always-on icicle strip above the tree maps the request's shape at a glance, and a header toggle flips the tree between lexical and temporal parenting. The rest of the chapter assembles that tool in the order you'd build it.
 
 > **What this investment buys, and when.** This is the third chapter ([15](15-inspector.md), [16](16-construction-view.md), 17) on a single dev tool, and the cumulative machinery -- a compiler swap, a recording middleware, seven `/dev/__*` projections, a roughly 900-line overlay -- is substantial, so it is worth being clear about what it is for. The everyday "why is this value wrong?" still has its cheap answer, a `println` and a REPL, and that is often enough. What the construction view adds is the question those are bad at: *which* of N identical components on the page in front of you rendered the wrong thing, fed by *which* query, read at *which* basis-t -- answered by clicking the pixel. That is the inspector's REPL-to-the-browser thesis ([chapter 15](15-inspector.md)) carried one step further -- from *where is this element from?* to *everything the server did to build it*. The reusable idea travels even if you never build this exact tool; the tool itself earns its keep the day you hunt a wrong value across identical components.
 >
@@ -441,7 +441,7 @@ Two capabilities make this more than the inspector could do, and both live in `f
       :else nil)))
 ```
 
-When an index can't be resolved -- genuine render reordering (a `sort` between data order and DOM order), or a conditional that rendered nothing -- `flow` returns `:ambiguous true` rather than guessing.
+When an index can't be resolved -- genuine render reordering, where a `sort` or `reverse` sits between data order and DOM order -- `flow` returns `:ambiguous true` rather than guessing. (A component that rendered nothing no longer causes this: per-instance counting skips non-element frames, as the limitations section spells out.)
 
 The `:pivot` is where flow admits its limit. The trace explains how *this request* rendered the value; it does not explain why the *entity* holds it. In the stale-title case the cause was a write in a different request entirely: `fork!` copied the title onto the new entity days ago, and to Datomic the fork's current title is perfectly correct. So flow mode does not pretend to be a root-cause oracle. It **narrows the suspects, shows the data path, and pivots to the write history**: it hands you the entity id and points at `d/history`, which is where that question actually lives.
 
@@ -478,7 +478,7 @@ produced by
 entity #17592186045442 — to see why it holds this value, check its write history (d/history)
 ```
 
-When `flow` returned `:ambiguous`, the card says so -- "N instances, couldn't resolve which one (conditional render)" -- rather than highlighting the wrong card.
+When `flow` returned `:ambiguous`, the card says so -- "N instances, couldn't resolve which one (render reordering)" -- rather than highlighting the wrong card.
 
 ## Region-scoped traces for morphed updates
 

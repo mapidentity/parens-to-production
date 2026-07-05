@@ -8,7 +8,7 @@ In the previous chapters we set up our Ring server and routing with Reitit, a li
 
 ## Why server-rendered HTML
 
-[The positioning chapter](02-positioning.md) made the architectural case: the server is the authority, the browser is a rendering surface, and the hydration tax is a bill you only run up by moving authority to the client. This chapter is where that decision lands in code, and it means three concrete things for the view layer. Rendering is a function call: the Clojure server already has all the data, so a page is functions over data in one process, with no API layer or serialization boundary in between. The browser receives complete HTML, so there is nothing to hydrate and no client application to boot before the page is usable. And JavaScript stays optional: a small script ([the next chapter](14-morph-dispatcher.md)) upgrades navigation and form submissions into in-place updates, but every page works without it.
+[The positioning chapter](02-positioning.md) made the architectural case for server authority. This chapter is where that decision lands in code, and it means three concrete things for the view layer. Rendering is a function call: the Clojure server already has all the data, so a page is functions over data in one process, with no API layer or serialization boundary in between. The browser receives complete HTML, so there is nothing to hydrate and no client application to boot before the page is usable. And JavaScript stays optional: a small script ([the next chapter](14-morph-dispatcher.md)) upgrades navigation and form submissions into in-place updates, but every page works without it.
 
 Note what none of the three requires: a bundler. The project does acquire build steps -- Tailwind produces the stylesheet ([the Tailwind chapter](12-tailwind-styling.md)), and production content-hashes and minifies assets ([the asset pipeline chapter](24-asset-pipeline.md)) -- but nothing is ever bundled, and no build output is an application the browser must execute before the page works.
 
@@ -209,6 +209,9 @@ The top navigation bar is a horizontal strip with tabs for each workflow area. E
   [locale label-key href icon-key active?]
   [:a
    {:href href
+    ;; The label hides below `sm`, leaving an icon-only link; the aria-label
+    ;; keeps the link's accessible name present at every viewport.
+    :aria-label (t locale label-key)
     :class
     (if active?
       "flex items-center gap-1.5 text-white border-b-2 border-white px-3 py-3 text-sm font-semibold"
@@ -339,7 +342,7 @@ Handlers sit between routes and views. They extract data from the request, call 
    :body (str body)})
 ```
 
-Note the explicit `charset=UTF-8`. With the escaping renderer (below), the response is exactly the bytes Hiccup produced, so we declare the encoding the browser should read them in.
+Note the explicit `charset=UTF-8`. With the escaping renderer (below), the body is the exact string Hiccup produced, which the Ring adapter then encodes as UTF-8 bytes -- so we declare the encoding the browser should read them in. The helper bakes in `200` because that is the overwhelming common case; the few pages that need another status (a 404, or the 500 the error page carries) `assoc` it over this map or build their own -- status is the one field worth overriding, so the helper does not parameterize it.
 
 Handlers then read what they need off the request and render:
 
@@ -361,7 +364,7 @@ Handlers then read what they need off the request and render:
     (html (views/dashboard (:locale request) (:user-email request) (:admin? request) recipes))))
 ```
 
-The pattern is consistent: gather data, render the view, wrap with `html`. No framework magic. The `str` inside `html` realizes the `RawString` the layout's `h/html` returned into the actual HTML of the response body. (The `:user-eid` and `:admin?` keys these handlers read are not in the raw request -- they are resolved once from the session by `wrap-current-user`, a middleware we build in [the login-flow chapter](21-auth-email-flow.md); until then, read them as "the signed-in user's entity id, or `nil`.")
+The pattern is consistent: gather data, render the view, wrap with `html`. No framework magic. The `str` inside `html` realizes the `RawString` the layout's `h/html` returned into the actual HTML of the response body. (The `:user-eid` and `:admin?` keys these handlers read are not in the raw request -- they are resolved once from the session by `wrap-current-user`, a middleware the companion repo introduces (described in [the login-flow chapter](21-auth-email-flow.md)); until then, read them as "the signed-in user's entity id, or `nil`.")
 
 Importantly, **handlers do not branch on the request type.** There is no "is this a fetch?" check and no separate partial-vs-full code path. A handler renders one thing -- the full page -- and the dispatcher on the client extracts the part it needs. That client dispatcher (the script that turns these full-page responses into in-place `<main>` morphs, and the reason `data-layout` rides on every `<main>`) is [The Morph Dispatcher](14-morph-dispatcher.md), the next chapter. The rest of *this* chapter finishes the server side of the view layer.
 
@@ -516,6 +519,6 @@ Static assets are served from `assets/static-root` -- the source `static/` tree 
 
 ## Where this leaves us
 
-The server-side view layer is complete. HTML is generated with Hiccup 2's escaping renderer -- composable Clojure data, auto-escaped so user content is safe by default, with raw output pared back to a handful of explicit, auditable opt-ins. Three composing layouts (`base-layout`, `public-layout`, `app-layout`) put every page's content inside a single `<main data-layout>`; one state-aware top bar adapts to signed-in versus anonymous with active-tab highlighting in pure CSS; and CommonMark turns Markdown content into sanitized HTML, keeping content in Markdown and presentation in CSS. There is no virtual DOM, no client-side state store, no hydration, and no separate API -- the server renders complete HTML and the browser shows it.
+The server-side view layer is complete. HTML is generated with Hiccup 2's escaping renderer -- composable Clojure data, auto-escaped so user content is safe by default, with raw output pared back to a handful of explicit, auditable opt-ins. Three composing layouts (`base-layout`, `public-layout`, `app-layout`) put every page's content inside a single `<main data-layout>`; one state-aware top bar adapts to signed-in versus anonymous with active-tab highlighting in pure CSS; and CommonMark turns Markdown content into sanitized HTML, keeping content in Markdown and presentation in CSS. There is no client-side rendering machinery here -- the server renders complete HTML and the browser shows it.
 
 That `<main data-layout>` seam is also the setup for what comes next. Because every handler renders a whole page and never branches on how it was called, a small client script can fetch any page and morph just its `<main>` into place without the server knowing anything about it -- which is the next chapter, [The Morph Dispatcher](14-morph-dispatcher.md). After that the book sharpens the development experience -- a source inspector and morph-based hot reload -- and later puts this view layer under end-to-end test, driving a real browser with Playwright to verify the full request, render, and morph loop, including the no-JavaScript fallback path.

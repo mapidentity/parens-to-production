@@ -307,13 +307,13 @@ First, we verify our base64 implementation round-trips correctly and produces UR
 (deftest base64-url-safe
   (testing "No +, /, or = in output"
     (let [encoded (auth/base64-encode
-                    (byte-array (map unchecked-byte [255 239 191 253 251 247])))]
+                    (byte-array (map unchecked-byte [255 232 0 251 240])))]
       (is (not (str/includes? encoded "+")))
       (is (not (str/includes? encoded "/")))
       (is (not (str/includes? encoded "="))))))
 ```
 
-The second test is particularly important. The byte sequence `[255 239 191 253 251 247]` is specifically chosen to produce `+`, `/`, and `=` in standard base64. If URL-safe encoding is working, none of those characters should appear.
+The second test is particularly important. The five-byte sequence `[255 232 0 251 240]` is specifically chosen to produce all three of `+`, `/`, and `=` in standard base64 -- it encodes to `/+gA+/A=`. The `=` earns its place in the test only because of the length: base64 pads only when the input is not a multiple of three bytes, so a five-byte input is what actually exercises `.withoutPadding`. (A six-byte input emits no `=` no matter its contents, which would make that assertion vacuous -- it can only ever pass.) If URL-safe, unpadded encoding is working, none of the three characters should appear.
 
 ### Token format and round-trip
 

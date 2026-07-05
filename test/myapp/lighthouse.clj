@@ -52,8 +52,9 @@
   []
   (let [session-store (cookie/cookie-store {:key (config/get-config :session-key)})]
     (ring/ring-handler
-      ;; `:conflicts nil` mirrors prod — tolerates static-vs-dynamic
-      ;; route overlaps (static path wins, dynamic ids fall through).
+      ;; `:conflicts nil` mirrors prod — tolerates the static-vs-dynamic
+      ;; overlap, matching conflicting routes in declaration order (so
+      ;; `/recipes/new`, declared first, wins and other ids fall through).
       (ring/router routes/routes {:conflicts nil})
       (ring/routes
         (ring/create-file-handler

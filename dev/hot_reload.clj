@@ -234,7 +234,7 @@
   (log/info "Development environment ready"
     {:websocket-reload true
      :file-watcher true
-     :watch-path "/src"
+     :watch-path "src + static"
      :database "Datomic"}))
 
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
