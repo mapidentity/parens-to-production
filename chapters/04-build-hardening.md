@@ -207,7 +207,7 @@ clojure -T:build uber
 
 ## Code formatting with zprint
 
-Consistent formatting eliminates an entire class of review noise. We use [zprint](https://github.com/kkinnear/zprint) with a `.zprintrc` at the project root:
+Consistent formatting eliminates an entire class of review noise. The usual Clojure choices, cljfmt and cljstyle, normalize indentation while largely preserving your existing line breaks; we use [zprint](https://github.com/kkinnear/zprint) instead, because its per-form rules -- the `:fn-map` below -- let us pin one canonical layout for the forms that have one, such as threading macros and `d/q`. The trade is a more opinionated reflow, which `:respect-bl` and the vectors' `:respect-nl?` below rein back where a blank line or a query's shape carries meaning. Its `.zprintrc` sits at the project root:
 
 ```clojure
 {:width 100

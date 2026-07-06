@@ -386,7 +386,7 @@ Using it in a test namespace is one line:
 
 These tests verify the full round trip: write with `java.time.Instant`, read back with `java.time.Instant`, with Datomic storing `java.util.Date` internally. The tests themselves never touch `java.util.Date`; the bridge is invisible.
 
-Each test gets its own database, runs in milliseconds, and cleans up after itself. No Docker containers, no test database provisioning, no cleanup scripts.
+Each test gets its own database, runs in milliseconds, and cleans up after itself. No Docker containers, no test database provisioning, no cleanup scripts. A relational suite can't afford a fresh database per test -- creating one and loading the schema is an out-of-process operation orders of magnitude slower than the queries under test, and across hundreds of tests that adds up -- so those suites keep a single shared database and roll each test back inside a transaction instead: cheap, but blind to code that commits or opens its own connection. `datomic:mem` does the same -- create a database, load the schema, drop it -- in-process, fast enough that the fresh database is itself the cheapest option here, and the most honest, since the test drives the real write path rather than a transaction held open beneath it.
 
 ## Schema tests
 
