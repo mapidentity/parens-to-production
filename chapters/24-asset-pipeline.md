@@ -329,7 +329,7 @@ If the gate fails, the pipeline stops and no inconsistent asset tree reaches pro
 
 ## One engine, two deliveries
 
-Here is the part that makes the whole pipeline drift-free. There is exactly one set of sources and one build. Development and production differ only in *how the same files are delivered* -- not in what they are.
+Here is the part that makes the whole pipeline drift-free. There is exactly one set of sources and one build. Development and production differ only in *how the same files are delivered* -- content-hashed, and the JavaScript minified -- not in what they do.
 
 **Development: stable URLs + `no-store`.** Dev serves the `static/` source directory directly (`static-root` is `"static"`), at stable, unhashed URLs. A single long-lived `tailwindcss --watch` process rebuilds `static/styles.css` incrementally as you edit; esbuild is not involved (the ESM is served as-is, the vendored library unminified). Because the URLs are stable but the bytes behind them change as you work, the Ring file handler is wrapped in `wrap-dev-no-store` to send `Cache-Control: no-store` for every `.css`/`.js` -- the mechanism we built in [the morph-reload chapter](18-morph-reload.md#stable-dev-urls-with-no-store), so a stable URL never serves stale bytes after a rebuild. That is the *dev* half of this engine; the production half is the rest of this chapter.
 

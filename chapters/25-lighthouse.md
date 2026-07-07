@@ -277,6 +277,8 @@ With the head and the font handled, the accessibility audit's remaining deductio
 
 And one caveat, stated honestly: use `<main>` for the primary content area and `<nav>` for navigation, but know that the gate does not hold you to it. In the Lighthouse this repo runs (12.x, bundled with `@lhci/cli`), the `<main>`-landmark audit (`landmark-one-main`) carries weight 0 and is hidden from the report, the general landmarks check is a weight-0 manual audit, and no scored audit looks for `<nav>` at all -- a page missing both still scores a clean 1.0, and the `minScore: 1` gate passes it untouched. We keep the landmarks anyway, partly because assistive technology navigates by them whether or not Lighthouse grades them, and partly because in this app `<main>` is enforced by something stricter than any audit: it is the morph target the dispatcher extracts on every navigation ([the morph-dispatcher chapter](14-morph-dispatcher.md)). Drop it and every page breaks, not just a score.
 
+> **An accessibility 100 is a floor, not a certificate.** The weight-0 landmark audit is one case of a general limit worth stating plainly: an automated audit reaches only a fraction of the WCAG criteria -- common estimates put it between a third and half -- because a machine can confirm that a label or an `alt` is *present* but not that it is *meaningful*, and it cannot judge reading order, keyboard traps, focus management, or whether the page makes sense to someone who cannot see it. So the 100 we pin is the necessary, regression-proof baseline, every mechanical miss caught the moment it ships -- not a claim that the app is accessible, which only a person with a screen reader and a keyboard can tell you.
+
 In the app layout, this looks like:
 
 ```clojure

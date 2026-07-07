@@ -69,9 +69,6 @@ RUN curl -L -O https://github.com/clojure/brew-install/releases/latest/download/
     && rm linux-install.sh \
     && clojure -M -e '(println "Clojure installed")'
 
-# Install babashka
-RUN curl -s https://raw.githubusercontent.com/babashka/babashka/master/install | bash
-
 # Install zprint formatter
 RUN curl -sL https://github.com/kkinnear/zprint/releases/download/1.3.0/zprintl-1.3.0 \
     -o /usr/local/bin/zprint \
