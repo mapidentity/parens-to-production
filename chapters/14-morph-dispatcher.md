@@ -111,7 +111,7 @@ document.dispatchEvent(new CustomEvent('dispatcher:morphed', {
 }));
 ```
 
-(At the repo head the `detail` carries a fourth field, `traceId` -- dev-only plumbing that [the construction-view chapter](17-construction-view-overlay.md) adds so its overlay can trace a morphed region; in production it is `null`.)
+(At the repo head the `detail` carries a fourth field, `traceId` -- dev-only plumbing that [the construction-view overlay chapter](17-construction-view-overlay.md) adds so its overlay can trace a morphed region; in production it is `null`.)
 
 That event is the single extension point, and its principal listener is a small controller registry. A "controller" is a behavior attached to elements matching a selector -- `live-form`, `defer-details`, `server-preview`, `live-stats`, and a handful more -- declared as a `connect`/`disconnect` pair. The registry owns the lifecycle each of them would otherwise re-implement by hand: find matching elements on first load *and* on every `dispatcher:morphed`, attach exactly once, and detach when an element leaves the DOM or stops matching. A behavior on the registry never touches `DOMContentLoaded`, the morph event, or a "have I wired this already" flag; it just says what to do when a matching element appears and what to undo when it goes:
 

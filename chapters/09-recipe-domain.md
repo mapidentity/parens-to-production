@@ -100,6 +100,8 @@ Everything the domain reads goes through one pull pattern, so a recipe always ar
 
 The browse and dashboard lists are the same pull mapped over a query, and differ only in their sort. `all-recipes` returns everything most-recently-updated first. `recipes-by-user` returns one owner's recipes in dashboard order, and its `dashboard-order` comparator encodes one real rule: recipes with an explicit `:recipe/position` sort first, ascending, and recipes without one sort after them, most recently updated first (the comparator does not assume the attribute is present). The repository has both functions in full; the reads that *are* the point are the temporal ones.
 
+Both are also unbounded, which is worth stating in the same breath the version-history cost gets stated below: each loads *every* matching recipe through the pull pattern and sorts the whole set in memory, with no `:limit` and no pagination. `all-recipes` is the sharper of the two -- it backs the public index, so it reads the entire catalog on every visit. For the read-mostly, human-scale catalog this domain models that is the right shape, and the sort has to see every row anyway; but a `:limit` on the query and a paged index are the first bound to add the day the catalog outgrows a single screen.
+
 ## Versions are transactions
 
 A version of a recipe is a transaction that changed its content. That sentence is the entire design, and the function that realizes it is the keystone of the chapter:
