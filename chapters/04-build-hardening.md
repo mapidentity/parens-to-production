@@ -242,7 +242,7 @@ The choices that set the file's character:
 - **`:list {:hang? false :indent 2 :indent-arg 2}`** -- Disable hanging indentation globally. This is opinionated but it means function bodies always indent consistently at 2 spaces rather than aligning to the first argument.
 - **The `:fn-map`** -- Custom formatting for specific forms. Threading macros (`->`, `->>`, etc.) and `assoc` get hanging enabled because they read better that way. `cond` gets pair formatting. Datomic queries (`d/q`) get special vector handling because query vectors have their own structure.
 
-As the application grows, `:fn-map` grows with it: the repository's file adds rows for the inspector's `defview` macro, `db/transact*` from [the Datomic chapter](08-datomic.md), and the `log/*` macros. Same shape, more entries.
+As the application grows, `:fn-map` grows with it: the repository's file adds rows for `db/transact*` from [the Datomic chapter](08-datomic.md) and the `log/*` macros. Same shape, more entries.
 
 The `reformat` script applies zprint across the entire codebase:
 

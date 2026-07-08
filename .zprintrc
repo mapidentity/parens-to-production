@@ -12,8 +12,6 @@
           "def" :arg1-force-nl-body
           "defn" :arg1-force-nl-body
           "defn-" :arg1-force-nl-body
-          "defview" :arg1-force-nl-body
-          "defview-" :arg1-force-nl-body
           "try" :flow-body
           "d/q" [:hang {:vector {:respect-nl? true}}]
           "->" [:noarg1-body {:list {:hang? true}}]

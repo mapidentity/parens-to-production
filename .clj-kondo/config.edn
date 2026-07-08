@@ -41,8 +41,6 @@
  
   :lint-as
  {myapp.web.assets/defn-asset clj-kondo.lint-as/def-catch-all
-  myapp.web.inspector/defview clojure.core/defn
-  myapp.web.inspector/defview- clojure.core/defn-
   myapp.web.inspector/tag-root clojure.core/identity}
 
  :hooks
