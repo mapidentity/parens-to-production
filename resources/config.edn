@@ -1,4 +1,8 @@
-{:server {:port 3000
+{:server {;; In :prod the port is per-instance (MYAPP_PORT, set by the systemd
+          ;; unit) so an update pair can run two builds side by side; unset,
+          ;; it stays 3000 for the single-instance topology.
+          :port #profile {:dev 3000
+                          :prod #long #or [#env "MYAPP_PORT" "3000"]}
           :host #profile {:dev "0.0.0.0"
                           :prod "127.0.0.1"}}
 

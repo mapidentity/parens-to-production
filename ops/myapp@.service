@@ -1,0 +1,29 @@
+# Template unit for the minimal-downtime update pair: the instance name is
+# the port. `systemctl start myapp@3001 myapp@3002` runs two builds side by
+# side behind Caddy's upstream pool; the deploy script (deploy-pair.sh)
+# starts the new instance, health-gates it, and drains the old one.
+[Unit]
+Description=MyApp — instance on port %i
+After=network-online.target myapp-transactor.service
+Wants=network-online.target myapp-transactor.service
+
+[Service]
+User=myapp
+Group=myapp
+WorkingDirectory=/opt/myapp
+Environment=MYAPP_PROFILE=prod
+Environment=MYAPP_PORT=%i
+EnvironmentFile=/etc/myapp/env
+# One jar file PER INSTANCE, so the running instance's jar is never
+# replaced underneath a live JVM — deploy-pair.sh copies the new build to
+# the idle instance's path before starting it.
+ExecStart=/usr/bin/java -Xmx1g -XX:+ExitOnOutOfMemoryError -jar /opt/myapp/myapp-%i.jar
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

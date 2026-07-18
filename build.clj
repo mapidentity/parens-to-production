@@ -46,23 +46,29 @@
 (defn compile-strict
   "AOT-compile src with *warn-on-reflection* and *unchecked-math* :warn-on-boxed.
   Then fail if any warnings from our code were emitted. compile-clj runs in a
-  subprocess, so we capture stderr via :err :capture and scan it."
+  subprocess; its stderr goes to a FILE (:err :write), not a captured pipe.
+  tools.build drains a :capture pipe only after the subprocess exits, so a
+  warning flood past the 64KB pipe buffer deadlocks the build — silently, and
+  exactly when the gate has the most to say. A file has no such ceiling."
   [_]
-  (let [{:keys [err]} (b/compile-clj
-                        {:basis @basis
-                         :src-dirs ["src"]
-                         :class-dir class-dir
-                         :err :capture
-                         :bindings {#'*warn-on-reflection* true
-                                    #'*unchecked-math* :warn-on-boxed
-                                    ;; Strip any in-file `tests`/`deftest` forms
-                                    ;; from the artifact (see the testing chapter).
-                                    #'test/*load-tests* false}})]
-    (when err
-      (binding [*out* *err*]
-        (print err)
-        (flush))
-      (fail-on-warnings! err))
+  (let [err-file "target/compile-warnings.txt"]
+    (b/compile-clj
+      {:basis @basis
+       :src-dirs ["src"]
+       :class-dir class-dir
+       :err :write
+       :err-file err-file
+       :bindings {#'*warn-on-reflection* true
+                  #'*unchecked-math* :warn-on-boxed
+                  ;; Strip any in-file `tests`/`deftest` forms
+                  ;; from the artifact (see the testing chapter).
+                  #'test/*load-tests* false}})
+    (let [err (slurp err-file)]
+      (when (seq err)
+        (binding [*out* *err*]
+          (print err)
+          (flush))
+        (fail-on-warnings! err)))
     (println "compile-strict: OK")))
 
 (defn uber
@@ -72,6 +78,14 @@
   (b/copy-dir
     {:src-dirs ["src" "resources"]
      :target-dir class-dir})
+  ;; Bake the build identity into the jar. The page validator
+  ;; (myapp.web.routes/build-token) folds this into every anonymous-page
+  ;; ETag: every process of one build agrees on it (an instance pair must
+  ;; not flap validators), and every new build changes it (a deploy still
+  ;; invalidates the world). The git sha IS the build identity — same
+  ;; input, same token; no clock involved.
+  (spit (io/file class-dir "build-id")
+    (str/trim (b/git-process {:git-args "rev-parse --short HEAD"})))
   (compile-strict nil)
   (b/uber
     {:class-dir class-dir

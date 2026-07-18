@@ -40,7 +40,16 @@ myapp.example.com {
 	}
 
 	handle {
-		reverse_proxy 127.0.0.1:3000
+		# One pool serves both topologies: the single-instance unit
+		# (myapp.service) binds 3000; the update pair (myapp@.service)
+		# binds 3001/3002. Health checks steer traffic to whichever
+		# instances are alive — during a pair deploy, briefly both.
+		reverse_proxy 127.0.0.1:3000 127.0.0.1:3001 127.0.0.1:3002 {
+			health_uri /health
+			health_interval 2s
+			fail_duration 10s
+			lb_try_duration 4s
+		}
 	}
 
 	# The deploy window: while the app restarts, the proxy gets connection

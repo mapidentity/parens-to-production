@@ -69,20 +69,26 @@ Here is the build-hardening portion of `build.clj` -- the strict-compile gate an
 (defn compile-strict
   "AOT-compile src with *warn-on-reflection* and *unchecked-math* :warn-on-boxed.
   Then fail if any warnings from our code were emitted. compile-clj runs in a
-  subprocess, so we capture stderr via :err :capture and scan it."
+  subprocess; its stderr goes to a FILE (:err :write), not a captured pipe.
+  tools.build drains a :capture pipe only after the subprocess exits, so a
+  warning flood past the 64KB pipe buffer deadlocks the build — silently, and
+  exactly when the gate has the most to say. A file has no such ceiling."
   [_]
-  (let [{:keys [err]} (b/compile-clj
-                        {:basis @basis
-                         :src-dirs ["src"]
-                         :class-dir class-dir
-                         :err :capture
-                         :bindings {#'*warn-on-reflection* true
-                                    #'*unchecked-math* :warn-on-boxed}})]
-    (when err
-      (binding [*out* *err*]
-        (print err)
-        (flush))
-      (fail-on-warnings! err))
+  (let [err-file "target/compile-warnings.txt"]
+    (b/compile-clj
+      {:basis @basis
+       :src-dirs ["src"]
+       :class-dir class-dir
+       :err :write
+       :err-file err-file
+       :bindings {#'*warn-on-reflection* true
+                  #'*unchecked-math* :warn-on-boxed}})
+    (let [err (slurp err-file)]
+      (when (seq err)
+        (binding [*out* *err*]
+          (print err)
+          (flush))
+        (fail-on-warnings! err)))
     (println "compile-strict: OK")))
 
 (defn uber
@@ -165,9 +171,9 @@ Per-namespace is not a stylistic preference; it is how the var works. The compil
 
 With the line in place, the REPL prints `Reflection warning, ...` the moment you load an unhinted interop call, and the build gate becomes what a gate should be: the backstop, not the first notice. (`*unchecked-math*` gets no such per-namespace line in this codebase; boxed math is caught at the build gate alone.)
 
-### Why `compile-clj` needs `:err :capture`
+### Why the warnings go to a file, not a pipe
 
-Here is a subtlety: `b/compile-clj` runs compilation in a subprocess. The warnings go to stderr of that subprocess. By default they scroll past and disappear. The `:err :capture` option collects them into a string so we can inspect them programmatically.
+Here is a subtlety, with a scar attached. `b/compile-clj` runs compilation in a subprocess, and the warnings land on that subprocess's stderr -- by default they scroll past and disappear, so they must be redirected somewhere inspectable. The obvious redirection, and this gate's first version, is `:err :capture`, which hands stderr back as a string. It worked -- until the codebase grew. tools.build reads a captured pipe only *after* the subprocess exits, and an OS pipe buffers 64KB; the day the strict bindings had more than 64KB to say (every dependency loaded from source chimes in with its own reflection and boxed-math chatter, and it adds up), the subprocess blocked mid-warning, `waitFor` waited on an exit that could never come, and the build hung with no error at all. The failure mode is worth savoring: the gate deadlocked *because* it had too much to report -- and the flood that finally crossed the buffer was carrying four real boxed-math warnings from this book's own search code, which is exactly the cargo the gate exists to deliver. `:err :write` with an `:err-file` sends stderr to `target/compile-warnings.txt` instead. A file has no ceiling, the deadlock is structurally impossible, and the warnings persist as a build artifact you can read after the fact instead of a string that vanished with the process.
 
 ### `fail-on-warnings!` -- the gate
 

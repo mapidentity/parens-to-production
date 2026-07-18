@@ -415,20 +415,20 @@
         errors (cond-> {}
                  (str/blank? title) (assoc :title
                                       [:blank])
-                 (> (count title) (:title limits)) (assoc :title
-                                                     [:too-long])
+                 (> (count title) (long (:title limits))) (assoc :title
+                                                            [:too-long])
                  (nil? servings-n) (assoc :servings
                                      [:not-a-number])
                  (and servings-n (not (<= 1 servings-n 100))) (assoc :servings
                                                                 [:out-of-range])
-                 (> (count description) (:description limits)) (assoc :description
-                                                                 [:too-long])
-                 (> (count ingredients) (:ingredients limits)) (assoc :ingredients
-                                                                 [:too-long])
+                 (> (count description) (long (:description limits))) (assoc :description
+                                                                        [:too-long])
+                 (> (count ingredients) (long (:ingredients limits))) (assoc :ingredients
+                                                                        [:too-long])
                  (> (count (or note "")) 500) (assoc :note
                                                 [:too-long])
-                 (> (count steps) (:steps limits)) (assoc :steps
-                                                     [:too-long]))]
+                 (> (count steps) (long (:steps limits))) (assoc :steps
+                                                            [:too-long]))]
     (if (seq errors)
       {:errors errors}
       {:values {:title title

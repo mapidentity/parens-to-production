@@ -3,6 +3,7 @@
   Maps URL paths to handlers and composes middleware (params, sessions, locale,
   auth, terms gate, admin gate)."
   (:require
+    [clojure.java.io :as io]
     [clojure.string :as str]
     [clojure.tools.logging :as log]
     [datomic.api :as d]
@@ -36,21 +37,30 @@
         (assoc request
           :locale locale)))))
 
-(defonce ^:private boot-token
-  ;; Part of the page validator: a deploy or restart mints a new token and
-  ;; so invalidates every cached page — over-invalidation, never staleness.
-  ;; A UUID, not a timestamp: it is an identity for this process, and the
-  ;; swappable clock (myapp.time) must stay free to lie in tests.
-  (str (random-uuid)))
+(defonce ^:private build-token
+  ;; The rendering code's identity in the page validator. A production jar
+  ;; carries a `build-id` resource baked at uberjar time (the git sha), so
+  ;; every process of one build shares one token — two instances behind one
+  ;; proxy must agree or ETags flap between them — while a deploy still
+  ;; invalidates every cached page. Dev has no jar and no pair, so it falls
+  ;; back to a per-process UUID, keeping restart-invalidates semantics.
+  ;; An identity, not a timestamp, either way: the swappable clock
+  ;; (myapp.time) must stay free to lie in tests.
+  (or
+    (some-> (io/resource "build-id")
+            slurp
+            str/trim
+            not-empty)
+    (str (random-uuid))))
 
 (defn- current-validator
   "The ETag any anonymous HTML page has RIGHT NOW.
   Such a page is a pure function of exactly three things: the database
-  basis-t, the locale, and this build of the rendering code (boot-token).
+  basis-t, the locale, and this build of the rendering code (build-token).
   Computable without rendering anything — which is what lets a matching
   If-None-Match short-circuit the whole handler."
   [locale]
-  (str "W/\"" (d/basis-t (d/db (db/get-connection))) "-" (name locale) "-" boot-token "\""))
+  (str "W/\"" (d/basis-t (d/db (db/get-connection))) "-" (name locale) "-" build-token "\""))
 
 (defn wrap-conditional-get
   "Conditional GET for anonymous HTML pages, validated by basis-t.

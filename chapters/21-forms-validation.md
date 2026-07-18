@@ -53,7 +53,7 @@ The first decision is where the rules live. Not in the handler (the handler tran
         servings-n (parse-long (str/trim (str (or servings ""))))
         errors (cond-> {}
                  (str/blank? title) (assoc :title [:blank])
-                 (> (count title) (:title limits)) (assoc :title [:too-long])
+                 (> (count title) (long (:title limits))) (assoc :title [:too-long])
                  (nil? servings-n) (assoc :servings [:not-a-number])
                  (and servings-n (not (<= 1 servings-n 100)))
                  (assoc :servings [:out-of-range])
