@@ -20,6 +20,7 @@
 - [A Single Source of Time: A Swappable Clock](07-time-clock.md)
 - [Datomic for Your SaaS: Schema, Queries, and the java.time Bridge](08-datomic.md)
 - [The Recipe Domain: Versions, Diffs, and Forks from Datomic's History](09-recipe-domain.md)
+- [Provenance: Annotating the Transaction Itself](10-provenance.md)
 - [Testing a Clojure App: Fixtures, Helpers, and Coverage](11-unit-testing.md)
 
 # Pages, and the Loop That Builds Them

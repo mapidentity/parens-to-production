@@ -74,6 +74,8 @@
    :recipe/forked-from "Forked from"
    :recipe/original "Original recipe"
    :recipe/no-recipes "No recipes yet."
+   :recipe/note-label "What changed? (optional)"
+   :recipe/note-placeholder "e.g. Halved the salt — it was too much"
    :recipe/preview-title "Preview"
    :recipe/preview-waiting "The preview appears once the recipe has a title and servings."
    :recipe/title-label "Title"
@@ -119,6 +121,7 @@
    :error/not-found "Not found."
    :error/server-error "Something went wrong on our end. Please try again."
    ;; Form validation — one message per (field, code) from recipe/conform.
+   :error/note-too-long "Keep the note under 500 characters."
    :error/title-blank "Give the recipe a title."
    :error/title-too-long "Keep the title under 200 characters."
    :error/servings-not-a-number "Servings must be a whole number."

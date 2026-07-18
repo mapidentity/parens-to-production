@@ -690,6 +690,20 @@
               (field-aria :steps (:steps errors)))
             (fv :steps :recipe/steps)]
            (field-error locale :steps (:steps errors))]
+          ;; The commit message. Only offered on edits: a creation IS its own
+          ;; note, and fork provenance is recorded structurally.
+          (when editing?
+            [:div
+             [:label.block.text-sm.font-medium.text-text-primary {:for "note"}
+              (t locale :recipe/note-label)]
+             [:input#note.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
+              (merge
+                {:type "text"
+                 :name "note"
+                 :value (when submitted (:note submitted))
+                 :placeholder (t locale :recipe/note-placeholder)}
+                (field-aria :note (:note errors)))]
+             (field-error locale :note (:note errors))])
           [:div.flex.items-center.gap-3
            [:button.py-2.px-4.rounded-md.text-sm.font-semibold.text-white.bg-primary.hover:bg-primary-vivid
             {:type "submit"} (if editing? (t locale :recipe/save) (t locale :recipe/create))]
@@ -740,7 +754,12 @@
                (str (t locale :recipe/version) " " (inc idx))]
               (when latest? [:span.text-xs.text-positive.font-medium (t locale :recipe/current)])
               (when first? [:span.text-xs.text-text-secondary (t locale :recipe/initial)])
-              [:span.text-sm.text-text-secondary (fmt-time locale (:instant v))]]
+              [:span.text-sm.text-text-secondary (fmt-time locale (:instant v))]
+              (when-let [author (:author v)]
+                [:span.text-sm.text-text-secondary
+                 (t locale :recipe/by) " " [:span.font-medium (author-name author)]])]
+             (when-let [note (:note v)]
+               [:p.mt-1.text-sm.text-text-primary.italic "\u201C" note "\u201D"])
              [:div.mt-1.flex.gap-4.text-sm
               [:a.text-primary-vivid.hover:text-primary
                {:href (str "/recipes/" rid "/at/" (:t v))} (t locale :recipe/view-this-version)]

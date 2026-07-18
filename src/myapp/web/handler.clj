@@ -337,7 +337,8 @@
    :description (get-in request [:params :description])
    :servings (get-in request [:params :servings])
    :ingredients (get-in request [:params :ingredients])
-   :steps (get-in request [:params :steps])})
+   :steps (get-in request [:params :steps])
+   :note (get-in request [:params :note])})
 
 (defn- invalid-form
   "Re-render the recipe form at 422 with field errors + submitted values.
@@ -390,7 +391,7 @@
         (if (and r (recipe/owned-by? r (:user-eid request)))
           (invalid-form request r raw errors)
           (not-found request)))
-      (let [{:keys [title description servings ingredients steps]} values
+      (let [{:keys [title description servings ingredients steps note]} values
             ok? (recipe/update!
                   (db/get-connection)
                   (:user-eid request)
@@ -399,7 +400,8 @@
                    :recipe/description description
                    :recipe/servings servings
                    :recipe/ingredients ingredients
-                   :recipe/steps steps})]
+                   :recipe/steps steps}
+                  note)]
         (if ok? (response/redirect (str "/recipes/" id)) (not-found request))))))
 
 (defn recipe-preview

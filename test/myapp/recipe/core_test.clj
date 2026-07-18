@@ -419,3 +419,48 @@
     (is
       (empty? (recipe/activity (d/db h/*conn*) alice (time/now)))
       "…and invisible past a cursor set after it")))
+
+;; --- provenance: the transaction is an entity ---
+
+(deftest every-write-names-its-author-and-keeps-the-note
+  (let [u (mk-user! "annalist@x.lan")
+        id (recipe/create!
+             h/*conn*
+             u
+             {:title "Annotated Stew"
+              :servings 2})]
+    (recipe/update! h/*conn* u id {:recipe/servings 3} "Feeds one more now")
+    (let [[v1 v2] (recipe/version-history (d/db h/*conn*) id)]
+      (is (= "annalist@x.lan" (get-in v1 [:author :user/email])) "creation is authored")
+      (is (nil? (:note v1)) "no note was offered at creation")
+      (is (= "annalist@x.lan" (get-in v2 [:author :user/email])))
+      (is (= "Feeds one more now" (:note v2)) "the commit message survives on the tx"))))
+
+(deftest conform-accepts-and-bounds-the-note
+  (is
+    (nil?
+      (:note
+        (:values
+          (recipe/conform
+            {:title "t"
+             :servings "1"
+             :note "   "}))))
+    "a whitespace note is no note")
+  (is
+    (=
+      "why"
+      (:note
+        (:values
+          (recipe/conform
+            {:title "t"
+             :servings "1"
+             :note " why "})))))
+  (is
+    (=
+      [:too-long]
+      (:note
+        (:errors
+          (recipe/conform
+            {:title "t"
+             :servings "1"
+             :note (apply str (repeat 501 "x"))}))))))

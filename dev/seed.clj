@@ -60,8 +60,8 @@
        carbonara
        {:recipe/ingredients
         "200g spaghetti\n100g guanciale\n2 egg yolks\n1 whole egg\n50g pecorino romano\nblack pepper"
-        :recipe/description
-        "The Roman original. No cream — *ever*. One whole egg keeps it glossy."})
+        :recipe/description "The Roman original. No cream — *ever*. One whole egg keeps it glossy."}
+       "Added a whole egg for gloss; measured the pecorino honestly")
      _
      (recipe/update!
        conn

@@ -108,8 +108,24 @@
     :db/cardinality :db.cardinality/one
     :db/doc "When this recipe was last edited"}])
 
+(def tx-schema
+  "Annotations on the TRANSACTION entity itself.
+  A Datomic transaction is an entity like any other; asserting facts about
+  it (via the \"datomic.tx\" tempid) turns each write into a commit with an
+  author and, when offered, a message. version-history reads these back —
+  git-for-recipes gets its `git log` fields."
+  [{:db/ident :tx/author
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one
+    :db/doc "The signed-in user whose action produced this transaction."}
+
+   {:db/ident :tx/note
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/doc "Optional user-supplied note: what changed, and why."}])
+
 (def schema
   "The full schema, transacted on database creation.
   Order matters only in that referenced idents must exist; these are all
   independent attribute installs, so a single concatenated vector is fine."
-  (vec (concat user-schema recipe-schema)))
+  (vec (concat user-schema recipe-schema tx-schema)))

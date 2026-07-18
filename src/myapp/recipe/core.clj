@@ -245,10 +245,13 @@
                    (sort-by (fn [[tx _]] (d/tx->t tx))))]
       (mapv
         (fn [[tx inst]]
-          {:tx tx
-           :t (d/tx->t tx)
-           :instant (db/as-instant inst)
-           :recipe (db/pull* (d/as-of db tx) pull-pattern eid)})
+          (let [ann (db/pull* db [{:tx/author [:user/email :user/display-name]} :tx/note] tx)]
+            {:tx tx
+             :t (d/tx->t tx)
+             :instant (db/as-instant inst)
+             :author (:tx/author ann)
+             :note (:tx/note ann)
+             :recipe (db/pull* (d/as-of db tx) pull-pattern eid)}))
         txs))))
 
 (defn version-as-of
@@ -400,8 +403,11 @@
   data: the domain decides *what* is wrong, and rendering translates codes
   into words (i18n) at the boundary — so the rules live in exactly one
   place for every caller, the form handler today, an API tomorrow."
-  [{:keys [title description servings ingredients steps]}]
+  [{:keys [title description servings ingredients steps note]}]
   (let [title (str/trim (or title ""))
+        note (some-> note
+                     str/trim
+                     not-empty)
         description (or description "")
         ingredients (or ingredients "")
         steps (or steps "")
@@ -419,6 +425,8 @@
                                                                  [:too-long])
                  (> (count ingredients) (:ingredients limits)) (assoc :ingredients
                                                                  [:too-long])
+                 (> (count (or note "")) 500) (assoc :note
+                                                [:too-long])
                  (> (count steps) (:steps limits)) (assoc :steps
                                                      [:too-long]))]
     (if (seq errors)
@@ -427,7 +435,8 @@
                 :description description
                 :servings servings-n
                 :ingredients ingredients
-                :steps steps}})))
+                :steps steps
+                :note note}})))
 
 (defn- assert-content!
   "Defense in depth: refuse what `conform` would reject, never repair it.
@@ -442,6 +451,20 @@
         {:title title
          :servings servings}))))
 
+(defn- annotate
+  "Append the transaction annotation to `tx-data`.
+  Every user-driven write names its author, and carries the user's note
+  when one was offered. The
+  \"datomic.tx\" tempid resolves to the transaction entity itself."
+  ([tx-data user-eid] (annotate tx-data user-eid nil))
+  ([tx-data user-eid note]
+   (conj
+     (vec tx-data)
+     (cond-> {:db/id "datomic.tx"
+              :tx/author user-eid}
+       (seq note) (assoc :tx/note
+                    note)))))
+
 (defn create!
   "Create a new recipe owned by `user-eid`; returns the new `:recipe/id`.
   `content` must be conformed (see `conform`) — the domain refuses
@@ -455,19 +478,21 @@
         now (time/now)
         position (next-position (d/db conn) user-eid)]
     @(db/transact* conn
-       [(cond-> {:db/id "new-recipe"
-                 :recipe/id id
-                 :recipe/user user-eid
-                 :recipe/title title
-                 :recipe/description (or description "")
-                 :recipe/servings (long servings)
-                 :recipe/ingredients (or ingredients "")
-                 :recipe/steps (or steps "")
-                 :recipe/position position
-                 :recipe/created-at now
-                 :recipe/updated-at now}
-          forked-from-eid (assoc :recipe/forked-from
-                            forked-from-eid))])
+       (annotate
+         [(cond-> {:db/id "new-recipe"
+                   :recipe/id id
+                   :recipe/user user-eid
+                   :recipe/title title
+                   :recipe/description (or description "")
+                   :recipe/servings (long servings)
+                   :recipe/ingredients (or ingredients "")
+                   :recipe/steps (or steps "")
+                   :recipe/position position
+                   :recipe/created-at now
+                   :recipe/updated-at now}
+            forked-from-eid (assoc :recipe/forked-from
+                              forked-from-eid))]
+         user-eid))
     id))
 
 (defn reorder!
@@ -484,7 +509,7 @@
                                   :recipe/position (long i)})))
                 (remove nil?)
                 vec)]
-    (when (seq tx) @(db/transact* conn tx))
+    (when (seq tx) @(db/transact* conn (annotate tx user-eid)))
     true))
 
 (defn move!
@@ -592,19 +617,23 @@
   Content must be conformed (see `conform`); the keys present are checked.
   Bumps `:recipe/updated-at`. Returns true on success,
   nil if the recipe is missing or not owned by the user."
-  [conn user-eid id changes]
-  (assert-changes! changes)
-  (let [db (d/db conn)]
-    (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
-      @(db/transact* conn
-         [(merge
-            {:db/id eid
-             :recipe/updated-at (time/now)}
-            (select-keys
-              changes
-              [:recipe/title :recipe/description :recipe/servings
-               :recipe/ingredients :recipe/steps]))])
-      true)))
+  ([conn user-eid id changes] (update! conn user-eid id changes nil))
+  ([conn user-eid id changes note]
+   (assert-changes! changes)
+   (let [db (d/db conn)]
+     (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
+       @(db/transact* conn
+          (annotate
+            [(merge
+               {:db/id eid
+                :recipe/updated-at (time/now)}
+               (select-keys
+                 changes
+                 [:recipe/title :recipe/description :recipe/servings
+                  :recipe/ingredients :recipe/steps]))]
+            user-eid
+            note))
+       true))))
 
 (defn delete!
   "Retract recipe `id` if owned by `user-eid`.
@@ -614,7 +643,7 @@
   [conn user-eid id]
   (let [db (d/db conn)]
     (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
-      @(db/transact* conn [[:db/retractEntity eid]])
+      @(db/transact* conn (annotate [[:db/retractEntity eid]] user-eid))
       true)))
 
 ;; ---------------------------------------------------------------------------

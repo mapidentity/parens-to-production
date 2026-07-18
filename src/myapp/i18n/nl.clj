@@ -76,6 +76,8 @@
    :recipe/forked-from "Geforkt van"
    :recipe/original "Origineel recept"
    :recipe/no-recipes "Nog geen recepten."
+   :recipe/note-label "Wat is er veranderd? (optioneel)"
+   :recipe/note-placeholder "bijv. Zout gehalveerd — het was te veel"
    :recipe/preview-title "Voorvertoning"
    :recipe/preview-waiting
    "De voorvertoning verschijnt zodra het recept een titel en porties heeft."
@@ -122,6 +124,7 @@
    :error/not-found "Niet gevonden."
    :error/server-error "Er ging iets mis aan onze kant. Probeer het opnieuw."
    ;; Formuliervalidatie — één melding per (veld, code) uit recipe/conform.
+   :error/note-too-long "Houd de notitie korter dan 500 tekens."
    :error/title-blank "Geef het recept een titel."
    :error/title-too-long "Houd de titel korter dan 200 tekens."
    :error/servings-not-a-number "Porties moet een geheel getal zijn."

@@ -60,13 +60,16 @@ test('editing a recipe records a new version with a diff', async ({ page, reques
   await page.getByRole('button', { name: 'Actions' }).click();
   await page.getByRole('link', { name: 'Edit' }).click();
   await page.fill('textarea[name="ingredients"]', 'flour\nmilk\nvanilla');
+  // The commit message: stored on the transaction entity itself.
+  await page.fill('input[name="note"]', 'Vanilla makes it breakfast');
   await page.getByRole('button', { name: 'Save recipe' }).click();
   await expect(page).toHaveURL(/\/recipes\/[0-9a-f-]{36}$/);
 
-  // History shows two versions
+  // History shows two versions, the edit carrying its author and note
   await page.getByRole('link', { name: /Version history/ }).click();
   await expect(page.getByText('Version 1')).toBeVisible();
   await expect(page.getByText('Version 2')).toBeVisible();
+  await expect(page.getByText('Vanilla makes it breakfast')).toBeVisible();
 
   // Diff from previous shows the added line
   await page.getByRole('link', { name: 'Changes from previous' }).click();
