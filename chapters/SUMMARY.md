@@ -65,5 +65,6 @@
 - [Legible at Runtime: Metrics, Access Logs, and the Errors That Happen Elsewhere](37-runtime-legibility.md)
 - [The System Calls for Help: Alerting Without a Pager Service](38-alerting.md)
 - [Backup, Restore, and the Drill](39-backup-restore.md)
+- [The Right to Be Forgotten: Excision, Run](40-excision.md)
 
 [Afterword: What You Built, and Where It Goes](afterword.md)
