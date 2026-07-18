@@ -38,6 +38,7 @@
 - [Progressive Enhancement: A Layered Architecture from SSR to Islands](20-progressive-enhancement.md)
 - [Forms That Hold: Server-Side Validation and the Error Re-Render](21-forms-validation.md)
 - [Rendering the Future: Live Preview with d/with](22-live-preview.md)
+- [Search: The Index the Schema Already Carries](23-search.md)
 - [Passwordless Auth Part 1: HMAC-Signed Magic Link Tokens](24-auth-tokens.md)
 - [Passwordless Auth Part 2: Magic Link Emails and the Full Login Flow](25-auth-email-flow.md)
 - [E2E Testing a Clojure Web App with Playwright](27-e2e-testing.md)

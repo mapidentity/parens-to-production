@@ -82,8 +82,8 @@ The temptation now is to write a `render-preview` view. Resist it -- it is the s
 ```clojure
 (defn- recipe-body
   "The recipe's content: markdown description, ingredients, steps.
-  Shared verbatim between the detail page and the live-preview
-  pane: the preview is not a reimplementation of this view, it IS this
+  Shared verbatim between the detail page and the live-preview pane: the
+  preview is not a reimplementation of this view, it IS this
   view, fed a database value that was never transacted."
   [locale recipe]
   (list

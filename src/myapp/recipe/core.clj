@@ -75,6 +75,41 @@
        (sort-by :recipe/updated-at #(compare %2 %1))
        vec))
 
+(defn- fulltext-escape
+  "Neutralize Lucene query syntax in user input.
+  The fulltext datalog fn hands `q` to a Lucene QueryParser, where `*`,
+  `~`, `AND`… are operators (and some inputs throw outright). We search
+  literal words, so operators become spaces and the analyzer does the rest."
+  [q]
+  (-> (or q "")
+      (str/replace #"[+\-!(){}\[\]^\"~*?:\\/]" " ")
+      (str/replace #"(?i)\b(AND|OR|NOT)\b" " ")
+      str/trim))
+
+(def ^:private search-limit
+  "One search's result ceiling.
+  A stated bound, not a read that grows with the catalog."
+  50)
+
+(defn search
+  "Recipes whose title matches `q`, best match first.
+  Runs on the fulltext index `:recipe/title` has carried since the
+  schema's first version; returns pulled maps (the same shape the browse
+  list renders), at most `search-limit`. Blank or operator-only input
+  returns []."
+  [db q]
+  (let [q (fulltext-escape q)]
+    (if (str/blank? q)
+      []
+      (->> (d/q '[:find ?e ?score
+                  :in $ ?q
+                  :where [(fulltext $ :recipe/title ?q) [[?e _ _ ?score]]]]
+                db
+                q)
+           (sort-by second #(compare %2 %1))
+           (take search-limit)
+           (mapv (fn [[e _]] (db/pull* db pull-pattern e)))))))
+
 (defn- dashboard-order
   "Comparator for the owner's dashboard.
   Explicit :recipe/position ascending, then (for recipes the user hasn't
@@ -295,8 +330,8 @@
     (if m (inc (long m)) 0)))
 
 (def ^:private limits
-  "Field size ceilings for `conform`. The content ceilings are deliberately
-  generous — the goal is refusing the absurd (a pasted novel, an overflowing
+  "Field size ceilings for `conform`.
+  The content ceilings are deliberately generous — the goal is refusing the absurd (a pasted novel, an overflowing
   integer), not policing prose."
   {:title 200
    :description 20000
@@ -343,8 +378,8 @@
                 :steps steps}})))
 
 (defn- assert-content!
-  "Defense in depth: refuse what `conform` would reject, never repair it. The old behavior — coining \"Untitled recipe\" for a blank
-  title — put a lie in the database and kept it forever; a throw here means
+  "Defense in depth: refuse what `conform` would reject, never repair it.
+  The old behavior — coining \"Untitled recipe\" for a blank title — put a lie in the database and kept it forever; a throw here means
   a handler that skipped `conform` fails loudly in development, not quietly
   in the data."
   [{:keys [title servings]}]
@@ -484,7 +519,7 @@
         (db/pull* db-after pull-pattern (d/resolve-tempid db-after tempids "preview"))))))
 
 (defn- assert-changes!
-  "`assert-content!` for a partial `changes` map.
+  "Partial-map sibling of `assert-content!`.
   Only the keys present are held to `conform`'s rules — `update!`
   legitimately takes subsets."
   [{:recipe/keys [title servings]

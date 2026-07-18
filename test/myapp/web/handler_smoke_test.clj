@@ -218,3 +218,19 @@
                    :user-eid u2))]
       (is (ok? resp))
       (is (str/includes? (:body resp) "appears once the recipe")))))
+
+(deftest search-page-renders
+  (let [u (mk-user! "searcher@x.lan")]
+    (recipe/create!
+      h/*conn*
+      u
+      {:title "Findable Focaccia"
+       :servings 1})
+    (testing "no query: just the form" (is (ok? (handler/search-page (h/request :get "/search")))))
+    (testing "query with a hit renders the card"
+      (let [resp (handler/search-page (h/request :get "/search" :params {:q "focaccia"}))]
+        (is (ok? resp))
+        (is (str/includes? (:body resp) "Findable Focaccia"))))
+    (testing "query without hits says so"
+      (let [resp (handler/search-page (h/request :get "/search" :locale :en :params {:q "zzz"}))]
+        (is (str/includes? (:body resp) "No recipes match"))))))

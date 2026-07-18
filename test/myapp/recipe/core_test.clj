@@ -340,3 +340,35 @@
                :servings 3})]
       (is (= "Fresh" (:recipe/title p)) "a new-recipe preview needs no existing entity")
       (is (= 1 (recipe/total-recipes (d/db h/*conn*))) "and creates nothing"))))
+
+;; --- search: the index the schema already carries ---
+
+(deftest search-uses-the-fulltext-index
+  (let [u (mk-user! "chef@x.lan")]
+    (recipe/create!
+      h/*conn*
+      u
+      {:title "Classic Carbonara"
+       :servings 2})
+    (recipe/create!
+      h/*conn*
+      u
+      {:title "Carbonara, but vegan"
+       :servings 2})
+    (recipe/create!
+      h/*conn*
+      u
+      {:title "Gazpacho"
+       :servings 4})
+    (let [db (d/db h/*conn*)]
+      (is
+        (=
+          #{"Classic Carbonara" "Carbonara, but vegan"}
+          (set (map :recipe/title (recipe/search db "carbonara"))))
+        "matching is on words, case-insensitively")
+      (is (= ["Gazpacho"] (map :recipe/title (recipe/search db "GAZPACHO"))))
+      (is (= [] (recipe/search db "tiramisu")) "no hits is an empty vector")
+      (is (= [] (recipe/search db "   ")) "blank input searches nothing")
+      (is
+        (= [] (recipe/search db "AND OR * ~ ("))
+        "Lucene operator soup is neutralized, not thrown"))))

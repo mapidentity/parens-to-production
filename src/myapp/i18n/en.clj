@@ -52,6 +52,11 @@
 
    ;; Recipes
    :recipe/browse-title "Recipes"
+   :search/title "Search recipes"
+   :search/label "Search"
+   :search/placeholder "Search recipes…"
+   :search/button "Search"
+   :search/no-results "No recipes match your search."
    :recipe/new "New recipe"
    :recipe/edit "Edit"
    :recipe/delete "Delete"

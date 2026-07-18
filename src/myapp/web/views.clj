@@ -444,6 +444,45 @@
 ;; Recipe pages
 ;; ---------------------------------------------------------------------------
 
+(defn- search-form
+  "The search box — a plain GET form, so layer 0 needs nothing else.
+  Submitting navigates to /search?q=…; the dispatcher upgrades it to a
+  morph like any other GET."
+  [locale q]
+  [:form.flex.gap-2.mb-6
+   {:method "GET"
+    :action "/search"
+    :role "search"}
+   [:label.sr-only {:for "q"} (t locale :search/label)]
+   [:input#q.flex-1.px-3.py-2.border.border-border.rounded-md.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
+    {:type "search"
+     :name "q"
+     :value q
+     :placeholder (t locale :search/placeholder)}]
+   [:button.py-2.px-4.rounded-md.text-sm.font-semibold.text-white.bg-primary.hover:bg-primary-vivid
+    {:type "submit"} (t locale :search/button)]])
+
+(defn search-page
+  "The public search results page.
+  For /search?q=… — `results` nil means no query was made; [] means a
+  query found nothing."
+  [locale user-email admin? q results]
+  (app-layout
+    locale
+    user-email
+    :browse
+    {:admin? admin?}
+    [:div.max-w-3xl.mx-auto
+     [:h1.text-2xl.font-bold.text-text-primary.mb-6 (t locale :search/title)]
+     (search-form locale q)
+     (cond
+       (nil? results) nil
+       (seq results)
+       [:div.grid.gap-4.sm:grid-cols-2
+        (for [r results]
+          (recipe-card locale r))]
+       :else [:p.text-text-secondary (t locale :search/no-results)])]))
+
 (defn recipes-index
   "Public browse list of all recipes."
   [locale user-email admin? recipes]
@@ -457,6 +496,7 @@
      (when user-email
        [:a.inline-flex.items-center.gap-1.text-sm.font-semibold.text-white.bg-primary.hover:bg-primary-vivid.px-3.py-2.rounded-md
         {:href "/recipes/new"} "+ " (t locale :recipe/new)])]
+    (search-form locale nil)
     (if (seq recipes)
       [:div.grid.gap-4.sm:grid-cols-2
        (for [r recipes]
@@ -464,8 +504,8 @@
       [:p.text-text-secondary (t locale :recipe/no-recipes)])))
 
 (defn- recipe-body
-  "The recipe's content: markdown description, ingredients, steps. Shared verbatim between the detail page and the live-preview
-  pane: the preview is not a reimplementation of this view, it IS this
+  "The recipe's content: markdown description, ingredients, steps.
+  Shared verbatim between the detail page and the live-preview pane: the preview is not a reimplementation of this view, it IS this
   view, fed a database value that was never transacted."
   [locale recipe]
   (list

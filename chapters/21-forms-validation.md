@@ -84,8 +84,8 @@ Three properties of this function do the chapter's work.
 ```clojure
 (defn- assert-content!
   "Defense in depth: refuse what `conform` would reject, never repair it.
-  The old behavior — coining \"Untitled recipe\" for a blank
-  title — put a lie in the database and kept it forever; a throw here means
+  The old behavior — coining \"Untitled recipe\" for a blank title — put a
+  lie in the database and kept it forever; a throw here means
   a handler that skipped `conform` fails loudly in development, not quietly
   in the data."
   [{:keys [title servings]}]
@@ -110,8 +110,8 @@ With the domain holding the rules, the handler collapses into a shape you can re
 ```clojure
 (defn- recipe-params
   "The recipe form fields exactly as submitted: raw strings, no defaults.
-  Coercion and validation are `recipe/conform`'s job; keeping
-  the raw map intact is what lets an invalid submission re-render the form
+  Coercion and validation are `recipe/conform`'s job; keeping the raw map
+  intact is what lets an invalid submission re-render the form
   with precisely what the user typed."
   [request]
   {:title (get-in request [:params :title])

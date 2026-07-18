@@ -146,3 +146,13 @@ test('the preview pane renders unsaved edits, server-side', async ({ page, reque
   await page.getByRole('link', { name: 'Preview Base' }).click();
   await expect(page.getByText('speculative')).toHaveCount(0);
 });
+
+test('search finds a recipe by title word', async ({ page, request }) => {
+  await registerUser(page, request, uniqueEmail());
+  const title = `Sesame Noodles ${Date.now()}`;
+  await createRecipe(page, { title, servings: 2, ingredients: 'noodles', steps: 'toss' });
+
+  // A plain GET with the query in the URL — addressable by construction.
+  await page.goto('/search?q=sesame');
+  await expect(page.getByRole('link', { name: new RegExp(title) })).toBeVisible();
+});

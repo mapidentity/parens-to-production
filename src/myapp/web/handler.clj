@@ -284,6 +284,16 @@
         (:admin? request)
         (recipe/all-recipes db)))))
 
+(defn search-page
+  "GET /search?q= — public fulltext search over recipe titles.
+  A plain GET: the query lives in the URL, so results are addressable,
+  shareable, and bookmarkable by construction. nil results = no query
+  yet; [] = a query with no hits — the view renders them differently."
+  [request]
+  (let [q (str (or (get-in request [:params :q]) ""))
+        results (when-not (str/blank? q) (recipe/search (d/db (db/get-connection)) q))]
+    (html (views/search-page (:locale request) (:user-email request) (:admin? request) q results))))
+
 (defn recipe-show
   "GET /recipes/:id — a recipe at its current version, with lineage and forks."
   [request]
@@ -309,8 +319,8 @@
   (html (views/recipe-form (:locale request) (:user-email request) (:admin? request) nil)))
 
 (defn- recipe-params
-  "The recipe form fields exactly as submitted: raw strings, no defaults. Coercion and validation are `recipe/conform`'s job; keeping
-  the raw map intact is what lets an invalid submission re-render the form
+  "The recipe form fields exactly as submitted: raw strings, no defaults.
+  Coercion and validation are `recipe/conform`'s job; keeping the raw map intact is what lets an invalid submission re-render the form
   with precisely what the user typed."
   [request]
   {:title (get-in request [:params :title])
@@ -383,7 +393,8 @@
         (if ok? (response/redirect (str "/recipes/" id)) (not-found request))))))
 
 (defn recipe-preview
-  "POST /recipes/new/preview and /recipes/:id/preview — the preview pane. Renders the shared recipe views against a d/with speculative db;
+  "POST /recipes/new/preview and /recipes/:id/preview — the preview pane.
+  Renders the shared recipe views against a d/with speculative db;
   transacts nothing. Always 200 — a preview is not a mutation attempt, and
   until the input conforms the pane simply shows its waiting state.
   no-store: every keystroke is a new hypothetical."

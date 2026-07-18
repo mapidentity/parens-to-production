@@ -161,6 +161,7 @@
     ["/auth/request" {:post #'handler/request-magic-link}]
     ["/auth/sent" {:get #'handler/magic-link-sent}]
     ["/auth/verify" {:get #'handler/verify-magic-link}]
+    ["/search" {:get #'handler/search-page}]
     ["/recipes" {:get #'handler/recipes-index}]
     ;; Random landing tagline, fetched by the `tagline` island so the landing
     ;; page itself stays deterministic/cacheable. See handler/tagline.

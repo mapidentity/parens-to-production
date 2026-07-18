@@ -54,6 +54,11 @@
 
    ;; Recipes
    :recipe/browse-title "Recepten"
+   :search/title "Zoek recepten"
+   :search/label "Zoeken"
+   :search/placeholder "Zoek recepten…"
+   :search/button "Zoeken"
+   :search/no-results "Geen recepten gevonden voor je zoekopdracht."
    :recipe/new "Nieuw recept"
    :recipe/edit "Bewerken"
    :recipe/delete "Verwijderen"
