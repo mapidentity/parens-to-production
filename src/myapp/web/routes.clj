@@ -213,6 +213,8 @@
     ["/auth/request" {:post #'handler/request-magic-link}]
     ["/auth/sent" {:get #'handler/magic-link-sent}]
     ["/auth/verify" {:get #'handler/verify-magic-link}]
+    ["/sitemap.xml" {:get #'handler/sitemap}]
+    ["/robots.txt" {:get #'handler/robots}]
     ["/search" {:get #'handler/search-page}]
     ["/recipes" {:get #'handler/recipes-index}]
     ;; Random landing tagline, fetched by the `tagline` island so the landing

@@ -3,6 +3,7 @@
   Each function returns a Hiccup data structure wrapped in a shared layout.
   All user-facing text uses i18n translations keyed by locale."
   (:require
+    [clojure.data.json :as json]
     [clojure.string :as str]
     [hiccup2.core :as h]
     [myapp.i18n :refer [t]]
@@ -64,8 +65,13 @@
                                 (assets/asset-sri url)))]))
 
 (defn- base-layout
-  "Base HTML5 wrapper. All pages use this — never called directly by page fns."
-  [locale & body]
+  "Base HTML5 wrapper. All pages use this — never called directly by page fns.
+  `page-meta` (may be nil) makes the page legible to machines: `:title` and
+  `:description` override the defaults; `:canonical` names the one true URL;
+  `:robots` opts a page out of indexing; `:json-ld` is a structured-data map
+  emitted as application/ld+json (never executed, so the strict CSP is
+  indifferent to it); `:og` adds Open Graph pairs for link unfurlers."
+  [locale page-meta & body]
   ;; Rendered with the ESCAPING hiccup2 renderer (h/html): all string content is
   ;; HTML-escaped by default — the primary XSS defense. Only h/raw content
   ;; (markdown, inline scripts/styles) is emitted verbatim; the strict CSP is the
@@ -80,8 +86,26 @@
         :content "width=device-width, initial-scale=1.0"}]
       [:meta
        {:name "description"
-        :content (t locale :meta/description)}]
-      [:title "MyApp"]
+        :content (or (:description page-meta) (t locale :meta/description))}]
+      [:title
+       (if-let [t* (:title page-meta)]
+         (str t* " — MyApp")
+         "MyApp")]
+      (when-let [href (:canonical page-meta)]
+        [:link
+         {:rel "canonical"
+          :href href}])
+      (when-let [robots (:robots page-meta)]
+        [:meta
+         {:name "robots"
+          :content robots}])
+      (for [[k content] (:og page-meta)]
+        [:meta
+         {:property (str "og:" (name k))
+          :content content}])
+      (when-let [ld (:json-ld page-meta)]
+        [:script {:type "application/ld+json"}
+         (h/raw (json/write-str ld))])
       [:link
        {:rel "icon"
         :type "image/svg+xml"
@@ -204,6 +228,7 @@
   [locale & body]
   (base-layout
     locale
+    nil
     [:main.min-h-screen.bg-surface-subtle.flex.items-center.justify-center.px-4
      {:data-layout "public"}
      [:div.max-w-md.w-full body]]))
@@ -217,6 +242,7 @@
   (let [admin? (:admin? opts)]
     (base-layout
       locale
+      (:page-meta opts)
       [:div.min-h-screen.flex.flex-col.bg-surface-subtle
        (top-nav locale user-email active-tab admin?)
        [:main.flex-1 {:data-layout "app"}
@@ -519,14 +545,56 @@
       [:h2.text-lg.font-semibold.text-text-primary.mb-2 (t locale :recipe/steps)]
       (text-block (:recipe/steps recipe) true)]]))
 
+(defn- recipe-json-ld
+  "The schema.org/Recipe structured-data map.
+  Built from the SAME pulled map the page renders — one source of truth,
+  two audiences. Emitted by
+  base-layout as application/ld+json (data, never executed; the strict CSP
+  is indifferent to it)."
+  [recipe canonical]
+  (cond-> {"@context" "https://schema.org"
+           "@type" "Recipe"
+           "name" (:recipe/title recipe)
+           "author" {"@type" "Person"
+                     "name" (author-name (:recipe/user recipe))}
+           "recipeYield" (str (:recipe/servings recipe) " servings")
+           "recipeIngredient" (recipe/lines (:recipe/ingredients recipe))
+           "recipeInstructions" (mapv (fn [s]
+                                        {"@type" "HowToStep"
+                                         "text" s})
+                                      (recipe/lines (:recipe/steps recipe)))
+           "url" canonical}
+    (:recipe/created-at recipe) (assoc "datePublished"
+                                  (str (:recipe/created-at recipe)))
+    (:recipe/updated-at recipe) (assoc "dateModified"
+                                  (str (:recipe/updated-at recipe)))
+    (not (str/blank? (:recipe/description recipe))) (assoc "description"
+                                                      (:recipe/description recipe))))
+
 (defn recipe-detail
-  "A single recipe at its current version, with actions, lineage, and forks."
-  [locale user-email admin? recipe {:keys [owner? lineage forks version-count]}]
+  "A single recipe at its current version, with actions, lineage, and forks.
+  When `base-url` is present the page introduces itself to machines too:
+  canonical URL, Open Graph pairs, and schema.org/Recipe JSON-LD."
+  [locale user-email admin? recipe {:keys [owner? lineage forks version-count base-url]}]
   (app-layout
     locale
     user-email
     :browse
-    {:admin? admin?}
+    {:admin? admin?
+     :page-meta (when base-url
+                  (let [canonical (str base-url "/recipes/" (:recipe/id recipe))
+                        description (first (recipe/lines (:recipe/description recipe)))]
+                    (cond-> {:title (:recipe/title recipe)
+                             :canonical canonical
+                             :og (cond-> {:title (:recipe/title recipe)
+                                          :type "article"
+                                          :url canonical
+                                          :site_name "MyApp"}
+                                   description (assoc :description
+                                                 description))
+                             :json-ld (recipe-json-ld recipe canonical)}
+                      description (assoc :description
+                                    description))))}
     [:div.max-w-3xl.mx-auto
      (lineage-trail locale lineage)
      [:div.flex.items-start.justify-between.gap-4
@@ -770,32 +838,38 @@
                  (t locale :recipe/diff-from-previous)])]]))]])))
 
 (defn recipe-version
-  "Read-only point-in-time view of a recipe as of a past transaction."
-  [locale user-email admin? recipe instant]
-  (app-layout
-    locale
-    user-email
-    :browse
-    {:admin? admin?}
-    [:div.max-w-3xl.mx-auto
-     [:div.mb-4.rounded-md.border.border-accent.bg-amber-50.px-4.py-2.text-sm.text-warning
-      (t locale :recipe/viewing-historical) " "
-      [:span.font-medium (fmt-time locale instant)]
-      " · "
-      [:a.underline {:href (str "/recipes/" (:recipe/id recipe))}
-       (t locale :recipe/back-to-recipe)]]
-     [:h1.text-3xl.font-bold.text-text-primary (:recipe/title recipe)]
-     [:p.mt-1.text-text-secondary
-      (t locale :recipe/servings) " " (:recipe/servings recipe)]
-     (when-not (str/blank? (:recipe/description recipe))
-       [:div.legal-content.mt-4 (h/raw (markdown/render (:recipe/description recipe)))])
-     [:div.mt-8.grid.gap-8.sm:grid-cols-2
-      [:section
-       [:h2.text-lg.font-semibold.text-text-primary.mb-2 (t locale :recipe/ingredients)]
-       (text-block (:recipe/ingredients recipe) false)]
-      [:section
-       [:h2.text-lg.font-semibold.text-text-primary.mb-2 (t locale :recipe/steps)]
-       (text-block (:recipe/steps recipe) true)]]]))
+  "Read-only point-in-time view of a recipe as of a past transaction.
+  `page-meta` (optional) carries the noindex + canonical-to-current pair —
+  a thousand historical copies of one recipe must not compete with it in a
+  search index."
+  ([locale user-email admin? recipe instant]
+   (recipe-version locale user-email admin? recipe instant nil))
+  ([locale user-email admin? recipe instant page-meta]
+   (app-layout
+     locale
+     user-email
+     :browse
+     {:admin? admin?
+      :page-meta page-meta}
+     [:div.max-w-3xl.mx-auto
+      [:div.mb-4.rounded-md.border.border-accent.bg-amber-50.px-4.py-2.text-sm.text-warning
+       (t locale :recipe/viewing-historical) " "
+       [:span.font-medium (fmt-time locale instant)]
+       " · "
+       [:a.underline {:href (str "/recipes/" (:recipe/id recipe))}
+        (t locale :recipe/back-to-recipe)]]
+      [:h1.text-3xl.font-bold.text-text-primary (:recipe/title recipe)]
+      [:p.mt-1.text-text-secondary
+       (t locale :recipe/servings) " " (:recipe/servings recipe)]
+      (when-not (str/blank? (:recipe/description recipe))
+        [:div.legal-content.mt-4 (h/raw (markdown/render (:recipe/description recipe)))])
+      [:div.mt-8.grid.gap-8.sm:grid-cols-2
+       [:section
+        [:h2.text-lg.font-semibold.text-text-primary.mb-2 (t locale :recipe/ingredients)]
+        (text-block (:recipe/ingredients recipe) false)]
+       [:section
+        [:h2.text-lg.font-semibold.text-text-primary.mb-2 (t locale :recipe/steps)]
+        (text-block (:recipe/steps recipe) true)]]])))
 
 (defn- diff-lines
   "Render a line diff (seq of {:op :text}) as a monospace +/- block."
@@ -826,36 +900,41 @@
       [:span.diff-del.px-1 (str old)] " → " [:span.diff-add.px-1 (str nw)]]]))
 
 (defn recipe-diff
-  "Diff between two versions of a recipe."
-  [locale user-email admin? recipe from-instant to-instant d]
-  (app-layout
-    locale
-    user-email
-    :browse
-    {:admin? admin?}
-    [:div.max-w-3xl.mx-auto
-     [:a.text-sm.text-primary-vivid.hover:text-primary
-      {:href (str "/recipes/" (:recipe/id recipe) "/history")}
-      (str "← " (t locale :recipe/history))]
-     [:h1.text-2xl.font-bold.text-text-primary.mt-2
-      (str (:recipe/title recipe) " — " (t locale :recipe/changes-title))]
-     [:p.text-sm.text-text-secondary.mb-6
-      (fmt-time locale from-instant) " → " (fmt-time locale to-instant)]
-     (if (:changed? d)
-       [:div
-        [:div.flex.gap-4.text-xs.mb-4
-         [:span [:span.diff-add.px-1 "+"] " " (t locale :recipe/legend-added)]
-         [:span [:span.diff-del.px-1 "-"] " " (t locale :recipe/legend-removed)]]
-        (scalar-diff (t locale :recipe/title-label) (:title d))
-        (scalar-diff (t locale :recipe/servings) (:servings d))
-        (scalar-diff (t locale :recipe/description-label) (:description d))
-        [:section.mb-6
-         [:h2.text-lg.font-semibold.text-text-primary.mb-2 (t locale :recipe/ingredients)]
-         (diff-lines (:ingredients d))]
-        [:section
-         [:h2.text-lg.font-semibold.text-text-primary.mb-2 (t locale :recipe/steps)]
-         (diff-lines (:steps d))]]
-       [:p.text-text-secondary (t locale :recipe/no-changes)])]))
+  "Diff between two versions of a recipe.
+  `page-meta` (optional): noindex + canonical-to-current, as on the
+  point-in-time page."
+  ([locale user-email admin? recipe from-instant to-instant d]
+   (recipe-diff locale user-email admin? recipe from-instant to-instant d nil))
+  ([locale user-email admin? recipe from-instant to-instant d page-meta]
+   (app-layout
+     locale
+     user-email
+     :browse
+     {:admin? admin?
+      :page-meta page-meta}
+     [:div.max-w-3xl.mx-auto
+      [:a.text-sm.text-primary-vivid.hover:text-primary
+       {:href (str "/recipes/" (:recipe/id recipe) "/history")}
+       (str "← " (t locale :recipe/history))]
+      [:h1.text-2xl.font-bold.text-text-primary.mt-2
+       (str (:recipe/title recipe) " — " (t locale :recipe/changes-title))]
+      [:p.text-sm.text-text-secondary.mb-6
+       (fmt-time locale from-instant) " → " (fmt-time locale to-instant)]
+      (if (:changed? d)
+        [:div
+         [:div.flex.gap-4.text-xs.mb-4
+          [:span [:span.diff-add.px-1 "+"] " " (t locale :recipe/legend-added)]
+          [:span [:span.diff-del.px-1 "-"] " " (t locale :recipe/legend-removed)]]
+         (scalar-diff (t locale :recipe/title-label) (:title d))
+         (scalar-diff (t locale :recipe/servings) (:servings d))
+         (scalar-diff (t locale :recipe/description-label) (:description d))
+         [:section.mb-6
+          [:h2.text-lg.font-semibold.text-text-primary.mb-2 (t locale :recipe/ingredients)]
+          (diff-lines (:ingredients d))]
+         [:section
+          [:h2.text-lg.font-semibold.text-text-primary.mb-2 (t locale :recipe/steps)]
+          (diff-lines (:steps d))]]
+        [:p.text-text-secondary (t locale :recipe/no-changes)])])))
 
 ;; ---------------------------------------------------------------------------
 ;; Dashboard

@@ -253,3 +253,48 @@
     (is
       (not (str/includes? (:body second-view) "While you were away"))
       "the cursor advanced: shown once, then folded into history")))
+
+(deftest machine-legibility
+  (let [u (mk-user! "seo@x.lan")
+        id (recipe/create!
+             h/*conn*
+             u
+             {:title "Legible Lasagna"
+              :servings 6
+              :description "Layered **properly**."
+              :ingredients "pasta\nragu"
+              :steps "layer\nbake"})
+        req (fn [uri]
+              (assoc (h/request :get uri)
+                :path-params {:id (str id)}))]
+    (testing "the recipe page introduces itself to machines"
+      (let [body (:body (handler/recipe-show (req (str "/recipes/" id))))]
+        (is (str/includes? body "<title>Legible Lasagna — MyApp</title>"))
+        (is
+          (str/includes?
+            body
+            (str "href=\"https://test.myapp.lan/recipes/" id "\" rel=\"canonical\"")))
+        (is (str/includes? body "property=\"og:title\""))
+        (is (str/includes? body "application/ld+json"))
+        (is (str/includes? body "schema.org"))
+        (is (str/includes? body "HowToStep"))))
+    (testing "historical pages defer to the current page and stay unindexed"
+      (let [versions (recipe/version-history (d/db h/*conn*) id)
+            body (:body
+                   (handler/recipe-version
+                     (assoc (h/request :get "x")
+                       :path-params {:id (str id)
+                                     :t (str (:t (first versions)))})))]
+        (is (str/includes? body "content=\"noindex\" name=\"robots\""))
+        (is
+          (str/includes?
+            body
+            (str "href=\"https://test.myapp.lan/recipes/" id "\" rel=\"canonical\"")))))
+    (testing "the sitemap is a database read"
+      (let [body (:body (handler/sitemap (h/request :get "/sitemap.xml")))]
+        (is (str/includes? body (str "/recipes/" id)))
+        (is (str/includes? body "<lastmod>"))))
+    (testing "robots.txt names the sitemap and fences the signed-in rooms"
+      (let [body (:body (handler/robots (h/request :get "/robots.txt")))]
+        (is (str/includes? body "Sitemap: https://test.myapp.lan/sitemap.xml"))
+        (is (str/includes? body "Disallow: /dashboard"))))))

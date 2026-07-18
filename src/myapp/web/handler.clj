@@ -320,7 +320,8 @@
           {:owner? (recipe/owned-by? r (:user-eid request))
            :lineage (recipe/lineage db id)
            :forks (recipe/forks db id)
-           :version-count (count (recipe/version-history db id))}))
+           :version-count (count (recipe/version-history db id))
+           :base-url (config/get-config :base-url)}))
       (not-found request))))
 
 (defn recipe-new-form
@@ -475,6 +476,55 @@
         (views/recipe-history (:locale request) (:user-email request) (:admin? request) r versions))
       (not-found request))))
 
+(defn sitemap
+  "GET /sitemap.xml — the public catalog, straight from the database.
+  Every recipe URL with its lastmod (:recipe/updated-at), plus the index
+  pages. No generator, no cron: the sitemap is a read like any other."
+  [_request]
+  (let [base (config/get-config :base-url)
+        db (d/db (db/get-connection))
+        entry (fn [loc lastmod]
+                (str
+                  "<url><loc>"
+                  base
+                  loc
+                  "</loc>"
+                  (when lastmod (str "<lastmod>" (subs (str lastmod) 0 10) "</lastmod>"))
+                  "</url>"))]
+    {:status 200
+     :headers {"Content-Type" "application/xml; charset=UTF-8"
+               "Cache-Control" "no-cache"}
+     :body (str
+             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+             "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">"
+             (entry "/" nil)
+             (entry "/recipes" nil)
+             (apply
+               str
+               (for [r (recipe/all-recipes db)]
+                 (entry (str "/recipes/" (:recipe/id r)) (:recipe/updated-at r))))
+             "</urlset>")}))
+
+(defn robots
+  "GET /robots.txt — the crawler contract.
+  Allow the public surface, name the sitemap, and keep crawlers out of the
+  signed-in rooms they could never enter anyway."
+  [_request]
+  {:status 200
+   :headers {"Content-Type" "text/plain; charset=UTF-8"}
+   :body (str
+           "User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /dashboard\n\nSitemap: "
+           (config/get-config :base-url)
+           "/sitemap.xml\n")})
+
+(defn- historical-page-meta
+  "The noindex + canonical-to-current pair for historical pages.
+  Many point-in-time copies of one recipe must not compete with the live
+  page in a search index."
+  [id]
+  {:robots "noindex"
+   :canonical (str (config/get-config :base-url) "/recipes/" id)})
+
 (defn recipe-version
   "GET /recipes/:id/at/:t — read-only point-in-time view as of basis-t `:t`."
   [request]
@@ -489,7 +539,8 @@
           (:user-email request)
           (:admin? request)
           r
-          (:recipe/updated-at r)))
+          (:recipe/updated-at r)
+          (historical-page-meta id)))
       (not-found request))))
 
 (defn recipe-diff
@@ -510,7 +561,8 @@
           new-r
           (:recipe/updated-at old-r)
           (:recipe/updated-at new-r)
-          (recipe/diff old-r new-r)))
+          (recipe/diff old-r new-r)
+          (historical-page-meta id)))
       (not-found request))))
 
 ;; ---------------------------------------------------------------------------
