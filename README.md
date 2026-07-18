@@ -4,7 +4,7 @@
 
 This repository is **two things at once**:
 
-1. **An online book** — 34 chapters (in [`chapters/`](chapters/)) that walk through
+1. **An online book** — 36 chapters (in [`chapters/`](chapters/)) that walk through
    building a production-grade SaaS in Clojure and Datomic, from a reproducible
    dev environment to automated CI/CD. Built with [mdBook](https://rust-lang.github.io/mdBook/)
    and published to GitHub Pages.
@@ -128,6 +128,7 @@ src/myapp/           the application
   admin/, analytics/   admin dashboard + the signup funnel
   i18n*                en/nl translations
 dev/                 REPL helpers, live/hot reload, the inspector loader, demo seed data
+ops/                 the production box: systemd units, transactor config, Caddyfile, deploy scripts (ch.35-36)
 test/myapp/          tests
 e2e/                 Playwright specs
 .devcontainer/, caddy/, certificates/, compose.yml   the dev environment (ch.3)

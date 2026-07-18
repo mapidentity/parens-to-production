@@ -33,6 +33,9 @@ the magnifier to search the full text.
 - The server path **measured** with criterium and a flamegraph
 - An **admin dashboard**, a hardened **asset pipeline** (hashing, SRI, CSP),
   **Lighthouse** audits, and **CI/CD** with a softened deploy window
+- **Going live** -- PostgreSQL + the Datomic transactor, systemd units,
+  automatic TLS -- and **minimal-downtime updates** with a verified
+  two-instance handoff
 
 Start with [the primer](01-primer.md) for what we are building and why, or jump
 to any topic from the table of contents.
