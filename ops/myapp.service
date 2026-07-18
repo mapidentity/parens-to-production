@@ -4,6 +4,12 @@ Description=MyApp — Clojure/Datomic SaaS
 # fresh host needs the transactor listening before create-database! runs.
 After=network-online.target myapp-transactor.service
 Wants=network-online.target myapp-transactor.service
+# A crash LOOP must converge to a message, not spin forever: Restart=
+# heals blips, the start limit turns persistent failure into failed
+# state, and failed state emails the operator.
+OnFailure=myapp-alert@%n.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 User=myapp

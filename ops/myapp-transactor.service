@@ -2,6 +2,9 @@
 Description=Datomic transactor — the single writer for myapp + analytics
 After=network-online.target postgresql.service
 Wants=network-online.target postgresql.service
+OnFailure=myapp-alert@%n.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 User=datomic

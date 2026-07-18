@@ -1,0 +1,8 @@
+# Emails the operator that %i failed, via the relay in /etc/myapp/env.
+# Instantiated by OnFailure= on the app, transactor, and watchdog units.
+[Unit]
+Description=Alert the operator: %i failed
+
+[Service]
+Type=oneshot
+ExecStart=/etc/scripts/myapp-alert.sh %i

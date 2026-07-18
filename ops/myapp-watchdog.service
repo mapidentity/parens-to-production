@@ -1,0 +1,7 @@
+[Unit]
+Description=MyApp watchdog — health, mail relay, disk
+OnFailure=myapp-alert@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/etc/scripts/myapp-watchdog.sh
