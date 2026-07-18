@@ -4,7 +4,7 @@
 
 This repository is **two things at once**:
 
-1. **An online book** — 26 chapters (in [`chapters/`](chapters/)) that walk through
+1. **An online book** — 34 chapters (in [`chapters/`](chapters/)) that walk through
    building a production-grade SaaS in Clojure and Datomic, from a reproducible
    dev environment to automated CI/CD. Built with [mdBook](https://rust-lang.github.io/mdBook/)
    and published to GitHub Pages.
@@ -40,6 +40,11 @@ teaches — and it leans on Datomic's immutability for its headline features:
 | Point-in-time view | `d/as-of` reconstructs a recipe at any past basis point |
 | Version diff | Pull the recipe at two points and line-diff (LCS) the ingredients/steps |
 | Fork lineage | A fork is a new entity with a `:recipe/forked-from` ref; walk it to the root |
+| Edit provenance | Author and note asserted on the transaction entity itself (`:tx/author`, `:tx/note`) |
+| Live preview | `d/with` renders the form's draft against a speculative db value — same view fn as the page |
+| Full-text search | `:db/fulltext` indexes the schema already carried; one Datalog query, score-ranked |
+| Activity feed | `d/since` windows the transaction log — the feed is a read, not a table |
+| Conditional GET | The ETag is `basis-t` + locale + build, known before rendering; matches answer 304 with no render |
 | Passwordless auth | HMAC-signed magic-link tokens, one-shot via a nonce CAS |
 | i18n, admin, SSR views | Hiccup server-rendering, Accept-Language locale, an admin funnel dashboard |
 
@@ -117,7 +122,7 @@ src/myapp/           the application
   core.clj             server lifecycle
   config.clj           Aero config + key management
   db/                  Datomic access + java.time bridge + tenant isolation
-  recipe/core.clj      the recipe-versioning domain (forks, history, diff)
+  recipe/core.clj      the recipe-versioning domain (forks, history, diff, search, preview)
   auth/                passwordless magic-link auth
   web/                 routes, handlers, Hiccup views, the dev source inspector
   admin/, analytics/   admin dashboard + the signup funnel

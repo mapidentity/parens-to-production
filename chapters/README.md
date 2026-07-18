@@ -20,13 +20,19 @@ the magnifier to search the full text.
   recorded and projected onto the page it rendered
 - **Datomic** schema and queries, **i18n**, and **Tailwind** styling
 - **Recipe versioning** -- versions, diffs, and forks read straight from
-  Datomic's history
+  Datomic's history, with **provenance** on the transactions themselves
 - **Server-rendered views** with Hiccup, a **morph dispatcher** for in-place
   navigation, and **progressive enhancement** from SSR to islands
+- **Validated forms** that re-render with their errors, a **live preview**
+  through speculative `d/with`, **full-text search**, and an **activity feed**
+  from the transaction log
 - **E2E testing** with Playwright
 - **Passwordless auth** with single-use, HMAC-signed magic links
+- **Machine legibility** (Open Graph, schema.org, a database-backed sitemap)
+  and **conditional GET** validated by Datomic's basis-t
+- The server path **measured** with criterium and a flamegraph
 - An **admin dashboard**, a hardened **asset pipeline** (hashing, SRI, CSP),
-  **Lighthouse** audits, and **CI/CD**
+  **Lighthouse** audits, and **CI/CD** with a softened deploy window
 
 Start with [the primer](01-primer.md) for what we are building and why, or jump
 to any topic from the table of contents.

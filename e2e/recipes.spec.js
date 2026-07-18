@@ -18,6 +18,10 @@ async function registerUser(page, request, email) {
   await page.goto('/');
   await page.fill('input[name="email"]', email);
   await page.getByRole('button', { name: 'Sign in' }).click();
+  // Block until the confirmation renders: that is the guarantee that the
+  // sign-in POST has been handled and the stubbed email captured — the
+  // precondition getMagicLink's single, retry-free fetch relies on.
+  await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible();
   const magicLink = await getMagicLink(request, email);
   await page.goto(magicLink);
   await page.getByRole('button', { name: 'Agree and start cooking' }).click();
@@ -167,18 +171,23 @@ test('the dashboard reports forks that happened while you were away', async ({ p
   await registerUser(page, request, alice);
   await createRecipe(page, { title, servings: 2, ingredients: 'flour', steps: 'bake' });
   const recipeUrl = page.url();
+  // Sign-out is dispatcher-enhanced: the cross-layout response triggers a
+  // real navigation (location.assign) after the click resolves. Wait for it
+  // to land, or the next page.goto races it and gets aborted.
   await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.waitForURL('/');
 
   await registerUser(page, request, uniqueEmail());
   await page.goto(recipeUrl);
   await page.getByRole('button', { name: 'Fork this recipe' }).click();
   await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.waitForURL('/');
 
   // Alice signs back in: the activity panel leads the dashboard —
   // computed from the transaction log, no notification machinery anywhere.
-  await page.goto('/');
   await page.fill('input[name="email"]', alice);
   await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible();
   const magicLink = await getMagicLink(request, alice);
   await page.goto(magicLink);
   await expect(page.getByText('While you were away')).toBeVisible();

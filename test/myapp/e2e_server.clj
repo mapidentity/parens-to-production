@@ -11,6 +11,7 @@
     [myapp.db.core :as db]
     [myapp.test-helpers :as h]
     [myapp.web.assets :as assets]
+    [myapp.web.handler :as handler]
     [myapp.web.routes :as routes]
     [org.httpkit.server :as http-kit]
     [reitit.ring :as ring]
@@ -116,6 +117,11 @@
             {:to email
              :magic-link (str base-url "/auth/verify?token=" token)})
           {:error :SUCCESS})))
+    ;; Raise the per-IP magic-link budget: every Playwright worker signs in
+    ;; from loopback, and with reuseExistingServer the sliding window also
+    ;; spans consecutive local runs — ten sends per 15 minutes starves the
+    ;; suite. The per-email limit stays: each test owns a unique address.
+    (alter-var-root #'handler/ml-per-ip (constantly 10000))
     ;; Initialize fresh in-memory databases
     (db/create-database!)
     (analytics/create-database!)
