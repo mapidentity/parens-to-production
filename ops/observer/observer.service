@@ -1,0 +1,6 @@
+[Unit]
+Description=MyApp off-site observer — DNS, TLS, full-path HTTP
+
+[Service]
+Type=oneshot
+ExecStart=/etc/scripts/observer.sh
