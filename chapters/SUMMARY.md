@@ -60,4 +60,8 @@
 - [Going Live: The Box Under the Jar](35-going-live.md)
 - [Updates with Minimal Downtime: Two of the Jar](36-minimal-downtime.md)
 
+# Operating
+
+- [Legible at Runtime: Metrics, Access Logs, and the Errors That Happen Elsewhere](37-runtime-legibility.md)
+
 [Afterword: What You Built, and Where It Goes](afterword.md)

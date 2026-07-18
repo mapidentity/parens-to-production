@@ -14,6 +14,7 @@
     [myapp.i18n :as i18n]
     [myapp.web.assets :as assets]
     [myapp.web.handler :as handler]
+    [myapp.web.metrics :as metrics]
     [myapp.web.views :as views]
     [reitit.ring :as ring]
     [ring.middleware.keyword-params :as keyword-params]
@@ -232,6 +233,22 @@
                 :basis-t (d/basis-t (d/db (db/get-connection)))
                 :analytics-basis-t (d/basis-t (analytics/get-db))}))}]
     ["/csp-report" {:post #'handler/csp-report}]
+    ["/client-error" {:post #'handler/client-error}]
+    ["/metrics"
+     {:get (fn [request]
+             ;; Operator surface. The real wall is the proxy: ops/Caddyfile
+             ;; answers 404 for /metrics and never forwards it, so from the
+             ;; internet the route does not exist. This loopback check is
+             ;; the dev-mode belt (dev binds 0.0.0.0 for the compose
+             ;; network); in prod every request arrives via the proxy from
+             ;; loopback anyway, which is why the proxy must be the wall.
+             (if (contains? #{"127.0.0.1" "::1" "0:0:0:0:0:0:0:1"} (:remote-addr request))
+               {:status 200
+                :headers {"Content-Type" "text/plain; version=0.0.4"}
+                :body (metrics/render)}
+               {:status 404
+                :headers {"Content-Type" "text/plain; charset=UTF-8"}
+                :body "Not found."}))}]
     ["/auth/request" {:post #'handler/request-magic-link}]
     ["/auth/sent" {:get #'handler/magic-link-sent}]
     ["/auth/verify" {:get #'handler/verify-magic-link}]
@@ -451,10 +468,26 @@
          :headers {"Content-Type" "text/plain; charset=UTF-8"}
          :body "Internal server error."}))))
 
+(defn wrap-metrics
+  "Fold every served response into the request counters.
+
+  Status class and duration only — no per-path labels, because label
+  cardinality is a budget and URLs with ids in them would spend it all.
+  Monotonic nanoTime, not the app clock: a duration is an interval, and
+  the swappable clock (myapp.time) must stay free to lie in tests
+  without bending the metrics."
+  [handler]
+  (fn [request]
+    (let [t0 (System/nanoTime)
+          response (handler request)]
+      (metrics/record-request! (:status response) (- (System/nanoTime) t0))
+      response)))
+
 (def ^:private app*
   "Compiled Ring handler, built lazily to avoid loading config at compile time."
   (delay
     (let [base-mw [[wrap-panic]
+                   [wrap-metrics]
                    [params/wrap-params] [keyword-params/wrap-keyword-params]
                    [session/wrap-session
                     {:store (cookie/cookie-store {:key (config/get-config :session-key)})

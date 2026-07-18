@@ -119,6 +119,9 @@
       ;; Idiomorph (classic script) must load before the dispatcher module
       ;; so window.Idiomorph is available when dispatcher.js runs.
       (script-tag "idiomorph" {:defer true})
+      ;; Error capture first: module execution follows document order, so
+      ;; its listeners are attached before any other island runs a line.
+      (script-tag "js/client-errors.js" {:type "module"})
       (script-tag "js/dispatcher.js" {:type "module"})
       ;; Island layer: the registry, then the controllers that build on it.
       (script-tag "js/controllers.js" {:type "module"})

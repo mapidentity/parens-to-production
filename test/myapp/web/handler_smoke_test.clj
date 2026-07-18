@@ -331,3 +331,27 @@
     (is (= 500 (:status resp)))
     (is (str/includes? (get-in resp [:headers "Content-Type"]) "text/plain"))
     (is (= "Internal server error." (:body resp)))))
+
+(deftest report-sinks-and-metrics
+  (testing "client errors land in the log through a rate-limited sink"
+    (let [resp (handler/client-error
+                 {:remote-addr "10.0.0.9"
+                  :body (java.io.ByteArrayInputStream.
+                          (.getBytes "{\"kind\":\"error\",\"message\":\"boom\"}" "UTF-8"))})]
+      (is (= 204 (:status resp)))))
+  (testing "/metrics answers loopback with Prometheus text"
+    (let [resp (routes/app
+                 {:request-method :get
+                  :uri "/metrics"
+                  :remote-addr "127.0.0.1"
+                  :headers {}})]
+      (is (= 200 (:status resp)))
+      (is (str/includes? (:body resp) "jvm_memory_heap_used_bytes"))
+      (is (str/includes? (:body resp) "http_requests_total"))))
+  (testing "/metrics does not exist for anyone else"
+    (let [resp (routes/app
+                 {:request-method :get
+                  :uri "/metrics"
+                  :remote-addr "203.0.113.7"
+                  :headers {}})]
+      (is (= 404 (:status resp))))))

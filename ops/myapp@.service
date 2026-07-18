@@ -17,7 +17,7 @@ EnvironmentFile=/etc/myapp/env
 # One jar file PER INSTANCE, so the running instance's jar is never
 # replaced underneath a live JVM — deploy-pair.sh copies the new build to
 # the idle instance's path before starting it.
-ExecStart=/usr/bin/java -Xmx1g -XX:+ExitOnOutOfMemoryError -jar /opt/myapp/myapp-%i.jar
+ExecStart=/usr/bin/java -Xmx1g -XX:+ExitOnOutOfMemoryError -Ddatomic.metricsCallback=myapp.web.metrics/datomic-callback! -jar /opt/myapp/myapp-%i.jar
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=15

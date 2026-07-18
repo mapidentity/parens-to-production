@@ -17,7 +17,10 @@ EnvironmentFile=/etc/myapp/env
 # says otherwise — dev/bench.clj is where that cache's value was measured.
 # ExitOnOutOfMemoryError turns heap exhaustion into a death Restart= can
 # heal instead of a half-alive process nothing notices.
-ExecStart=/usr/bin/java -Xmx1g -XX:+ExitOnOutOfMemoryError -jar /opt/myapp/myapp.jar
+# The -D flag hands the peer's periodic metrics report to the app's
+# /metrics endpoint (myapp.web.metrics) — object cache, memory, index
+# activity. Wired here, not in code: a dev REPL never loads it.
+ExecStart=/usr/bin/java -Xmx1g -XX:+ExitOnOutOfMemoryError -Ddatomic.metricsCallback=myapp.web.metrics/datomic-callback! -jar /opt/myapp/myapp.jar
 Restart=on-failure
 RestartSec=2
 # stop delivers SIGTERM; the app drains in-flight requests for up to a

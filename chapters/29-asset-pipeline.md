@@ -482,6 +482,8 @@ Reports land at a small public endpoint that logs them:
   {:status 204 :headers {}})
 ```
 
+(That docstring's "you would sample/rate-limit this" stops being homework in [the runtime-legibility chapter](37-runtime-legibility.md), where the repo's sink gains a per-source budget and a truncation, shared with its sibling report endpoint.)
+
 The route is public and unauthenticated, declared alongside the other public routes:
 
 ```clojure

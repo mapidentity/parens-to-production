@@ -67,16 +67,53 @@
   (-> (html body)
       (assoc-in [:headers "Cache-Control"] immutable-cache)))
 
+(def ^:private report-sink-per-ip
+  ;; Budget shared by the two report sinks (CSP + client errors): both are
+  ;; public and unauthenticated, so a source that floods one would flood
+  ;; the other; per-sink budgets would just double the spam ceiling.
+  60)
+(def ^:private report-sink-window-ms
+  (* 15 60 1000))
+
+(defn- read-report
+  "Slurp a report body, truncated to 4KB.
+  http-kit has already buffered the body in memory (its own max-body cap
+  is the real ceiling); the truncation keeps a hostile payload out of the
+  LOG, where an operator greps."
+  [request]
+  (when-let [body (:body request)]
+    (let [s (slurp body)]
+      (subs s 0 (min (count s) 4096)))))
+
 (defn csp-report
   "Receive a browser CSP violation report and log it.
-  Public + unauthenticated, so in production you would
-   sample/rate-limit this (or point report-to at a managed
-  collector) — an open report sink can be spammed."
+  Public + unauthenticated: rate-limited per source and truncated before
+  logging — an open report sink is an invitation to spam the one file the
+  operator reads. (A managed report-to collector is the buy-side answer;
+  one box's answer is the log it already has.)"
   [request]
-  (try
-    (when-let [body (:body request)]
-      (log/warn "CSP violation" {:report (slurp body)}))
-    (catch Exception _ nil))
+  (let [ip (or (:remote-addr request) "?")]
+    (when (ratelimit/allow? (str "report-ip:" ip) report-sink-per-ip report-sink-window-ms)
+      (try
+        (when-let [report (read-report request)]
+          (log/warn "CSP violation" {:report report}))
+        (catch Exception _ nil))))
+  {:status 204
+   :headers {}})
+
+(defn client-error
+  "Receive a browser-side error report and log it.
+  The client counterpart of `wrap-errors`: an exception inside an island
+  used to die silently in the visitor's console; the client-errors module
+  forwards it here. Same posture as the CSP sink — public, so the source
+  is rate-limited and the body truncated. A beacon, not an API."
+  [request]
+  (let [ip (or (:remote-addr request) "?")]
+    (when (ratelimit/allow? (str "report-ip:" ip) report-sink-per-ip report-sink-window-ms)
+      (try
+        (when-let [report (read-report request)]
+          (log/warn "Client-side error" {:report report}))
+        (catch Exception _ nil))))
   {:status 204
    :headers {}})
 
