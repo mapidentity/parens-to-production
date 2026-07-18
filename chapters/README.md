@@ -36,6 +36,10 @@ the magnifier to search the full text.
 - **Going live** -- PostgreSQL + the Datomic transactor, systemd units,
   automatic TLS -- and **minimal-downtime updates** with a verified
   two-instance handoff
+- **Operating**: a hand-rolled **metrics** endpoint (with the peer's own
+  telemetry), **alerting** from systemd + SMTP, **backup/restore drilled**
+  with history intact, **excision** run for the right to be forgotten, and
+  an honest **scaling audit**
 
 Start with [the primer](01-primer.md) for what we are building and why, or jump
 to any topic from the table of contents.

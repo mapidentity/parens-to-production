@@ -51,8 +51,8 @@ One refusal names *every* missing variable, so a fresh host converges in one rou
 
 ```
 # Template for /etc/myapp/env — root:root, chmod 0600.
-DATABASE_URI=datomic:sql://myapp?jdbc:postgresql://localhost:5432/datomic?user=datomic&password=datomic
-ANALYTICS_DATABASE_URI=datomic:sql://myapp-analytics?jdbc:postgresql://localhost:5432/datomic?user=datomic&password=datomic
+DATABASE_URI="datomic:sql://myapp?jdbc:postgresql://localhost:5432/datomic?user=datomic&password=datomic"
+ANALYTICS_DATABASE_URI="datomic:sql://myapp-analytics?jdbc:postgresql://localhost:5432/datomic?user=datomic&password=datomic"
 BASE_URL=https://myapp.example.com
 ADMIN_EMAIL=you@example.com
 # Exactly 16 bytes (AES-128):     openssl rand -hex 8
@@ -79,7 +79,7 @@ CREATE TABLE datomic_kvs
 );
 ```
 
-Four columns. Datomic uses a SQL database as a key-value shelf for immutable storage segments -- all the structure you have spent thirty-four chapters querying (indexes, history, basis-t) lives in those `bytea` blobs and in the peer, not in tables. This is worth internalizing for two operational reasons. It is why "which SQL database" barely matters (the storage protocol asks nothing interesting of it), and it is why backing up this application is *ordinary PostgreSQL backup* -- one table, plus [the afterword's named option](afterword.md) of Datomic's own `backup-db`. The mechanics stay with the operations volume; the *what* is no longer mysterious.
+Four columns. Datomic uses a SQL database as a key-value shelf for immutable storage segments -- all the structure you have spent this whole book querying (indexes, history, basis-t) lives in those `bytea` blobs and in the peer, not in tables. This is worth internalizing for two operational reasons. It is why "which SQL database" barely matters (the storage protocol asks nothing interesting of it), and it is why backing up this application is *ordinary PostgreSQL backup* -- one table, plus Datomic's own `backup-db`. The mechanics get their own chapter -- [backed up, restored, and drilled](39-backup-restore.md) -- and the *what* is no longer mysterious.
 
 Provisioning is three scripts that ship inside the Datomic Pro distribution (`bin/sql/postgres-db.sql`, `postgres-table.sql`, `postgres-user.sql`): create a `datomic` database, that table, and a `datomic` role. Change the role's stock password; it lands next to the URI in exactly two root-owned files. The transactor's own config is a dozen lines, trimmed from the distribution's sample and committed as `ops/transactor.properties`:
 
@@ -209,11 +209,11 @@ DATABASE_URI, SMTP_HOST env var(s) are required in :prod — refusing to start.
 
 ## Trade-offs & limitations, in one place
 
-- **It is one box.** Every process named here is a single point of failure, deliberately: this chapter removes the *mystery* from the deployment, not the SPOF. [The next chapter](36-minimal-downtime.md) removes the deploy window; removing the box itself is the operations volume's horizontal-scale story.
-- **The transactor's only supervisor is `Restart=on-failure`.** No metrics, no alerting, no capacity signal -- [ch.32's flagged question](32-server-path-measured.md) of peer-cache behavior under real storage remains open and measured-elsewhere. Systemd keeps it alive; nothing yet tells you it is unwell.
+- **It is one box.** Every process named here is a single point of failure, deliberately: this chapter removes the *mystery* from the deployment, not the SPOF. [The next chapter](36-minimal-downtime.md) removes the deploy window; removing the box itself is [the scaling audit's](41-beyond-one-box.md) subject, priced there rather than built.
+- **The transactor's only supervisor is `Restart=on-failure`.** No metrics, no alerting, no capacity signal -- [ch.32's flagged question](32-server-path-measured.md) of peer-cache behavior under real storage remains open and measured-elsewhere. Systemd keeps it alive; [the metrics](37-runtime-legibility.md) and [the watchdog](38-alerting.md) later make "unwell" visible and loud -- though the transactor's own metrics callback stays unwired even there.
 - **Storage credentials sit in two `0600` files.** Argued above as the single-box answer; the moment there are two boxes, the argument expires and a secrets manager stops being machinery.
 - **`/health` proves reads, not writes.** Its own comment says so: there is no side-effect-free probe for the transactor's liveness, so a health-checked box can still be write-dead. The deploy script's poll inherits this blind spot knowingly.
-- **PostgreSQL is stock.** No tuning, no replication, no vacuum discipline -- defensible precisely because Datomic asks so little of it, and owed a real treatment alongside backup/restore in the operations volume.
+- **PostgreSQL is stock.** No tuning, no replication, no vacuum discipline -- defensible precisely because Datomic asks so little of it, and what must survive it is [the backup chapter's](39-backup-restore.md) whole subject; deeper PostgreSQL care is [the fleet's road](41-beyond-one-box.md).
 - **ACME is asserted, not proven.** Certificate issuance needs public DNS and reachable ports -- the one claim in this chapter a container demonstrably cannot verify. It is also Caddy's most-exercised default; the risk is honest but small.
 
 ## The sentence ch.34 could not finish
