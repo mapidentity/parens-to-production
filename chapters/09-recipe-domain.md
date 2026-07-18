@@ -251,6 +251,28 @@ The gate is `db/entid-owned`: resolve the recipe's entity id, but only if it bel
 
 Note also what `update!` does *not* touch: `:recipe/position`. Reordering goes through its own path, so an edit bumps `:recipe/updated-at` and creates a version, while a reorder does neither.
 
+## The seed: demo data as a designed fixture
+
+The domain is now complete enough to deserve better development data than a row named "Test" -- and `dev/seed.clj` is written as if that mattered, because it does. Seed data is usually an afterthought: random rows, lorem ipsum, whatever makes the list page non-empty. Ours is a *fixture with a shape*, chosen feature by feature against everything this chapter just built:
+
+```
+Seeded recipes:
+  Classic Carbonara (alice, 3 versions)
+  Carbonara with Peas (bob)
+  Vegan Carbonara (carol)
+  Cashew Vegan Carbonara (dave)
+  Spicy Cashew Vegan Carbonara (alice) — descends from 4
+  Smoky Bacon Carbonara (dave)
+  Margherita Pizza (alice, 2 versions)
+  No-Knead Focaccia (bob)
+```
+
+Each line is there to exercise something. The root carbonara carries three versions of genuine edit history, so the timeline and the diff view always have real changes to show -- an ingredient added, a description reworded -- not synthetic noise. The fork chain runs four deep and crosses all four users (`carbonara → peas → vegan → cashew → spicy`), so `lineage` walks a real ancestry, the "forked from" provenance crosses ownership boundaries, and the deepest leaf genuinely descends from four ancestors. The bacon fork gives the root a *second* child, so a fork list is a list. And the pizza and focaccia are standalones, because "no ancestors, no forks" is a state the UI renders too. Even the content is real cooking, line-grained and lightly markdowned -- when the diff is a line diff, demo edits have to be *legible* edits, the kind a reader can check by eye in a screenshot.
+
+The construction discipline matters as much as the shape: the seed goes through `create!`, `update!`, and `fork!` -- the domain API, never a raw transact. That buys two things. The seed cannot manufacture a state the domain forbids, so it doubles as a standing integration test that runs at every fresh dev boot; when a domain rule tightens, the seed breaks loudly, at the desk of whoever tightened it. And everything the write path stamps onto real writes -- timestamps, dashboard positions, and from [the next chapter](10-provenance.md) on, the transaction's author and one honest commit note -- lands on the demo data identically, because it *is* real writes, just scripted.
+
+`seed-if-empty!` runs at dev startup and seeds only a virgin database; `seed!` itself is additive, so re-running it piles up duplicates by design -- the workflow is `(fresh!)` (reset, then seed), not idempotent reconciliation, which would be machinery in service of avoiding one REPL call. The dividend compounds quietly for the rest of the book: [search](23-search.md) ranks against six carbonara variants, [the activity feed](26-activity.md) windows over cross-user events, [the benchmark chapter](32-server-path-measured.md) asks this graph for its deepest lineage and measures that -- one fixture, designed once, load-bearing everywhere.
+
 ## The proof
 
 None of this is asserted; it is tested, and the tests are the most direct statement of what the domain guarantees. They build a recipe from nothing, edit it, and read its history straight back:

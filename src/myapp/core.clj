@@ -38,13 +38,31 @@
     @server))
 
 (defn stop-server!
-  "Stop the web server."
+  "Stop the web server, giving in-flight requests `drain-ms` to finish.
+  http-kit stops accepting new connections immediately, then waits up to
+  `drain-ms` for requests already being handled before closing their
+  connections. The no-arg default suits dev restarts, where nothing of
+  value is in flight."
+  ([] (stop-server! 100))
+  ([drain-ms]
+   (when-let [stop-fn @server]
+     (println "Stopping server...")
+     (stop-fn :timeout drain-ms)
+     (reset! server nil)
+     (println "Server stopped"))))
+
+(defn- install-shutdown-hook!
+  "Register a JVM shutdown hook that drains the server before exit.
+  `systemctl stop` (like every container runtime's stop) delivers
+  SIGTERM, which the JVM turns into an orderly shutdown-hook run. The
+  one-second drain budget is generous next to the app's millisecond
+  renders (see dev/bench.clj). Installed only by -main: in the REPL and
+  the dev loop the server lifecycle is driven interactively, and a hook
+  per reload would pile up."
   []
-  (when-let [stop-fn @server]
-    (println "Stopping server...")
-    (stop-fn :timeout 100)
-    (reset! server nil)
-    (println "Server stopped")))
+  (.addShutdownHook
+    (Runtime/getRuntime)
+    (Thread. ^Runnable (fn [] (stop-server! 1000)) "myapp-drain")))
 
 (defn restart-server!
   "Restart the web server."
@@ -62,6 +80,7 @@
 (defn -main
   "Application entry point."
   [& _args]
+  (install-shutdown-hook!)
   (start-server!))
 
 (comment

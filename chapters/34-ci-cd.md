@@ -539,9 +539,55 @@ sudo systemctl restart myapp
 exit 1
 ```
 
-It is deliberately small: the `systemd` unit owns restart-on-failure, logging, and the JVM flags, so the script's only job is the swap and the check that the swap actually worked. Because the service is stopped during the swap, the `mv` need not be atomic: nothing is serving that could observe a half-written file. Two honesty points are worth naming plainly. First, this is **not** zero-downtime: `stop` → `mv` → `start` is a hard restart, so requests in flight during the swap are dropped and the site is unreachable for the second or two the JVM takes to boot. True zero-downtime (a second app node drained behind the proxy, or a blue-green pair) is the horizontal-scale work the afterword flags as out of scope; for a single-node SaaS a few seconds of off-hours restart is usually an acceptable trade, named rather than hidden.
+It is deliberately small: the `systemd` unit owns restart-on-failure, logging, and the JVM flags, so the script's only job is the swap and the check that the swap actually worked. Because the service is stopped during the swap, the `mv` need not be atomic: nothing is serving that could observe a half-written file. Two honesty points are worth naming plainly. First, this is **not** zero-downtime: `stop` → `mv` → `start` is a hard restart, so requests in flight during the swap would be dropped and the site is unreachable for the second or two the JVM takes to boot. True zero-downtime (a second app node drained behind the proxy, or a blue-green pair) is the horizontal-scale work the afterword flags as out of scope; for a single-node SaaS a few seconds of off-hours restart is usually an acceptable trade -- named rather than hidden, and then softened as far as one node allows in [the restart-window section below](#the-restart-window-softened).
 
 Second, and this is the subtler trap the script exists to close: `systemctl start` returns the instant the process is *spawned*, not when the application is *serving*. A jar that boots and then dies three seconds later -- a bad config value, a schema mismatch, a port already bound -- would sail straight past a bare `systemctl is-active` check: the unit reads `active` for that instant, the deploy reports green, and the crash-loop surfaces only as a silent outage under the unit's own restart-on-failure. So the script does not ask whether the process spawned. It polls the app's own `/health` endpoint (the same endpoint the e2e server waits on in [the end-to-end-testing chapter](27-e2e-testing.md)) until it answers `200`, and only a real response counts. No healthy answer inside the 30-second window means the deploy failed: restore the previous jar (kept as `myapp.jar.prev`), restart, and exit non-zero. "The deploy succeeded" is thereby defined as *the service answered a request*, not merely *the process started*. The `deploy` user is granted exactly three passwordless `sudo` rights -- `/usr/bin/systemctl stop myapp`, `start myapp`, and `restart myapp`, the third existing only for the rollback line -- and nothing else; the health poll is an ordinary unprivileged HTTP request, so it needs no privilege at all.
+
+### The restart window, softened
+
+Having named the downtime, the honest next move is to spend the two smallest tools that exist on making it painless -- one at each end of the window. The window has two failure surfaces: the requests *in flight* when `systemctl stop` lands, and the requests that *arrive* while the JVM is away. Neither needs a second node to fix; they need an application that exits well and a proxy that fails well.
+
+**Exiting well.** `systemctl stop` delivers SIGTERM -- as does `podman stop`, as does every orchestrator's shutdown -- and the JVM's response to SIGTERM is to run its shutdown hooks and exit. Without one, the process simply dies: http-kit's listening socket closes mid-request, and whoever was halfway through a form submission gets a connection reset as their reward for deploying-hour timing. The fix is one hook in `myapp.core`, installed by `-main`:
+
+```clojure
+(defn- install-shutdown-hook!
+  "Register a JVM shutdown hook that drains the server before exit.
+  `systemctl stop` (like every container runtime's stop) delivers
+  SIGTERM, which the JVM turns into an orderly shutdown-hook run. The
+  one-second drain budget is generous next to the app's millisecond
+  renders (see dev/bench.clj). Installed only by -main: in the REPL and
+  the dev loop the server lifecycle is driven interactively, and a hook
+  per reload would pile up."
+  []
+  (.addShutdownHook
+    (Runtime/getRuntime)
+    (Thread. ^Runnable (fn [] (stop-server! 1000)) "myapp-drain")))
+```
+
+`stop-server!` grew a `drain-ms` arity for this: http-kit's stop function takes a timeout, stops *accepting* connections immediately, and gives requests already being handled up to that long to complete before their connections close. The budget is where [the measurement chapter](32-server-path-measured.md) quietly pays off: a render costs about a millisecond, so one second of drain covers in-flight work a thousand times over -- a fact, not a guess, which is the difference between a drain budget and a superstition. `systemctl stop` itself waits for the process to exit (its own stop timeout defaults to 90 seconds), so the drain adds at most one second to the window in exchange for never dropping a request that had already started. The hook lives in `-main` and only there: the REPL and [the dev loop](06-live-reload.md) drive the server lifecycle interactively, and re-registering a hook per dev restart would accumulate them.
+
+**Failing well.** During `stop` → `mv` → `start`, the proxy's dials to `myapp:3000` are refused, and Caddy's default answer is a bare white `502 Bad Gateway` -- which reads as *broken*, not *busy*, and is the single most alarming thing a returning visitor can be shown for what is actually four seconds of scheduled restart. The Caddyfile closes that with its error handler:
+
+```
+handle_errors {
+	@upstream-down expression `{err.status_code} in [502, 503, 504]`
+	handle @upstream-down {
+		root * /static
+		rewrite * /error/503.html
+		header Cache-Control "no-store"
+		header Retry-After "5"
+		file_server {
+			status 503
+		}
+	}
+}
+```
+
+Every line is a small protocol decision. `handle_errors` fires only on errors *Caddy itself* generates -- a refused dial, a proxy timeout -- never on status codes the application returns, so an app-rendered 404 or [a validation 422](21-forms-validation.md) passes through untouched and the maintenance page can never mask a real bug. The status is forced to `503`, not passed through as `502`, because 503 is HTTP's word for *temporarily* down, and paired with `Retry-After` it tells crawlers to come back later rather than record an outage -- protecting [the SEO surface](30-machine-legibility.md) on every deploy. And `no-store` keeps the one page that must never be cached out of every cache.
+
+The page itself (`static/error/503.html`, copied through the asset pipeline unhashed) is deliberately self-contained: inline styles, an inline SVG, no reference to any other asset -- a page for the moment the application is away should depend on nothing the application resolves. Its one active ingredient is `<meta http-equiv="refresh" content="5">`: the browser retries on its own, and the visitor who hit the window watches a branded "back in a moment" card replace itself with the real page the moment the JVM answers the health poll's same question. No JavaScript, no countdown theater. (One static file cannot negotiate `Accept-Language`, so the page speaks the product's default locale -- the same default [the i18n chapter](12-i18n.md) falls back to. A per-language error page would be a Caddy `header_regexp` away; one language for four seconds was judged enough.)
+
+Both halves were verified against the real thing rather than the documentation: a Caddy with the companion repository's config and a dead upstream serves the branded page with `503`, `Retry-After: 5`, and `no-store`; with a live upstream, its responses -- including its error responses -- pass through byte-for-byte; and a SIGTERM to the running jar prints the drain, closes the port, and exits. What this section does *not* buy is zero-downtime: a request arriving inside the window still sees the maintenance card, and eliminating the window itself is the two-node, drain-behind-the-proxy work the afterword scopes out. The single-node deploy now drops nothing, alarms no one, and heals itself. Zero-*surprise* downtime is the honest name for it.
 
 Static assets are served by Caddy, not by the JVM. In the companion repository's Caddyfile, the proxy applies `Cache-Control: public, max-age=31536000, immutable` to any content-hashed filename (the `\.([a-f0-9]{8})\.(css|js)$` pattern) and to the version-pinned `idiomorph-*.min.js`, and it sets the long-lived security headers (HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, and the `Cross-Origin-Opener-Policy`/`Cross-Origin-Resource-Policy` isolation pair). It does **not** set a Content-Security-Policy: the per-document CSP carries the SHA-256 hashes of the application's inline scripts and import map, so the *application* must own it. This is why immutable caching and asset integrity are two sides of one coin -- once a hashed file is out, browsers may cache it for a year, so `verify-assets` is the last chance to catch a hash that does not match its bytes.
 

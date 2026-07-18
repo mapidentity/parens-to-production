@@ -36,6 +36,22 @@ myapp.lan {
 	handle {
 		reverse_proxy myapp:3000
 	}
+
+	# The deploy window: while the app restarts, the proxy gets connection
+	# refusals and would show a bare 502. Serve the branded maintenance page
+	# instead — it refreshes itself until the app answers again.
+	handle_errors {
+		@upstream-down expression `{err.status_code} in [502, 503, 504]`
+		handle @upstream-down {
+			root * /static
+			rewrite * /error/503.html
+			header Cache-Control "no-store"
+			header Retry-After "5"
+			file_server {
+				status 503
+			}
+		}
+	}
 }
 
 mailpit.lan {
