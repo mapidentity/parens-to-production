@@ -1,0 +1,9 @@
+[Unit]
+Description=MyApp nightly backup (Datomic backup-db + /etc/myapp)
+# A backup that fails silently is worse than none: it converts "we have
+# no backups" into "we think we have backups."
+OnFailure=myapp-alert@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/etc/scripts/myapp-backup.sh

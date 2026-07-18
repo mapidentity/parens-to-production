@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly GC of unreferenced hashed static assets
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the MyApp backup nightly
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+# A box that was off at 04:00 runs the missed backup on boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

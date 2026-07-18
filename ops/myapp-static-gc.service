@@ -1,0 +1,7 @@
+[Unit]
+Description=GC unreferenced hashed static assets
+OnFailure=myapp-alert@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/etc/scripts/myapp-static-gc.sh
