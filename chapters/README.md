@@ -40,6 +40,10 @@ the magnifier to search the full text.
   telemetry), **alerting** from systemd + SMTP, **backup/restore drilled**
   with history intact, **excision** run for the right to be forgotten, and
   an honest **scaling audit**
+- **Defending**: a security-event trail feeding **fail2ban**, live
+  containment levers (ban an IP/user, rotate a key with a grace window), a
+  default-deny **nftables** firewall, a real **CVE gate**, and a 3am
+  **runbook**
 
 Start with [the primer](01-primer.md) for what we are building and why, or jump
 to any topic from the table of contents.
