@@ -7,3 +7,14 @@ OnFailure=myapp-alert@%n.service
 [Service]
 Type=oneshot
 ExecStart=/etc/scripts/myapp-backup.sh
+# --- Sandboxing.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+ReadWritePaths=/var/backups/myapp
+

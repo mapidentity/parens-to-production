@@ -4,3 +4,14 @@ Description=MyApp off-site observer — DNS, TLS, full-path HTTP
 [Service]
 Type=oneshot
 ExecStart=/etc/scripts/observer.sh
+# --- Sandboxing.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+StateDirectory=myapp-observer
+

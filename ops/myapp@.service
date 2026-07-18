@@ -19,6 +19,8 @@ Group=myapp
 WorkingDirectory=/opt/myapp
 Environment=MYAPP_PROFILE=prod
 Environment=MYAPP_PORT=%i
+LogsDirectory=myapp
+Environment=MYAPP_SECURITY_LOG=/var/log/myapp/security.log
 EnvironmentFile=/etc/myapp/env
 # One jar file PER INSTANCE, so the running instance's jar is never
 # replaced underneath a live JVM — deploy-pair.sh copies the new build to
@@ -27,9 +29,21 @@ ExecStart=/usr/bin/java -Xmx1g -XX:+ExitOnOutOfMemoryError -Ddatomic.metricsCall
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=15
+
+# Sandboxing — identical to myapp.service; MemoryDenyWriteExecute omitted
+# for the same JVM-JIT reason.
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target

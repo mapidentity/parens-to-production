@@ -16,6 +16,10 @@ User=myapp
 Group=myapp
 WorkingDirectory=/opt/myapp
 Environment=MYAPP_PROFILE=prod
+# systemd creates /var/log/myapp (owned by User=), and the security log
+# (ch.42) lands there — the one file fail2ban tails and forensics greps.
+LogsDirectory=myapp
+Environment=MYAPP_SECURITY_LOG=/var/log/myapp/security.log
 # Everything the :prod profile requires, in one root-owned 0600 file
 # (see env.example). Boot refuses to start with any value missing.
 EnvironmentFile=/etc/myapp/env
@@ -32,10 +36,24 @@ RestartSec=2
 # stop delivers SIGTERM; the app drains in-flight requests for up to a
 # second (its shutdown hook) — 15s of patience before systemd escalates.
 TimeoutStopSec=15
-# This unit owns nothing outside its own directories.
+
+# --- Sandboxing. The app talks to loopback and writes only its log dir;
+# everything else is closed. NOTE: MemoryDenyWriteExecute is deliberately
+# ABSENT — the JVM's JIT maps writable-then-executable pages and would
+# die under it; that one directive is the JVM-shaped hole in the standard
+# hardening set, and pretending otherwise would break the box.
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target

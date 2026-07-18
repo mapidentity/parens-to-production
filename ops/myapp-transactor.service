@@ -12,9 +12,20 @@ Group=datomic
 ExecStart=/opt/datomic/bin/transactor /etc/myapp/transactor.properties
 Restart=on-failure
 RestartSec=2
+
+# Sandboxing. Also a JVM — MemoryDenyWriteExecute omitted (JIT).
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target

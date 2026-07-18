@@ -71,5 +71,6 @@
 # Defending
 
 - [Detect and Respond: Security Events, fail2ban, and the Levers](42-detect-respond.md)
+- [Harden and Patch: The Firewall, the CVE Gate, and the Morning After](43-harden-patch.md)
 
 [Afterword: What You Built, and Where It Goes](afterword.md)

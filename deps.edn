@@ -102,4 +102,15 @@
                          "--fail-threshold" "50"]}
 
   :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.7"}}
-          :ns-default build}}}
+          :ns-default build}
+
+  ;; Supply-chain CVE gate (ch.34 described it; here it is, runnable):
+  ;;   clojure -M:nvd "" "$(clojure -Spath)"
+  ;; walks the full resolved classpath against the National Vulnerability
+  ;; Database and exits non-zero when any dependency scores at/above the
+  ;; configured CVSS threshold. :replace-deps keeps nvd-clojure's own tree
+  ;; out of the classpath it scans. First run downloads the NVD feed (slow;
+  ;; cache it in CI or set NVD_API_KEY); keep an .nvd-suppressions.xml for
+  ;; advisories that don't apply to how a dependency is used.
+  :nvd {:replace-deps {nvd-clojure/nvd-clojure {:mvn/version "5.3.0"}}
+        :main-opts ["-m" "nvd.task.check"]}}}

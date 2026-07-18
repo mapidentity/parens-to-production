@@ -1,0 +1,14 @@
+// /etc/apt/apt.conf.d/20auto-upgrades — enable unattended SECURITY
+// upgrades on the box. The OS is the one layer the CVE scan (ch.34's
+// :nvd) never sees: it audits the app's Java classpath, not the kernel,
+// openssl, or curl the box runs. This closes that gap the boring way —
+// the distribution's own security pocket, applied nightly, unattended.
+//
+// Pairs with the stock /etc/apt/apt.conf.d/50unattended-upgrades, whose
+// default Allowed-Origins already scopes to the security suite. Reboots
+// for kernel updates stay MANUAL (a single box has no drain partner):
+// Unattended-Upgrade::Automatic-Reboot "false"; is the deliberate default.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::AutocleanInterval "7";
