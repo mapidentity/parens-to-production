@@ -66,5 +66,6 @@
 - [The System Calls for Help: Alerting Without a Pager Service](38-alerting.md)
 - [Backup, Restore, and the Drill](39-backup-restore.md)
 - [The Right to Be Forgotten: Excision, Run](40-excision.md)
+- [Beyond One Box: The Honest Scaling Audit](41-beyond-one-box.md)
 
 [Afterword: What You Built, and Where It Goes](afterword.md)
