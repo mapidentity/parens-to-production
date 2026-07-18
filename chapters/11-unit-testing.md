@@ -28,7 +28,7 @@ All shared test infrastructure lives in a single file: `test/myapp/test_helpers.
     [myapp.db.schema :as schema]))
 ```
 
-This `ns` form is the slice this chapter builds on; the file grows two requires beyond it as the app does. Once the auth chapters exist, the request builder resolves users from the database, which adds a `myapp.auth.core` require. When the app gains a second database (ours gains an analytics DB in [the admin dashboard chapter](23-admin-dashboard.md)), that adds a `myapp.analytics.db` require, a parallel fixture (shown [below](#a-second-database-the-analytics-fixture)), and an `:analytics-database-uri` key in the `test-config` map. In the repo all of these are already in place.
+This `ns` form is the slice this chapter builds on; the file grows two requires beyond it as the app does. Once the auth chapters exist, the request builder resolves users from the database, which adds a `myapp.auth.core` require. When the app gains a second database (ours gains an analytics DB in [the admin dashboard chapter](28-admin-dashboard.md)), that adds a `myapp.analytics.db` require, a parallel fixture (shown [below](#a-second-database-the-analytics-fixture)), and an `:analytics-database-uri` key in the `test-config` map. In the repo all of these are already in place.
 
 ### The database fixture
 
@@ -109,7 +109,7 @@ The `cond->` threading macro keeps it clean -- optional keys are only added when
 
 ### A second database: the analytics fixture
 
-When an app grows a second Datomic database, the same fixture pattern scales to it unchanged -- a fresh in-memory instance per test, stubbed at the connection boundary. For the analytics database of [the admin dashboard chapter](23-admin-dashboard.md), add `[myapp.analytics.db :as analytics]` to the `ns` require above and this fixture beside `with-test-db`:
+When an app grows a second Datomic database, the same fixture pattern scales to it unchanged -- a fresh in-memory instance per test, stubbed at the connection boundary. For the analytics database of [the admin dashboard chapter](28-admin-dashboard.md), add `[myapp.analytics.db :as analytics]` to the `ns` require above and this fixture beside `with-test-db`:
 
 ```clojure
 (def ^:dynamic *analytics-conn*
@@ -305,7 +305,7 @@ The coverage configuration lives in the `:coverage` alias in `deps.edn`:
 ```clojure
 :coverage {:extra-paths ["test"]
            :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}
-                        ;; in-memory SMTP for the email-flow tests (ch. 21)
+                        ;; in-memory SMTP for the email-flow tests (ch. 25)
                         com.icegreen/greenmail {:mvn/version "2.1.8"}}
            :main-opts ["-m" "cloverage.coverage"
                        "--src-ns-path" "src"
@@ -330,7 +330,7 @@ The `:coverage` alias is one of two test entry points in `deps.edn`. The other i
 :test {:extra-paths ["test"]
        :extra-deps {io.github.cognitect-labs/test-runner
                     {:git/tag "v0.5.1" :git/sha "dfb30dd"}
-                    ;; in-memory SMTP for the email-flow tests (ch. 21)
+                    ;; in-memory SMTP for the email-flow tests (ch. 25)
                     com.icegreen/greenmail {:mvn/version "2.1.8"}}
        :main-opts ["-m" "cognitect.test-runner"]
        :exec-fn cognitect.test-runner.api/test}
@@ -345,7 +345,7 @@ clojure -X:test      # fast: run the suite, no coverage
 clojure -M:coverage  # run under Cloverage, enforce the coverage threshold
 ```
 
-`clojure -X:test` is the quick feedback loop during development: no instrumentation, straight through the suite. `clojure -M:coverage` is what you run before committing and what [the CI pipeline](26-ci-cd.md) runs, because it both runs the tests and fails if coverage drops below the threshold. Instrumenting every form is what makes it slower; the threshold is what makes it a gate. If tests pass and coverage is above the threshold, exit code 0; otherwise non-zero. Because CI runs the very same command, local and CI behavior are identical.
+`clojure -X:test` is the quick feedback loop during development: no instrumentation, straight through the suite. `clojure -M:coverage` is what you run before committing and what [the CI pipeline](34-ci-cd.md) runs, because it both runs the tests and fails if coverage drops below the threshold. Instrumenting every form is what makes it slower; the threshold is what makes it a gate. If tests pass and coverage is above the threshold, exit code 0; otherwise non-zero. Because CI runs the very same command, local and CI behavior are identical.
 
 ## In-file tests: co-locating quick tests with source
 

@@ -21,7 +21,7 @@ That is it. The `:ns-default build` tells `clojure -T:build` to look for functio
 
 ## The build namespace
 
-Here is the build-hardening portion of `build.clj` -- the strict-compile gate and the uberjar task. The same file later grows a second half (content-hashing, SRI, the `assets`/`verify-assets` tasks, with two extra requires: `clojure.java.io` and `clojure.java.shell`) in [the asset pipeline chapter](24-asset-pipeline.md):
+Here is the build-hardening portion of `build.clj` -- the strict-compile gate and the uberjar task. The same file later grows a second half (content-hashing, SRI, the `assets`/`verify-assets` tasks, with two extra requires: `clojure.java.io` and `clojure.java.shell`) in [the asset pipeline chapter](29-asset-pipeline.md):
 
 ```clojure
 (ns build
@@ -151,7 +151,7 @@ The warning looks like this, and the fix is again a hint, a primitive one this t
 (defn add [^long a ^long b] (+ a b))
 ```
 
-These two are the strictness bindings. The repo's `compile-clj` passes one more -- `#'test/*load-tests* false`, via a `[clojure.test :as test]` require the listing above does not carry -- which has nothing to do with strictness: it strips in-file `deftest` forms out of the compiled artifact so tests never ride into production. We reach for it when the testing strategy needs it, so it is introduced in [the testing chapter](10-unit-testing.md); it lives in the same `:bindings` map only because that is where `compile-clj` takes them.
+These two are the strictness bindings. The repo's `compile-clj` passes one more -- `#'test/*load-tests* false`, via a `[clojure.test :as test]` require the listing above does not carry -- which has nothing to do with strictness: it strips in-file `deftest` forms out of the compiled artifact so tests never ride into production. We reach for it when the testing strategy needs it, so it is introduced in [the testing chapter](11-unit-testing.md); it lives in the same `:bindings` map only because that is where `compile-clj` takes them.
 
 The `:bindings` map has a limit worth naming: it switches the flags on in the build subprocess, and only there. During development the same code loads in the REPL with `*warn-on-reflection*` at its default `false`, and a reflective call sits silent until the next build. The day-one half of the promise is a per-namespace switch:
 

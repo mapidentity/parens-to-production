@@ -42,7 +42,7 @@ The heart of the setup is a dedicated server entry point. It looks like your pro
     [ring.middleware.session.cookie :as cookie]))
 ```
 
-One require points forward. `myapp.analytics.db` is defined in [the admin dashboard chapter](23-admin-dashboard.md), not here; if you are building strictly in order, create it now from there (or take it from the repo), because the e2e server boots the full stack -- analytics database included -- and will not start without it.
+One require points forward. `myapp.analytics.db` is defined in [the admin dashboard chapter](28-admin-dashboard.md), not here; if you are building strictly in order, create it now from there (or take it from the repo), because the e2e server boots the full stack -- analytics database included -- and will not start without it.
 
 ### Capturing emails instead of sending them
 
@@ -168,7 +168,7 @@ The app handler is assembled the same way as production, but using the extended 
 
 The middleware stack is real. The session handling is real. The cookie store is real (just with a deterministic key). This is important: the E2E server must exercise essentially the same middleware chain as production, or you are not testing what you think you are testing. The differences are external integrations (email, databases) and the test-control endpoints -- plus one middleware layer: production's innermost `wrap-errors` is absent, so these tests cover every layer except the styled-500 path (a raw exception in a failing test is what you want anyway).
 
-We keep `:same-site :lax` to match production -- the magic-link flow is a cross-context GET, and `:strict` would block the cookie on that navigation (more on this in [the email login-flow chapter](21-auth-email-flow.md)). Note too that `:secure` is *absent* from those attrs -- a simplification, not the necessity it looks like. Chromium runs these tests over `http://localhost`, and [the web-server chapter](05-web-server.md) is careful that it *would* send a `:secure` cookie there, treating `http://localhost` as a potentially-trustworthy origin; dropping `:secure` just keeps the test cookie from leaning on that browser-specific carve-out. That, plus the omitted explicit `:cookie-name` and 30-day `:max-age`, is where the e2e cookie departs from production.
+We keep `:same-site :lax` to match production -- the magic-link flow is a cross-context GET, and `:strict` would block the cookie on that navigation (more on this in [the email login-flow chapter](25-auth-email-flow.md)). Note too that `:secure` is *absent* from those attrs -- a simplification, not the necessity it looks like. Chromium runs these tests over `http://localhost`, and [the web-server chapter](05-web-server.md) is careful that it *would* send a `:secure` cookie there, treating `http://localhost` as a potentially-trustworthy origin; dropping `:secure` just keeps the test cookie from leaning on that browser-specific carve-out. That, plus the omitted explicit `:cookie-name` and 30-day `:max-age`, is where the e2e cookie departs from production.
 
 ### The start function
 
@@ -297,7 +297,7 @@ function uniqueEmail() {
 
 Two helper functions set the stage. `getMagicLink` calls our test-only `/test/emails` endpoint to retrieve the magic link that was "sent" to a given address. `uniqueEmail` generates a fresh address per test -- a timestamp plus a random suffix, so two tests that begin in the same millisecond still get distinct users when the suite runs in parallel.
 
-Notice what `getMagicLink` does *not* do: it fires a single `request.get` with no retry loop, yet it never races the server. Two things make that safe. First, Playwright's assertions auto-wait. `expect(...).toBeVisible()` polls the live page until the element appears or the timeout fires, so the preceding assertion that "Check your email" is visible has already blocked until the server finished handling the sign-in POST. That is why the specs carry no manual `sleep`s or polling anywhere. Second, that POST captures the email synchronously: the `request-magic-link` handler calls `send-magic-link!` inline, before it issues its redirect (see [the auth chapter](21-auth-email-flow.md)), so the stub has appended to the atom by the time the confirmation page renders. The email is guaranteed present the moment the browser sees the heading. That second guarantee is a real coupling worth naming: move sending onto a background thread or a queue and the ordering breaks, at which point `getMagicLink` would need a retry of its own.
+Notice what `getMagicLink` does *not* do: it fires a single `request.get` with no retry loop, yet it never races the server. Two things make that safe. First, Playwright's assertions auto-wait. `expect(...).toBeVisible()` polls the live page until the element appears or the timeout fires, so the preceding assertion that "Check your email" is visible has already blocked until the server finished handling the sign-in POST. That is why the specs carry no manual `sleep`s or polling anywhere. Second, that POST captures the email synchronously: the `request-magic-link` handler calls `send-magic-link!` inline, before it issues its redirect (see [the auth chapter](25-auth-email-flow.md)), so the stub has appended to the atom by the time the confirmation page renders. The email is guaranteed present the moment the browser sees the heading. That second guarantee is a real coupling worth naming: move sending onto a background thread or a queue and the ordering breaks, at which point `getMagicLink` would need a retry of its own.
 
 ### Shared registration flow
 
@@ -420,7 +420,7 @@ There is no wrapper script to write -- running the suite is one command from the
 npx playwright test
 ```
 
-Playwright reads the config, starts the Clojure server (via the `webServer` block), waits for `/health` to return 200, runs every spec in `e2e/`, and tears everything down. You do not need to start the server manually (though you can, during development, thanks to `reuseExistingServer`). [The CI/CD chapter](26-ci-cd.md) runs the same suite in the pipeline, there through the container's own `playwright` binary rather than `npx`, but against the identical config, server, and specs.
+Playwright reads the config, starts the Clojure server (via the `webServer` block), waits for `/health` to return 200, runs every spec in `e2e/`, and tears everything down. You do not need to start the server manually (though you can, during development, thanks to `reuseExistingServer`). [The CI/CD chapter](34-ci-cd.md) runs the same suite in the pipeline, there through the container's own `playwright` binary rather than `npx`, but against the identical config, server, and specs.
 
 The companion repo ships two spec files: `e2e/auth.spec.js` (the magic-link login, logout, and route-protection flows built above) and `e2e/recipes.spec.js` (recipe creation, edit history, diffs, and fork lineage). `npx playwright test` runs both.
 

@@ -15,9 +15,9 @@ The insight that drives this chapter is that **a save is not one thing.** A view
 | a served `.js` module | full reload, scroll restored |
 | (Tailwind rebuilds `styles.css`) | hot-swap the stylesheet `<link>` -- no reload |
 
-This chapter rebuilds the watcher's dispatch around that matrix. It assumes the basic file watcher and WebSocket from [the live-reload chapter](06-live-reload.md), the server-rendered Hiccup views from [the Hiccup views chapter](13-hiccup-views.md), the client dispatcher's `fetchAndMorph` (idiomorph) from [the morph-dispatcher chapter](14-morph-dispatcher.md), the source inspector and its `inspector-load` loader from [the source inspector chapter](15-inspector.md), and the Tailwind setup (`input.css`, the `@source` scan, the CLI) from [the Tailwind chapter](12-tailwind-styling.md).
+This chapter rebuilds the watcher's dispatch around that matrix. It assumes the basic file watcher and WebSocket from [the live-reload chapter](06-live-reload.md), the server-rendered Hiccup views from [the Hiccup views chapter](14-hiccup-views.md), the client dispatcher's `fetchAndMorph` (idiomorph) from [the morph-dispatcher chapter](15-morph-dispatcher.md), the source inspector and its `inspector-load` loader from [the source inspector chapter](16-inspector.md), and the Tailwind setup (`input.css`, the `@source` scan, the CLI) from [the Tailwind chapter](13-tailwind-styling.md).
 
-> **One artifact, two deliveries.** Dev and production build from the same committed sources through one pipeline; they differ in the HTTP envelope (URL shape, cache headers) and the build cadence (watch vs. one-shot), not in a second asset tree to reconcile. For CSS the bytes are literally identical -- the dev watch runs the same minified Tailwind build production does. For JavaScript the module graph is identical -- same files, same import specifiers -- but production esbuild-minifies each module, so dev serves the readable source and prod ships the compressed bytes. The dev story below is the "watch" cadence of that pipeline; [the asset pipeline chapter](24-asset-pipeline.md) covers the production cadence -- content hashing, minification, an import map, and immutable caching. Nothing here changes *what* ships between dev and prod; it only changes *when* and *how* it is delivered.
+> **One artifact, two deliveries.** Dev and production build from the same committed sources through one pipeline; they differ in the HTTP envelope (URL shape, cache headers) and the build cadence (watch vs. one-shot), not in a second asset tree to reconcile. For CSS the bytes are literally identical -- the dev watch runs the same minified Tailwind build production does. For JavaScript the module graph is identical -- same files, same import specifiers -- but production esbuild-minifies each module, so dev serves the readable source and prod ships the compressed bytes. The dev story below is the "watch" cadence of that pipeline; [the asset pipeline chapter](29-asset-pipeline.md) covers the production cadence -- content hashing, minification, an import map, and immutable caching. Nothing here changes *what* ships between dev and prod; it only changes *when* and *how* it is delivered.
 
 ## Revisiting `load-changed-file`
 
@@ -93,7 +93,7 @@ The **failure path** is new. A broken file -- a syntax error -- no longer just l
 
 The `.clj` branch does not call `load-file` directly. It first asks `inspector-load/reload-changed!`, and only falls back to `load-file` when that returns falsey. For files whose name ends in `views.clj`, `reload-changed!` loads them through `clojure.tools.reader` instead of the normal loader, and returns truthy.
 
-The reason belongs to [the source inspector chapter](15-inspector.md): the default Clojure reader attaches no line metadata to nested vector literals, but `tools.reader` does, and that metadata is what lets the inspector tag every rendered element with the source location that produced it. A view edit must take the `tools.reader` path so the inspector's source map stays current; everything else takes the ordinary `load-file`.
+The reason belongs to [the source inspector chapter](16-inspector.md): the default Clojure reader attaches no line metadata to nested vector literals, but `tools.reader` does, and that metadata is what lets the inspector tag every rendered element with the source location that produced it. A view edit must take the `tools.reader` path so the inspector's source map stays current; everything else takes the ordinary `load-file`.
 
 For the matrix, the relevant output is just the boolean: a `views.clj` edit is *morphable*, a non-view `.clj` edit is not. That boolean is the entire reason this branch exists in the shape it does.
 
@@ -245,11 +245,11 @@ The `static-root` itself is the same idea -- one mechanism with a dev/prod switc
   (if dev? "static" "myapp/static"))
 ```
 
-In dev the app serves the *source* `static/` tree directly at stable URLs with `no-store`. In production, Caddy serves the *built* `myapp/static/` tree with content-hashed filenames and `immutable` caching ([the asset pipeline chapter](24-asset-pipeline.md)). Same files, two envelopes.
+In dev the app serves the *source* `static/` tree directly at stable URLs with `no-store`. In production, Caddy serves the *built* `myapp/static/` tree with content-hashed filenames and `immutable` caching ([the asset pipeline chapter](29-asset-pipeline.md)). Same files, two envelopes.
 
 ## WebSocket: from one message to four
 
-The live-reload chapter had exactly one outbound message: `reload`. The matrix needs more. The reload loop now spans three message types, and the `reload` message carries a `morphable` flag, so the browser has four behaviors to dispatch on. (The `/dev/ws` socket is shared infrastructure by this point in the book: [the source inspector chapter](15-inspector.md) already relays `connected`, `highlight`, and `open-result` over it. What follows is the reload loop's slice of the traffic.)
+The live-reload chapter had exactly one outbound message: `reload`. The matrix needs more. The reload loop now spans three message types, and the `reload` message carries a `morphable` flag, so the browser has four behaviors to dispatch on. (The `/dev/ws` socket is shared infrastructure by this point in the book: [the source inspector chapter](16-inspector.md) already relays `connected`, `highlight`, and `open-result` over it. What follows is the reload loop's slice of the traffic.)
 
 ```clojure
 (defn notify-reload!
@@ -313,7 +313,7 @@ ws.onmessage = function (event) {
 };
 ```
 
-Three message types, four behaviors -- because `reload` forks on `morphable`. (One drift note for anyone reading `dev-reload.js` alongside this: the repo wraps this connection in a `connectDevReload()` function and defers the call while `document.prerendering` is true, because a prerendered page is not allowed to hold a WebSocket. The rule, and the speculative prerendering that makes it matter, belong to [the progressive-enhancement chapter](19-progressive-enhancement.md); the dispatch itself is exactly as shown.)
+Three message types, four behaviors -- because `reload` forks on `morphable`. (One drift note for anyone reading `dev-reload.js` alongside this: the repo wraps this connection in a `connectDevReload()` function and defers the call while `document.prerendering` is true, because a prerendered page is not allowed to hold a WebSocket. The rule, and the speculative prerendering that makes it matter, belong to [the progressive-enhancement chapter](20-progressive-enhancement.md); the dispatch itself is exactly as shown.)
 
 <svg viewBox="0 0 760 250" role="img" aria-label="The delivery matrix: each kind of edit becomes one message and one browser response" style="width:100%;height:auto;font-family:monospace">
   <defs>
@@ -385,7 +385,7 @@ function morphReload() {
 }
 ```
 
-The key point is that this is *not* a new mechanism. `fetchAndMorph` is the app's production interaction layer ([the morph-dispatcher chapter](14-morph-dispatcher.md)): it fetches the current URL, parses the response, and uses idiomorph to morph the requested target in place, preserving form values, focus, and scroll. Dev hot-reload is just one more caller of it. A few options matter:
+The key point is that this is *not* a new mechanism. `fetchAndMorph` is the app's production interaction layer ([the morph-dispatcher chapter](15-morph-dispatcher.md)): it fetches the current URL, parses the response, and uses idiomorph to morph the requested target in place, preserving form values, focus, and scroll. Dev hot-reload is just one more caller of it. A few options matter:
 
 - `target: 'body'` -- morph the whole page body, not just `<main>`. Why the widest target is the narrowest *correct* one is the decision below.
 - `morphCallbacks` with a `beforeNodeRemoved` veto -- refuses to remove any element carrying `data-myapp-overlay`, the mark every client-injected dev node wears. Also part of the decision below.
@@ -397,7 +397,7 @@ It also clears any leftover stale-warning banner first, because a morph (unlike 
 
 > **Decision -- morph `<body>`, and teach the morph to spare the overlays.** An earlier cut of this function morphed `<main>`, the same region production navigation targets, and it looked like the narrowest correct response. It is not, because of what "view namespace" means in this app: `views.clj` owns the page chrome (`base-layout`, `top-nav`, the layout wrappers) as well as the content inside `<main>`. Edit the nav markup under a `<main>`-only morph and everything reports success -- the server reloads the namespace, sends `morphable: true`, the morph completes -- while the visible chrome stays stale, with no banner to say so. That is precisely the silent staleness this chapter builds `reload-error` to prevent, manufactured by the morph itself. So the target is the whole `<body>`; the `<head>` stays untouched, and the dispatcher copies the new `<title>` over as it does for every navigation. That leaves one honest residue the box's own logic should name: a view edit to the rest of `base-layout`'s `<head>` -- a meta description, an `og:` tag, a preload `<link>` -- is neither morphed nor title-synced, so it goes stale under a view save exactly as `<main>`-only chrome would, until the next full reload picks it up. Head edits are rare and never visible on the page, so the body morph accepts that residue rather than widening again to re-render `<head>`. The widening has a cost the options list pays. The server's freshly rendered HTML never contained the dev tooling's client-injected nodes (the inspector's badge and highlight boxes, the construction-view panel), so to idiomorph they are cruft to delete. Every such node therefore carries `data-myapp-overlay`, and the `beforeNodeRemoved` callback vetoes their removal. The attribute is a contract: a future dev overlay that forgets to mark itself will be eaten by the next view save.
 
-After the morph, `fetchAndMorph` fires a `dispatcher:morphed` event. The source inspector listens for it to re-attach its highlight to the freshly morphed DOM -- [the source inspector chapter](15-inspector.md), which precedes this one, owns that behavior. Here it is enough to know the morph announces itself.
+After the morph, `fetchAndMorph` fires a `dispatcher:morphed` event. The source inspector listens for it to re-attach its highlight to the freshly morphed DOM -- [the source inspector chapter](16-inspector.md), which precedes this one, owns that behavior. Here it is enough to know the morph announces itself.
 
 ### A non-view `.clj` or `.js` edit: full reload, scroll restored
 
@@ -425,7 +425,7 @@ This raises the obvious question: **why does a `.js` edit force a full reload at
 
 > **An ES module is a URL-cached singleton.** The browser loads a module *once per URL* and caches the resulting module instance forever. Importing the same URL again returns the same already-evaluated instance -- the module body never re-runs. So when you edit `dispatcher.js`, there is no in-place way to make the browser re-evaluate it: the old instance, with its already-registered event listeners and timers, is still live. The only honest ways to pick up the new code are (a) `eval` the new source, (b) re-import the module under a *different* URL (a cache-bust query) and somehow tear down the old instance, or (c) reload the page.
 >
-> We reject (a) and (b). `eval` requires `'unsafe-eval'` in the Content-Security-Policy, and our CSP forbids it on purpose ([the asset pipeline chapter](24-asset-pipeline.md)) -- adding `unsafe-eval` for a dev convenience would weaken the very policy the book is teaching. Re-importing under a fresh URL is CSP-legal but *unsound*: the old module's event listeners and `setInterval`s keep running with nothing to dispose them, so you accumulate zombie handlers on every edit. A real module-replacement system (HMR with accept/dispose hooks) is bundler-grade machinery, wildly disproportionate for the thin, mostly stateless client JS here. So (c), a full reload, is the *correct* behavior, not a fallback -- and the scroll stash makes it nearly seamless.
+> We reject (a) and (b). `eval` requires `'unsafe-eval'` in the Content-Security-Policy, and our CSP forbids it on purpose ([the asset pipeline chapter](29-asset-pipeline.md)) -- adding `unsafe-eval` for a dev convenience would weaken the very policy the book is teaching. Re-importing under a fresh URL is CSP-legal but *unsound*: the old module's event listeners and `setInterval`s keep running with nothing to dispose them, so you accumulate zombie handlers on every edit. A real module-replacement system (HMR with accept/dispose hooks) is bundler-grade machinery, wildly disproportionate for the thin, mostly stateless client JS here. So (c), a full reload, is the *correct* behavior, not a fallback -- and the scroll stash makes it nearly seamless.
 
 The same singleton argument is why the dev scripts do not try anything clever for non-view `.clj` edits either: those can change server behavior in ways a body morph can't safely reflect (a changed route, a changed handler), so a full reload is the conservative choice.
 
@@ -485,7 +485,7 @@ The matrix adds two steps to the `hot-reload/start` [the live-reload chapter](06
 
 `(start!)` from the REPL still brings up the whole system in one call -- now with the Tailwind process and the view preload folded in.
 
-> **What the repo's `start` adds.** The listing is trimmed to this chapter's two additions. The repo's `start` also seeds a fresh dev database with the demo recipe graph (`seed/seed-if-empty!`, a no-op once recipes exist, so restarts never pile up duplicates) and, under the `:storm` alias only, enables the construction-view tracer -- the guarded block [the construction-view chapter](16-construction-view.md) added to this same function. Neither belongs to the reload loop, which is why they are elided here; `dev/hot_reload.clj` has the full body.
+> **What the repo's `start` adds.** The listing is trimmed to this chapter's two additions. The repo's `start` also seeds a fresh dev database with the demo recipe graph (`seed/seed-if-empty!`, a no-op once recipes exist, so restarts never pile up duplicates) and, under the `:storm` alias only, enables the construction-view tracer -- the guarded block [the construction-view chapter](17-construction-view.md) added to this same function. Neither belongs to the reload loop, which is why they are elided here; `dev/hot_reload.clj` has the full body.
 
 ## The complete flow, per edit type
 
