@@ -19,6 +19,7 @@
     [myapp.recipe.core :as recipe]
     [myapp.time :as time]
     [myapp.web.ratelimit :as ratelimit]
+    [myapp.web.security :as security]
     [myapp.web.views :as views]
     [ring.util.response :as response])
   (:import
@@ -131,6 +132,20 @@
     {:status 404
      :headers {"Content-Type" "text/html; charset=UTF-8"}
      :body (str (views/error-page locale (t locale :error/not-found)))}))
+
+(defn- tenancy-check!
+  "Log a security event when a mutation failure was a cross-owner attempt.
+  Tells an IDOR probe (the recipe EXISTS but the caller doesn't own it)
+  apart from a benign 404. The response is identical either way —
+  `entid-owned` never leaks existence, and neither does this."
+  [request id]
+  (let [r (recipe/recipe-by-id (d/db (db/get-connection)) id)]
+    (when (and r (not (recipe/owned-by? r (:user-eid request))))
+      (security/event!
+        :tenancy/refused
+        {:ip (or (:client-ip request) "?")
+         :email (or (:user-email request) "?")
+         :recipe id}))))
 
 ;; ---------------------------------------------------------------------------
 ;; Public + auth
@@ -256,23 +271,54 @@
   never revealing which gate failed."
   [request]
   (let [token (get-in request [:params :token])
-        signing-key (config/get-config :signing-key)
+        ip (or (:client-ip request) "?")
+        ;; During a key rotation the previous key stays accepted until
+        ;; in-flight links expire — so a rotation breaks no active login.
+        signing-keys (remove
+                       nil?
+                       [(config/get-config :signing-key)
+                        (config/get-config :signing-key-previous)])
         locale (:locale request)
-        token-data (auth/verify-token signing-key token)
+        token-data (auth/verify-token signing-keys token)
         nonce-str (:nonce token-data)
         nonce-uuid (when nonce-str
                      (try
                        (UUID/fromString nonce-str)
                        (catch IllegalArgumentException _ nil)))]
-    (if (and token-data nonce-uuid (consume-magic-link-nonce! nonce-uuid))
+    (cond
+      ;; Gate 1: the signature/expiry. A nil here is a forged, tampered, or
+      ;; expired token — the shape of a brute-force or a stale-link probe.
+      (not (and token-data nonce-uuid))
+      (do
+        (security/event!
+          :auth/failure
+          {:ip ip
+           :reason "bad-token"})
+        {:status 400
+         :headers {"Content-Type" "text/html; charset=UTF-8"}
+         :body (str (views/error-page locale (t locale :error/invalid-magic-link)))})
+      ;; Gate 2: one-shot consumption. A valid signature whose nonce is
+      ;; already spent is a REPLAY — a distinct, louder signal than a bad
+      ;; token, so it earns its own reason.
+      (not (consume-magic-link-nonce! nonce-uuid))
+      (do
+        (security/event!
+          :auth/replay
+          {:ip ip
+           :email (:email token-data)})
+        {:status 400
+         :headers {"Content-Type" "text/html; charset=UTF-8"}
+         :body (str (views/error-page locale (t locale :error/invalid-magic-link)))})
+      :else
       (let [email (:email token-data)
             conn (db/get-connection)]
         (auth/get-or-create-user! conn email)
+        (security/event!
+          :auth/success
+          {:ip ip
+           :email email})
         (-> (response/redirect "/dashboard")
-            (assoc :session {:user-email email})))
-      {:status 400
-       :headers {"Content-Type" "text/html; charset=UTF-8"}
-       :body (str (views/error-page locale (t locale :error/invalid-magic-link)))})))
+            (assoc :session {:user-email email}))))))
 
 (defn terms-welcome
   "Show the terms acceptance page (requires authentication)."
@@ -428,7 +474,7 @@
       (let [r (recipe/recipe-by-id (d/db (db/get-connection)) id)]
         (if (and r (recipe/owned-by? r (:user-eid request)))
           (invalid-form request r raw errors)
-          (not-found request)))
+          (do (tenancy-check! request id) (not-found request))))
       (let [{:keys [title description servings ingredients steps note]} values
             ok? (recipe/update!
                   (db/get-connection)
@@ -440,7 +486,9 @@
                    :recipe/ingredients ingredients
                    :recipe/steps steps}
                   note)]
-        (if ok? (response/redirect (str "/recipes/" id)) (not-found request))))))
+        (if ok?
+          (response/redirect (str "/recipes/" id))
+          (do (tenancy-check! request id) (not-found request)))))))
 
 (defn recipe-preview
   "POST /recipes/new/preview and /recipes/:id/preview — the preview pane.
@@ -466,8 +514,10 @@
 (defn recipe-delete
   "POST /recipes/:id/delete — retract a recipe (owner only)."
   [request]
-  (recipe/delete! (db/get-connection) (:user-eid request) (path-uuid request))
-  (response/redirect "/dashboard"))
+  (let [id (path-uuid request)
+        deleted? (recipe/delete! (db/get-connection) (:user-eid request) id)]
+    (when-not deleted? (tenancy-check! request id))
+    (response/redirect "/dashboard")))
 
 (defn- parse-uuid*
   "Parse an arbitrary string as a UUID, or nil.

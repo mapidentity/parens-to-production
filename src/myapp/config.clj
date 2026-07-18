@@ -99,7 +99,13 @@
                   (or (when k (.getBytes k "ISO-8859-1"))
                       (do (require-prod-key! profile "SIGNING_KEY")
                           (println "⚠️  Generating random signing key (dev mode)")
-                          (generate-signing-key))))))))
+                          (generate-signing-key))))))
+      ;; The optional rotation-grace key: bytes when SIGNING_KEY_PREVIOUS is
+      ;; set (strength-checked like the primary), nil otherwise. No fallback
+      ;; and no prod requirement — it exists only during a rotation window.
+      (update :signing-key-previous
+              (fn [^String k]
+                (when k (require-signing-key-strength! (.getBytes k "ISO-8859-1")))))))
 
 (def ^:private prod-required
   "Config paths that must resolve in :prod, with the env var supplying each.

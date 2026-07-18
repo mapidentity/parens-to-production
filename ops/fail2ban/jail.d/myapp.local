@@ -1,0 +1,21 @@
+# Enable the myapp jail. Copy ops/fail2ban/filter.d/myapp.conf to
+# /etc/fail2ban/filter.d/ and this to /etc/fail2ban/jail.d/, then
+# `systemctl reload fail2ban`.
+[myapp]
+enabled  = true
+filter   = myapp
+logpath  = /var/log/myapp/security.log
+# Five bad tokens from one IP in ten minutes is not a fat-fingered link —
+# HMAC tokens aren't mistyped, they're forged or replayed. Ban an hour.
+maxretry = 5
+findtime = 10m
+bantime  = 1h
+# Ban at the packet level via the nftables table the firewall owns
+# (ch.43). banaction is nftables-so the ban is one set-element add, torn
+# down automatically when bantime expires.
+banaction = nftables-multiport
+# Notify the operator on ban through the box's own alert path — the same
+# spine the watchdog and units use — so a ban shows up where every other
+# incident does.
+action   = %(banaction)s[name=%(__name__)s, port="http,https", protocol=tcp]
+           myapp-notify[name=%(__name__)s]

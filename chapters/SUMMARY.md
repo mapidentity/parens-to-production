@@ -68,4 +68,8 @@
 - [The Right to Be Forgotten: Excision, Run](40-excision.md)
 - [Beyond One Box: The Honest Scaling Audit](41-beyond-one-box.md)
 
+# Defending
+
+- [Detect and Respond: Security Events, fail2ban, and the Levers](42-detect-respond.md)
+
 [Afterword: What You Built, and Where It Goes](afterword.md)

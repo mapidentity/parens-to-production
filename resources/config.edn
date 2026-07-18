@@ -20,6 +20,10 @@
 
  :session-key #env "SESSION_KEY"
  :signing-key #env "SIGNING_KEY"
+ ;; Optional: the previous signing key, honoured during a rotation grace
+ ;; window so in-flight magic links keep working. Set it to the old key at
+ ;; rotation, drop it once outstanding links have expired (15 min).
+ :signing-key-previous #env "SIGNING_KEY_PREVIOUS"
 
  :smtp {:host #profile {:dev "mailpit"
                         :prod #env "SMTP_HOST"}

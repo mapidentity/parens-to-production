@@ -149,3 +149,20 @@
   (auth/create-user! h/*conn* "existing@example.com")
   (let [email (auth/get-or-create-user! h/*conn* "existing@example.com")]
     (is (= "existing@example.com" email))))
+
+(deftest verify-token-rotation-grace
+  ;; A signing-key rotation must not break in-flight magic links: keep the
+  ;; old key in the accepted set during the grace window.
+  (let [old-key (.getBytes "old-signing-key-32-bytes-long!!!" "UTF-8")
+        new-key (.getBytes "new-signing-key-32-bytes-long!!!" "UTF-8")
+        token-signed-with-old (:token (auth/create-magic-link-token old-key "grace@x.lan"))]
+    (is
+      (nil? (auth/verify-token new-key token-signed-with-old))
+      "the new key alone rejects an old-key token")
+    (is
+      (some? (auth/verify-token [new-key old-key] token-signed-with-old))
+      "the grace set [new old] accepts it — no login broken during rotation")
+    (is (= "grace@x.lan" (:email (auth/verify-token [new-key old-key] token-signed-with-old))))
+    (is
+      (nil? (auth/verify-token [new-key] token-signed-with-old))
+      "once the grace window closes (old key dropped), the old token is dead")))

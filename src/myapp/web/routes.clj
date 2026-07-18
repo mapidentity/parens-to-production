@@ -15,6 +15,7 @@
     [myapp.web.assets :as assets]
     [myapp.web.handler :as handler]
     [myapp.web.metrics :as metrics]
+    [myapp.web.security :as security]
     [myapp.web.views :as views]
     [reitit.ring :as ring]
     [ring.middleware.keyword-params :as keyword-params]
@@ -162,15 +163,32 @@
   lookup happens exactly once per request rather than once per gate."
   [handler]
   (fn [request]
-    (let [email (get-in request [:session :user-email])
-          eid (when email (auth/find-user-by-email (d/db (db/get-connection)) email))]
-      (if eid
+    (let [db (d/db (db/get-connection))
+          email (get-in request [:session :user-email])
+          eid (when email (auth/find-user-by-email db email))
+          ;; The ban lever: `:user/active?` explicitly false deactivates the
+          ;; session on its very next request — live, no redeploy, no key
+          ;; rotation. `false?` (not `not`) is deliberate: a missing flag
+          ;; never bans, so a schema gap can't lock the userbase out.
+          banned? (and eid (false? (:user/active? (db/pull* db [:user/active?] eid))))]
+      (cond
+        (and eid (not banned?))
         (handler
           (assoc request
             :user-email email
             :user-eid eid
             :admin? (admin-email? email)))
-        (handler request)))))
+        banned?
+        ;; Treated as anonymous from here (wrap-auth bounces protected
+        ;; routes to /), and logged: a banned session still trying is worth
+        ;; the operator's eye.
+        (do
+          (security/event!
+            :auth/banned-attempt
+            {:ip (or (:client-ip request) "?")
+             :email email})
+          (handler request))
+        :else (handler request)))))
 
 (defn wrap-auth
   "Hard gate for protected routes — assumes `wrap-current-user` ran first.
@@ -211,10 +229,25 @@
   [handler]
   (fn [request]
     (if (:admin? request)
-      (handler request)
-      (if (get-in request [:reitit.core/match :data :json?])
-        (handler/json-response {:error "forbidden"} :status 403)
-        (response/redirect "/dashboard")))))
+      (do
+        (security/event!
+          :admin/access
+          {:ip (or (:client-ip request) "?")
+           :email (or (:user-email request) "?")
+           :uri (:uri request)})
+        (handler request))
+      ;; A non-admin reaching an admin route is either a confused user or
+      ;; someone probing the privileged surface. Either way the operator
+      ;; wants it, with the identity that tried.
+      (do
+        (security/event!
+          :admin/denied
+          {:ip (or (:client-ip request) "?")
+           :email (or (:user-email request) "anonymous")
+           :uri (:uri request)})
+        (if (get-in request [:reitit.core/match :data :json?])
+          (handler/json-response {:error "forbidden"} :status 403)
+          (response/redirect "/dashboard"))))))
 
 (defn- dev-json-handler
   "Build a dev-only Ring handler for a construction-view tracer JSON endpoint.

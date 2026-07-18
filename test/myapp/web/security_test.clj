@@ -1,16 +1,25 @@
 (ns myapp.web.security-test
   "Regression tests that lock in the security posture.
   Cover output escaping for plain content, markdown sanitization for the one
-  h/raw field (recipe descriptions), the strict Content-Security-Policy, and
-  asset/import-map resolution. These guard against silently reintroducing a
+  h/raw field (recipe descriptions), the strict Content-Security-Policy,
+  asset/import-map resolution, and the detection/response layer (security-
+  event format, the ban lever). These guard against silently reintroducing a
   non-escaping renderer, an unsanitized markdown path, or a loosened CSP."
   (:require
     [clojure.string :as str]
-    [clojure.test :refer [deftest is testing]]
+    [clojure.test :refer [deftest is testing use-fixtures]]
+    [clojure.tools.logging]
+    [myapp.auth.core :as auth]
+    [myapp.db.core :as db]
+    [myapp.test-helpers :as h]
+    [myapp.time :as time]
     [myapp.web.assets :as assets]
     [myapp.web.markdown :as markdown]
     [myapp.web.routes :as routes]
-    [myapp.web.views :as views]))
+    [myapp.web.security :as security]
+    [myapp.web.views :as views])
+  (:import
+    [java.util UUID]))
 
 (set! *warn-on-reflection* true)
 
@@ -130,3 +139,83 @@
                 :headers {}
                 :body "ok"}]
       (is (= resp ((routes/wrap-errors (fn [_] resp)) {}))))))
+
+;; --- Detection & Response layer ---
+
+(use-fixtures :each h/with-test-db h/with-test-config)
+
+(defn- capture-security
+  "Run `f`, returning the security log messages it emits (log* redef)."
+  [f]
+  (let [lines (atom [])]
+    (with-redefs [clojure.tools.logging/log*
+                  (fn [_logger _level _throwable message] (swap! lines conj message))]
+      (f))
+    @lines))
+
+(deftest event-format-is-the-fail2ban-contract
+  (testing "the line shape fail2ban's failregex depends on"
+    (let [[line] (capture-security
+                   #(security/event!
+                      :auth/failure
+                      {:ip "203.0.113.9"
+                       :reason "bad-token"}))]
+      (is (str/starts-with? line "SECURITY "))
+      (is (str/includes? line "event=auth.failure"))
+      (is (str/includes? line "ip=203.0.113.9"))
+      (is (str/includes? line "reason=bad-token"))))
+  (testing "a hostile field cannot inject a newline to forge a second event"
+    (let [[line] (capture-security
+                   #(security/event!
+                      :auth/failure
+                      {:ip "1.2.3.4\nSECURITY event=auth.success ip=1.2.3.4"}))]
+      (is (= 1 (count (str/split-lines line))) "the forged newline was collapsed"))))
+
+(deftest active-flag-bans-the-session
+  ;; wrap-current-user is the ban lever: an explicitly-inactive user's
+  ;; session stops authenticating on its next request — live, no redeploy.
+  (let [conn h/*conn*
+        _ @(db/transact* conn
+             [{:db/id "u"
+               :user/id (UUID/randomUUID)
+               :user/email "banme@x.lan"
+               :user/active? true
+               :user/created-at (time/now)
+               :user/terms-accepted-at (time/now)}])
+        seen (atom nil)
+        wrapped (routes/wrap-current-user
+                  (fn [req]
+                    (reset! seen (:user-eid req))
+                    {:status 200}))
+        req {:session {:user-email "banme@x.lan"}
+             :headers {}}]
+    (testing "active user authenticates" (wrapped req) (is (some? @seen) "resolved to a user-eid"))
+    (testing "set-active! false deactivates the SAME session, live"
+      (is (true? (auth/set-active! conn "banme@x.lan" false)))
+      (reset! seen :untouched)
+      (wrapped req)
+      (is (nil? @seen) "the banned session no longer carries a user-eid"))
+    (testing "re-enabling restores it — a reversible ban"
+      (auth/set-active! conn "banme@x.lan" true)
+      (reset! seen nil)
+      (wrapped req)
+      (is (some? @seen)))))
+
+(deftest missing-active-flag-never-bans
+  ;; Only an EXPLICIT false bans, so a schema gap can't lock everyone out.
+  (let [conn h/*conn*
+        _ @(db/transact* conn
+             [{:db/id "u"
+               :user/id (UUID/randomUUID)
+               :user/email "noflag@x.lan"
+               :user/created-at (time/now)
+               :user/terms-accepted-at (time/now)}])
+        seen (atom nil)
+        wrapped (routes/wrap-current-user
+                  (fn [req]
+                    (reset! seen (:user-eid req))
+                    {:status 200}))]
+    (wrapped
+      {:session {:user-email "noflag@x.lan"}
+       :headers {}})
+    (is (some? @seen) "a user with no active? flag still authenticates")))

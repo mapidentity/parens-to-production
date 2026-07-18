@@ -55,12 +55,9 @@
         signature-b64 (base64-encode signature)]
     (str payload-b64 "." signature-b64)))
 
-(defn verify-token
-  "Verify signed token and extract claims.
-
-  Returns `{:email \"...\" :nonce \"<uuid-string>\"}` if valid, nil if
-  invalid or expired. The HMAC + expiration check happen here; the
-  caller is responsible for the one-shot replay check via `:nonce`."
+(defn- verify-token-1
+  "Verify `token` against ONE `signing-key`; nil on any failure.
+  Extracted so `verify-token` can try a key-rotation grace set."
   [signing-key token]
   (try
     (let [[payload-b64 signature-b64] (str/split token #"\." 2)]
@@ -83,6 +80,23 @@
                  :nonce (:nonce payload)}))))))
     (catch Exception _e nil)))
 
+(defn verify-token
+  "Verify signed token and extract claims.
+
+  Returns `{:email \"...\" :nonce \"<uuid-string>\"}` if valid, nil if
+  invalid or expired. The HMAC + expiration check happen here; the
+  caller is responsible for the one-shot replay check via `:nonce`.
+
+  `signing-key` may be a single key (bytes) OR a sequence of accepted
+  keys. The sequence is the rotation grace window: sign new tokens with
+  the new key, keep the old one in the accepted set until every
+  outstanding link has aged past its 15-minute TTL, then drop it — so the
+  key rotates without breaking a single in-flight login. Claims return if
+  ANY accepted key validates; the constant-time compare runs per key."
+  [signing-key token]
+  (let [key-set (if (bytes? signing-key) [signing-key] signing-key)]
+    (some #(verify-token-1 % token) key-set)))
+
 (defn mark-activity-seen!
   "Advance the user's activity cursor to now.
   The dashboard calls this after computing the feed, so 'since your last
@@ -96,6 +110,19 @@
   "Find user by email address."
   [db email]
   (d/q '[:find ?e . :in $ ?email :where [?e :user/email ?email]] db email))
+
+(defn set-active!
+  "Enable or disable a user account by email — the operator's live ban lever.
+  A deactivated account stops authenticating on its session's next request
+  (see `wrap-current-user`), with no redeploy and no key rotation; flip it
+  back and the same session works again. Returns true if a user matched.
+  Deliberately NOT a web endpoint: the admin surface is read-only, and a
+  privileged mutation route would be attack surface of its own — this is a
+  runbook/REPL action (see the detection chapter's containment section)."
+  [conn email active?]
+  (when-let [eid (find-user-by-email (d/db conn) email)]
+    @(db/transact* conn [[:db/add eid :user/active? active?]])
+    true))
 
 (defn create-user!
   "Create a new user account."

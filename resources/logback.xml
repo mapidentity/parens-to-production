@@ -8,6 +8,28 @@
     </encoder>
   </appender>
 
+  <!-- Security events (myapp.web.security) get their OWN file, because two
+       different readers consume them: an operator doing forensics, and
+       fail2ban tailing for brute-force IPs. A dedicated file gives both a
+       stable, greppable stream instead of a needle in journald. The path is
+       overridable; production points it under /var/log/myapp/ (see the unit's
+       ReadWritePaths). The line still carries the ISO timestamp fail2ban's
+       datepattern expects. -->
+  <appender name="SECURITY" class="ch.qos.logback.core.FileAppender">
+    <file>${MYAPP_SECURITY_LOG:-${java.io.tmpdir}/myapp-security.log}</file>
+    <append>true</append>
+    <encoder>
+      <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX, UTC} %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <!-- Security events go to BOTH: the file (forensics + fail2ban) and, via
+       the root, stdout/journald (so they also ride the normal log). additivity
+       stays true, which is what puts them on both. -->
+  <logger name="myapp.web.security" level="WARN">
+    <appender-ref ref="SECURITY"/>
+  </logger>
+
   <!-- The Datomic peer narrates its internals at DEBUG/INFO: index merges,
        fulltext bookkeeping, a metrics line every minute. Indispensable when
        debugging the peer; noise that buries the application's own WARN/ERROR
