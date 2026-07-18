@@ -6,6 +6,7 @@
     [clojure.string :as str]
     [clojure.tools.logging :as log]
     [datomic.api :as d]
+    [myapp.analytics.db :as analytics]
     [myapp.auth.core :as auth]
     [myapp.config :as config]
     [myapp.db.core :as db]
@@ -208,7 +209,18 @@
   [["" {:middleware [wrap-current-user]}
     ;; ---- Public (auth-aware via wrap-current-user) ----
     ["/" {:get #'handler/home}]
-    ["/health" {:get (fn [_] (handler/json-response {:status "ok"}))}]
+    ["/health"
+     {:get (fn [_]
+             ;; Proves the process, its config, and both database connections.
+             ;; d/db is a local read against the peer's cache, so this stays
+             ;; cheap enough to poll. It deliberately does NOT prove the
+             ;; transactor is accepting writes: there is no side-effect-free
+             ;; probe for that, and a health check that transacts is worse
+             ;; than one that under-promises.
+             (handler/json-response
+               {:status "ok"
+                :basis-t (d/basis-t (d/db (db/get-connection)))
+                :analytics-basis-t (d/basis-t (analytics/get-db))}))}]
     ["/csp-report" {:post #'handler/csp-report}]
     ["/auth/request" {:post #'handler/request-magic-link}]
     ["/auth/sent" {:get #'handler/magic-link-sent}]
@@ -410,10 +422,30 @@
            :headers {"Content-Type" "text/html; charset=UTF-8"}
            :body (str (views/error-page locale (i18n/t locale :error/server-error)))})))))
 
+(defn wrap-panic
+  "Last-resort catch around the entire middleware stack.
+
+  `wrap-errors` (innermost) owns the styled 500; this belt exists for
+  exceptions thrown by the stack itself — a session cookie that fails to
+  decrypt, the conditional-GET database read — which would otherwise
+  surface as http-kit's bare default. No locale, no views: those layers
+  may be exactly what broke. Plain text out, the stack trace to the log."
+  [handler]
+  (fn [request]
+    (try
+      (handler request)
+      (catch Throwable t
+        (log/error t "Exception escaped the middleware stack"
+          (select-keys request [:request-method :uri]))
+        {:status 500
+         :headers {"Content-Type" "text/plain; charset=UTF-8"}
+         :body "Internal server error."}))))
+
 (def ^:private app*
   "Compiled Ring handler, built lazily to avoid loading config at compile time."
   (delay
-    (let [base-mw [[params/wrap-params] [keyword-params/wrap-keyword-params]
+    (let [base-mw [[wrap-panic]
+                   [params/wrap-params] [keyword-params/wrap-keyword-params]
                    [session/wrap-session
                     {:store (cookie/cookie-store {:key (config/get-config :session-key)})
                      :cookie-name "session"
@@ -447,12 +479,21 @@
         ;; other ids fall through to `recipe-show`.
         (ring/router routes {:conflicts nil})
         ;; Serve static assets (CSS, JS, SVGs, fonts) from the static/ dir, then
-        ;; fall back to the default 404 handler.
+        ;; fall back to a branded 404 — reitit's default is a bare text/plain
+        ;; response wearing none of the app's chrome. The fallback runs inside
+        ;; the middleware stack, so :locale is set and the page exits through
+        ;; the CSP layer like any other.
         (ring/routes
           (cond-> (ring/create-file-handler {:path "/"
                                              :root assets/static-root})
             assets/dev? wrap-dev-no-store)
-          (ring/create-default-handler))
+          (ring/create-default-handler
+            {:not-found (fn [request]
+                          (let [locale (:locale request :en)]
+                            {:status 404
+                             :headers {"Content-Type" "text/html; charset=UTF-8"}
+                             :body
+                             (str (views/error-page locale (i18n/t locale :error/not-found)))}))}))
         {:middleware mw}))))
 
 (defn app

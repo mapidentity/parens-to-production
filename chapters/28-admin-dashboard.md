@@ -75,8 +75,10 @@ The obvious alternative is to keep the anti-replay nonce in the operational data
 (ns myapp.analytics.db
   "Analytics database layer.
   Separate Datomic database for usage/analytics events. Same transactor,
-  same PostgreSQL -- zero new infrastructure. Can be deleted/recreated
-  without affecting operational data."
+  same PostgreSQL -- zero new infrastructure. Disposable, with one caveat:
+  the magic-link nonces that make sign-in single-use live here, so
+  recreate it only when no unexpired magic links are outstanding -- a wipe
+  resets replay protection for links still in flight."
   (:require
     [datomic.api :as d]
     [myapp.config :as config])

@@ -319,6 +319,8 @@ Crucially, every failure path produces the *same* generic error page. We never t
 
 The same discipline extends to the failures nobody anticipated. `wrap-errors`, the middleware mounted innermost in the app's stack (the session-management listing below shows it), catches anything a handler throws, logs the stack trace where an operator can read it, and serves the same styled `error-page` as a 500. That page reveals nothing: not the exception class, not the message, not a frame. Without it, an uncaught exception would fall through to `http-kit`'s default: an unstyled 500 carrying none of the app's headers. The placement is the load-bearing part: innermost means the error response exits through the CSP and cache-control layers like any other HTML, so even the failure path wears the full security envelope.
 
+Innermost has a blind spot, though: `wrap-errors` can only catch what happens *below* it. An exception thrown by the stack itself -- a session cookie that fails to decrypt, a middleware's own database read -- would still fall through to the bare default. So a second, deliberately crude catch, `wrap-panic`, mounts outermost: no locale, no styled view (those layers may be exactly what broke), just a plain-text 500 and the stack trace to the log. The pairing is the design: the inner boundary is well-dressed and does the everyday work; the outer one exists for the day the dressing itself is on fire. The same instinct covers the URL nobody routes -- an unmatched path gets the branded `error-page` as a 404 rather than reitit's bare-text default, and because that fallback runs inside the middleware stack, it exits wearing the CSP like every other page.
+
 And when one of the gates does refuse and you want to know which, the [construction view](17-construction-view.md) answers without adding a single log line. Replay a used link under the `:storm` alias and the recorded tree shows `verify-token` returning the decoded claims (the signature is fine) and `consume-magic-link-nonce!` returning `false`, the CAS refusing a nonce that is already stamped. The generic page tells the visitor nothing; the recording tells *you* everything; the asymmetry is the point. The two halves of the design -- opaque outside, transparent inside -- are the same decision made twice.
 
 The session is the moment where "stateless token" becomes "stateful session." The token was a one-time bridge to prove the user controls that email address; the nonce guaranteed it was crossed only once. The session persists across requests.
@@ -333,7 +335,8 @@ Sessions are configured in the middleware stack using Ring's cookie store:
     (ring/ring-handler
       (ring/router routes)
       (ring/create-default-handler)
-      {:middleware [[params/wrap-params]
+      {:middleware [[wrap-panic]
+                    [params/wrap-params]
                     [keyword-params/wrap-keyword-params]
                     [session/wrap-session
                      {:store (cookie/cookie-store
@@ -349,7 +352,7 @@ Sessions are configured in the middleware stack using Ring's cookie store:
                     [wrap-errors]]})))
 ```
 
-That is the app's whole base stack, outermost first. The last two entries are the layers the verify section leaned on: `wrap-csp` stamps the strict Content-Security-Policy on every HTML response ([the asset pipeline chapter](29-asset-pipeline.md)), and `wrap-errors` sits innermost so anything a handler throws exits through every layer above it. (The repo's version also mounts the construction-view tracer outermost when running under the `:storm` alias; that layer belongs to [the construction-view chapter](17-construction-view.md).) The piece that is new here is the session store.
+That is the app's whole base stack, outermost first: the panic belt on the outside, and then the layers the verify section leaned on -- `wrap-csp` stamps the strict Content-Security-Policy on every HTML response ([the asset pipeline chapter](29-asset-pipeline.md)), and `wrap-errors` sits innermost so anything a handler throws exits through every layer above it. (The repo's version also mounts the construction-view tracer outermost when running under the `:storm` alias; that layer belongs to [the construction-view chapter](17-construction-view.md).) The piece that is new here is the session store.
 
 The session cookie is:
 

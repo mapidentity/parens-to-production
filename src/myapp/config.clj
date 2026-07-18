@@ -5,6 +5,7 @@
   (:require
     [aero.core :as aero]
     [clojure.java.io :as io]
+    [clojure.string :as str]
     [crypto.random :as random]))
 
 (set! *warn-on-reflection* true)
@@ -100,15 +101,38 @@
                           (println "⚠️  Generating random signing key (dev mode)")
                           (generate-signing-key))))))))
 
-(defn- require-prod-admin-email!
-  "Refuse to start when :prod is missing ADMIN_EMAIL.
+(def ^:private prod-required
+  "Config paths that must resolve in :prod, with the env var supplying each.
+  The comment on each entry is what its nil would otherwise become — none
+  of them fails as legibly as a boot refusal."
+  [[[:database-uri] "DATABASE_URI"] ; bare NPE inside the Peer at create-database!
+   [[:analytics-database-uri] "ANALYTICS_DATABASE_URI"] ; the same NPE, analytics side
+   [[:admin-email] "ADMIN_EMAIL"] ; admin gate silently locks out everyone
+   [[:base-url] "BASE_URL"] ; login emails carry broken relative links
+   [[:smtp :host] "SMTP_HOST"] ; login emails silently never send
+   [[:smtp :from] "SMTP_FROM"]]) ; first sign-in throws building the message
 
-  The admin gate (`wrap-admin`) compares the session email to this value;
-  an unset admin email would silently block /admin for everyone, which
-  we'd rather catch at boot than discover when needed."
+(defn- require-prod-config!
+  "Refuse to start when :prod is missing required configuration.
+
+  Aero's #env yields nil for an unset variable, and every nil in
+  `prod-required` fails somewhere worse than boot: an NPE in the Peer, a
+  sign-in that silently sends nothing behind the don't-reveal confirmation
+  page, an email whose link doesn't resolve. Boot is the one place they
+  can all fail loudly, next to the table that explains them."
   [profile config]
-  (when (and (= profile :prod) (nil? (:admin-email config)))
-    (throw (ex-info "ADMIN_EMAIL env var is required in :prod" {:profile profile})))
+  (when (= profile :prod)
+    (when-let [missing (seq
+                         (for [[path env-var] prod-required
+                               :when (nil? (get-in config path))]
+                           env-var))]
+      (throw
+        (ex-info
+          (str (str/join ", " missing) " env var(s) are required in :prod — refusing to start.")
+          {:profile profile
+           :missing (vec missing)})))
+    (when (and (get-in config [:smtp :user]) (nil? (get-in config [:smtp :pass])))
+      (throw (ex-info "SMTP_PASS is required in :prod when SMTP_USER is set." {:profile profile}))))
   config)
 
 (defn load-config
@@ -118,7 +142,7 @@
    (-> (io/resource "config.edn")
        (aero/read-config {:profile profile})
        (resolve-keys profile)
-       (->> (require-prod-admin-email! profile)))))
+       (->> (require-prod-config! profile)))))
 
 (def config
   "Delayed config map. Deref triggers a one-time load from config.edn."

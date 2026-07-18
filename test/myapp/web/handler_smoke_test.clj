@@ -298,3 +298,36 @@
       (let [body (:body (handler/robots (h/request :get "/robots.txt")))]
         (is (str/includes? body "Sitemap: https://test.myapp.lan/sitemap.xml"))
         (is (str/includes? body "Disallow: /dashboard"))))))
+
+(deftest health-and-404
+  (testing "/health proves both database connections, not just the process"
+    (let [resp (routes/app
+                 {:request-method :get
+                  :uri "/health"
+                  :headers {}})]
+      (is (= 200 (:status resp)))
+      (is (str/includes? (:body resp) "\"status\":\"ok\""))
+      (is (str/includes? (:body resp) "\"basis-t\":") "operational db was read")
+      (is (str/includes? (:body resp) "\"analytics-basis-t\":") "analytics db was read")))
+  (testing "an unrouted path gets the branded 404, inside the full envelope"
+    (let [resp (routes/app
+                 {:request-method :get
+                  :uri "/no-such-page"
+                  :headers {}})]
+      (is (= 404 (:status resp)))
+      (is (str/includes? (get-in resp [:headers "Content-Type"]) "text/html"))
+      (is (str/includes? (:body resp) "Not found.") "the real error view, negotiated locale")
+      (is
+        (some? (get-in resp [:headers "Content-Security-Policy"]))
+        "the failure path wears the CSP like any other page"))))
+
+(deftest panic-belt-catches-stack-failures
+  ;; wrap-errors owns handler exceptions; the belt exists for the stack
+  ;; itself. Simulate a middleware explosion and assert the response is
+  ;; still a served 500, not a dropped connection.
+  (let [resp ((routes/wrap-panic (fn [_] (throw (RuntimeException. "session store exploded"))))
+               {:request-method :get
+                :uri "/x"})]
+    (is (= 500 (:status resp)))
+    (is (str/includes? (get-in resp [:headers "Content-Type"]) "text/plain"))
+    (is (= "Internal server error." (:body resp)))))
