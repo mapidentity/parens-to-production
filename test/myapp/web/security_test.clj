@@ -9,11 +9,16 @@
     [clojure.string :as str]
     [clojure.test :refer [deftest is testing use-fixtures]]
     [clojure.tools.logging]
+    [datomic.api :as d]
+    [myapp.analytics.db :as analytics]
     [myapp.auth.core :as auth]
+    [myapp.config :as config]
     [myapp.db.core :as db]
+    [myapp.recipe.core :as recipe]
     [myapp.test-helpers :as h]
     [myapp.time :as time]
     [myapp.web.assets :as assets]
+    [myapp.web.handler :as handler]
     [myapp.web.markdown :as markdown]
     [myapp.web.routes :as routes]
     [myapp.web.security :as security]
@@ -22,6 +27,18 @@
     [java.util UUID]))
 
 (set! *warn-on-reflection* true)
+
+(defn- mk-user!
+  "Create a terms-accepted user and return its eid (detection tests)."
+  [email]
+  @(db/transact* h/*conn*
+     [{:db/id "u"
+       :user/id (UUID/randomUUID)
+       :user/email email
+       :user/active? true
+       :user/created-at (time/now)
+       :user/terms-accepted-at (time/now)}])
+  (auth/find-user-by-email (d/db h/*conn*) email))
 
 (defn- sha256-b64
   "Compute the `sha256-<base64>` CSP hash of `s`, matching `assets`' inline-hash format."
@@ -142,7 +159,7 @@
 
 ;; --- Detection & Response layer ---
 
-(use-fixtures :each h/with-test-db h/with-test-config)
+(use-fixtures :each h/with-test-db h/with-test-analytics-db h/with-test-config)
 
 (defn- capture-security
   "Run `f`, returning the security log messages it emits (log* redef)."
@@ -219,3 +236,112 @@
       {:session {:user-email "noflag@x.lan"}
        :headers {}})
     (is (some? @seen) "a user with no active? flag still authenticates")))
+
+(deftest verify-magic-link-emits-the-right-event-per-gate
+  ;; The three-gate wiring, end to end through the handler: which gate
+  ;; failed decides which event fires, and BOTH failures return a
+  ;; byte-identical opaque 400 (don't-reveal intact).
+  (let [signing-key (config/get-config :signing-key)
+        {:keys [token nonce]} (auth/create-magic-link-token signing-key "gate@x.lan")
+        _ (analytics/record!
+            [{:magic-link/email "gate@x.lan"
+              :magic-link/nonce nonce
+              :magic-link/requested-at (time/now)}])
+        verify (fn [tok]
+                 (handler/verify-magic-link
+                   {:client-ip "203.0.113.7"
+                    :locale :en
+                    :params {:token tok}}))]
+    (testing "a forged token → auth.failure reason=bad-token, opaque 400"
+      (let [[line] (capture-security #(verify "forged.garbage"))
+            resp (verify "forged.garbage")]
+        (is (str/includes? line "event=auth.failure"))
+        (is (str/includes? line "reason=bad-token"))
+        (is (str/includes? line "ip=203.0.113.7"))
+        (is (= 400 (:status resp)))))
+    (testing "a valid token → auth.success, then the SAME token replayed → auth.replay"
+      (let [[ok-line] (capture-security #(verify token))]
+        (is (str/includes? ok-line "event=auth.success"))
+        (is (str/includes? ok-line "ip=203.0.113.7")))
+      (let [[replay-line] (capture-security #(verify token))
+            replay-resp (verify token)]
+        (is
+          (str/includes? replay-line "event=auth.replay")
+          "the spent nonce is a replay, not a bad token")
+        (is (= 400 (:status replay-resp)) "replay returns the same opaque 400 as a forgery")))))
+
+(deftest tenancy-refusal-fires-on-a-cross-owner-mutation
+  ;; The IDOR signal: a non-owner's edit against a recipe that EXISTS emits
+  ;; :tenancy/refused and returns the same opaque 404 as a missing recipe.
+  (let [owner (mk-user! "owner@x.lan")
+        _attacker (mk-user! "attacker@x.lan")
+        id (recipe/create!
+             h/*conn*
+             owner
+             {:title "Not Yours"
+              :servings 2
+              :ingredients "a"
+              :steps "b"})
+        attack-req {:client-ip "198.51.100.4"
+                    :locale :en
+                    :user-email "attacker@x.lan"
+                    :user-eid (auth/find-user-by-email (d/db h/*conn*) "attacker@x.lan")
+                    :path-params {:id (str id)}
+                    :params {:title "Hijacked"
+                             :servings "2"
+                             :ingredients "x"
+                             :steps "y"}}]
+    (testing "cross-owner update → tenancy.refused + opaque 404"
+      (let [[line] (capture-security #(handler/recipe-update attack-req))
+            resp (handler/recipe-update attack-req)]
+        (is (some? line) "an event fired")
+        (is (str/includes? line "event=tenancy.refused"))
+        (is (str/includes? line "ip=198.51.100.4"))
+        (is (= 404 (:status resp)) "same opaque 404 as a missing recipe — no existence leak")))
+    (testing "a genuinely-missing recipe fires NO tenancy event (just a 404)"
+      (let [missing (assoc-in attack-req [:path-params :id] (str (java.util.UUID/randomUUID)))
+            lines (capture-security #(handler/recipe-update missing))]
+        (is (empty? lines) "no false-positive IDOR signal for a plain 404")))))
+
+(deftest admin-gate-emits-events-both-ways
+  ;; Finding: admin.access / admin.denied had no coverage.
+  (let [wrapped (routes/wrap-admin (constantly {:status 200}))]
+    (testing "a granted admin logs admin.access with identity"
+      (let [[line] (capture-security
+                     #(wrapped
+                        {:admin? true
+                         :user-email "boss@x.lan"
+                         :client-ip "203.0.113.1"
+                         :uri "/admin"}))]
+        (is (str/includes? line "event=admin.access"))
+        (is (str/includes? line "ip=203.0.113.1"))))
+    (testing "a denied non-admin logs admin.denied and redirects"
+      (let [[line] (capture-security
+                     #(wrapped
+                        {:admin? false
+                         :client-ip "198.51.100.9"
+                         :uri "/admin"}))
+            resp (wrapped
+                   {:admin? false
+                    :client-ip "198.51.100.9"
+                    :uri "/admin"})]
+        (is (str/includes? line "event=admin.denied"))
+        (is (str/includes? line "ip=198.51.100.9"))
+        (is (= 302 (:status resp)) "non-admin is redirected, not served")))))
+
+(deftest signing-key-previous-config-wiring
+  ;; Finding: rotation grace tested only as a pure fn — pin the config parse
+  ;; that feeds it (a string SIGNING_KEY_PREVIOUS becomes bytes; unset → nil).
+  (let [resolve-keys @#'config/resolve-keys
+        with-prev (resolve-keys
+                    {:session-key "0123456789abcdef"
+                     :signing-key "0123456789abcdef0123456789abcdef"
+                     :signing-key-previous "fedcba9876543210fedcba9876543210"}
+                    :prod)
+        without (resolve-keys
+                  {:session-key "0123456789abcdef"
+                   :signing-key "0123456789abcdef0123456789abcdef"
+                   :signing-key-previous nil}
+                  :prod)]
+    (is (bytes? (:signing-key-previous with-prev)) "a set previous key resolves to bytes")
+    (is (nil? (:signing-key-previous without)) "unset previous key stays nil (no grace)")))

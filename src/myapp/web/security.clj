@@ -19,11 +19,16 @@
 (set! *warn-on-reflection* true)
 
 (defn- fmt
-  "Render one `key=value` pair with whitespace collapsed.
-  Collapsing matters: it stops a hostile field from smuggling a newline
-  into the log and forging a second event line."
+  "Render one `key=value` pair, sanitizing the value.
+  Both whitespace AND `=` are collapsed to `_`, because a value carries
+  attacker-controlled data (an email, a URL). Whitespace could smuggle a
+  newline and forge a second event line; a stray `=` could smuggle a
+  second `key=value` token — e.g. `ip=` inside an email local part — that
+  fail2ban's parser would bind its <HOST> to instead of the real client.
+  Guaranteeing at most one `ip=` per line is a security invariant, not
+  cosmetics."
   [k v]
-  (str (name k) "=" (str/replace (str v) #"\s+" "_")))
+  (str (name k) "=" (str/replace (str v) #"[\s=]+" "_")))
 
 (defn event!
   "Emit a security event to the dedicated security logger.

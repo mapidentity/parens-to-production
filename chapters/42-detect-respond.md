@@ -47,9 +47,9 @@ Detection begins with a record, and the application had almost none: auth failur
       " " (str/join " " (map (fn [[k v]] (fmt k v)) fields)))))
 ```
 
-Three decisions make it more than a `log/warn` wrapper. **It is a machine-first format** — `SECURITY event=auth.failure ip=203.0.113.9 reason=bad-token` — because two readers consume it: an operator doing forensics, and fail2ban matching for IPs. That format is a *contract*, pinned by a test, so it cannot drift out from under the filter. **It routes to its own stream.** [logback](35-going-live.md) sends `myapp.web.security` to a dedicated file (as well as journald), so the security trail is a clean, greppable stream instead of a needle in the application's log. And **`fmt` collapses whitespace in every value**, because these fields carry attacker-controlled data (an email, a URL) and a newline smuggled into a field could forge a *second* log line — a real log-injection defense, tested with exactly that payload.
+Three decisions make it more than a `log/warn` wrapper. **It is a machine-first format** — `SECURITY event=auth.failure ip=203.0.113.9 reason=bad-token` — because two readers consume it: an operator doing forensics, and fail2ban matching for IPs. That format is a *contract*, pinned by a test, so it cannot drift out from under the filter. **It routes to its own stream.** [logback](35-going-live.md) sends `myapp.web.security` to a dedicated file (as well as journald), so the security trail is a clean, greppable stream instead of a needle in the application's log. And **`fmt` sanitizes every value**, because these fields carry attacker-controlled data (an email, a URL). It collapses whitespace *and* `=`: a newline could forge a second log line, and a stray `=` could smuggle a second `key=value` token — an attacker who registers `x=ip=8.8.8.8@evil.com` would otherwise write `... ip=<real> email=x=ip=8.8.8.8@...`, and a parser scanning for `ip=` could bind to the wrong one and ban an innocent address. Guaranteeing at most one `ip=` per line is a security invariant, not cosmetics — and it is why the fail2ban filter below can anchor to the ip field instead of hunting for it. Both defenses are tested with exactly those payloads. (This pair — the sanitizer and the anchored filter — is the fix an adversarial review turned up before this chapter shipped; the greedy first draft would have let an attacker ban any IP they named.)
 
-The events are wired at the seams the [SecOps audit](41-beyond-one-box.md) found blind. Authentication, in [the verify handler](25-auth-email-flow.md), now distinguishes three outcomes where before it emitted one generic 400:
+The events are wired at the seams the SecOps audit found blind. Authentication, in [the verify handler](25-auth-email-flow.md), now distinguishes three outcomes where before it emitted one generic 400:
 
 ```clojure
     (cond
@@ -64,8 +64,10 @@ The events are wired at the seams the [SecOps audit](41-beyond-one-box.md) found
       (do (security/event! :auth/replay {:ip ip :email (:email token-data)})
           ,,,)
       :else
-      (do (security/event! :auth/success {:ip ip :email email})
-          ,,,))))
+      (let [email (:email token-data)]
+        ,,,
+        (security/event! :auth/success {:ip ip :email email})
+        ,,,))))
 ```
 
 The visitor still gets the same opaque error on both failures — [don't-reveal is intact](25-auth-email-flow.md) — but the *log* now tells the operator which gate failed, and a replay (a valid signature whose nonce is already spent) is called out distinctly from a bad token, because the two mean very different things about who is knocking. The [admin gate](28-admin-dashboard.md) logs both grants and denials with the identity that tried; and tenant-isolation refusals — an authenticated user's mutation against a recipe that exists but isn't theirs — now emit `:tenancy/refused`, the signal of IDOR probing that was previously indistinguishable from a 404 and logged nowhere. That last one reuses a check the app already had the pieces for, without ever leaking existence to the prober.
@@ -75,8 +77,8 @@ The visitor still gets the same opaque error on both failures — [don't-reveal 
 A record an operator must remember to read is not detection. fail2ban turns the security log into an automatic reflex. Its filter keys on the format above:
 
 ```
-failregex = ^.* SECURITY event=auth\.failure .*ip=<HOST>\b
-            ^.* SECURITY event=auth\.replay .*ip=<HOST>\b
+failregex = ^.* SECURITY event=auth\.failure ip=<HOST>\b
+            ^.* SECURITY event=auth\.replay ip=<HOST>\b
 ```
 
 and the jail turns a burst into a ban:
