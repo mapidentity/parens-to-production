@@ -55,4 +55,8 @@
 - [100% Lighthouse Scores: Automated Performance Audits in CI](33-lighthouse.md)
 - [CI/CD for a Clojure SaaS: Forgejo Actions, Podman, and Automated Deployment](34-ci-cd.md)
 
+# Going Live
+
+- [Going Live: The Box Under the Jar](35-going-live.md)
+
 [Afterword: What You Built, and Where It Goes](afterword.md)

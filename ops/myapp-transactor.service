@@ -1,0 +1,17 @@
+[Unit]
+Description=Datomic transactor — the single writer for myapp + analytics
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+User=datomic
+Group=datomic
+ExecStart=/opt/datomic/bin/transactor /etc/myapp/transactor.properties
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

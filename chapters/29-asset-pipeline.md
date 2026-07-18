@@ -339,7 +339,7 @@ The key property: **the bytes prod ships are produced from the exact sources dev
 
 ## Caddy: immutable caching and long-lived security headers
 
-Caddy sits in front of the app and serves the static tree directly. Here is the production-shaped vhost (the committed `Caddyfile` shows the `myapp.lan` dev block, which is identical in structure -- it mounts the same `/static` root and the app behind `reverse_proxy`):
+Caddy sits in front of the app and serves the static tree directly. Here is the production-shaped vhost (what is shown is the committed dev block from `caddy/Caddyfile`; the true production file -- automatic ACME certificates, the loopback upstream -- is committed as `ops/Caddyfile` and assembled in [Going Live](35-going-live.md), with the same structure and headers):
 
 ```caddyfile
 myapp.lan {

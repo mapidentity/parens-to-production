@@ -1,0 +1,61 @@
+# Production Caddyfile. Structurally the same as the dev block
+# (caddy/Caddyfile) with two deliberate differences: the upstream is the
+# loopback address the :prod profile binds (not a compose hostname), and
+# there is NO tls line — a real domain with a public DNS record gets its
+# certificate from Let's Encrypt automatically, renewals included.
+# Production TLS is the absence of configuration.
+myapp.example.com {
+	encode zstd gzip
+
+	# Long-lived, request-invariant security headers (applied to every response).
+	# The per-document Content-Security-Policy is set by the app, which owns the
+	# inline-script hashes — Caddy must NOT set CSP or it would conflict.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		-Server
+	}
+
+	# The tree the CI pipeline ships (myapp/static/* -> /mnt/data/static).
+	root * /mnt/data/static
+	@static file
+	handle @static {
+		# Content-hashed filenames (styles.<hash>.css, dispatcher.<hash>.js) are immutable
+		@hashed path_regexp \.([a-f0-9]{8})\.(css|js)$
+		header @hashed Cache-Control "public, max-age=31536000, immutable"
+
+		# Vendored libs are version-pinned in the filename, so equally immutable
+		@vendor path /idiomorph-*.min.js /idiomorph-*.min.js.map
+		header @vendor Cache-Control "public, max-age=31536000, immutable"
+
+		# Static assets that rarely change
+		@assets path *.svg *.png *.jpg *.woff2
+		header @assets Cache-Control "public, max-age=604800"
+
+		file_server
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	# The deploy window: while the app restarts, the proxy gets connection
+	# refusals and would show a bare 502. Serve the branded maintenance page
+	# instead — it refreshes itself until the app answers again.
+	handle_errors {
+		@upstream-down expression `{err.status_code} in [502, 503, 504]`
+		handle @upstream-down {
+			root * /mnt/data/static
+			rewrite * /error/503.html
+			header Cache-Control "no-store"
+			header Retry-After "5"
+			file_server {
+				status 503
+			}
+		}
+	}
+}

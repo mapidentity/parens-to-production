@@ -496,11 +496,11 @@ Deployment only happens when two conditions are met: the branch is `main` and th
 
 The deployment itself is straightforward:
 
-1. **Static files** are copied via `scp` from `myapp/static/` -- the *built* tree that `clojure -T:build assets` produced and `verify-assets` just signed off on -- to the directory the reverse proxy serves. That tree contains the content-hashed stylesheet and ESM modules, the version-pinned `idiomorph-0.7.4.min.js` (and its sourcemap), the passed-through fonts and SVGs, and `asset-manifest.edn`. The manifest must travel with the assets: the running application reads it at boot to map each logical asset name to its hashed URL and SRI token, so deploying the hashed files without the manifest would leave the app unable to resolve them.
+1. **Static files** are copied via `scp` from `myapp/static/` -- the *built* tree that `clojure -T:build assets` produced and `verify-assets` just signed off on -- to the directory the reverse proxy serves: `/mnt/data/static`, which is the production Caddyfile's `root` ([Going Live](35-going-live.md) closes that loop). That tree contains the content-hashed stylesheet and ESM modules, the version-pinned `idiomorph-0.7.4.min.js` (and its sourcemap), the passed-through fonts and SVGs, and `asset-manifest.edn`. The manifest must travel with the assets: the running application reads it at boot to map each logical asset name to its hashed URL and SRI token, so deploying the hashed files without the manifest would leave the app unable to resolve them.
 
 2. **The uberjar** is copied to `/tmp/` on the server, then a deploy script swaps it into place and restarts the application: stop the running process, move the new JAR into position, start the new process, and roll back to the previous JAR if the new one does not come up healthy. It is a brief hard restart, a few seconds of downtime rather than zero-downtime, and the script below names that cost rather than hiding it.
 
-That script (`/etc/scripts/deploy-myapp.sh`) is the single highest-stakes line in the whole pipeline -- the one that actually touches production -- so it is worth seeing rather than describing. It is not in the companion repository, which deploys this book rather than the app, but here is the shape it takes, made concrete:
+That script (`/etc/scripts/deploy-myapp.sh`) is the single highest-stakes line in the whole pipeline -- the one that actually touches production -- so it is worth seeing rather than describing. It is committed at `ops/deploy-myapp.sh`, alongside the rest of the box's artifacts ([Going Live](35-going-live.md) assembles them):
 
 ```bash
 #!/usr/bin/env bash

@@ -1,0 +1,32 @@
+[Unit]
+Description=MyApp — Clojure/Datomic SaaS
+# The peer rides out a transactor blip on its own, but a FIRST boot on a
+# fresh host needs the transactor listening before create-database! runs.
+After=network-online.target myapp-transactor.service
+Wants=network-online.target myapp-transactor.service
+
+[Service]
+User=myapp
+Group=myapp
+WorkingDirectory=/opt/myapp
+Environment=MYAPP_PROFILE=prod
+# Everything the :prod profile requires, in one root-owned 0600 file
+# (see env.example). Boot refuses to start with any value missing.
+EnvironmentFile=/etc/myapp/env
+# Half the heap becomes the peer's object cache unless object-cache-max
+# says otherwise — dev/bench.clj is where that cache's value was measured.
+# ExitOnOutOfMemoryError turns heap exhaustion into a death Restart= can
+# heal instead of a half-alive process nothing notices.
+ExecStart=/usr/bin/java -Xmx1g -XX:+ExitOnOutOfMemoryError -jar /opt/myapp/myapp.jar
+Restart=on-failure
+RestartSec=2
+# stop delivers SIGTERM; the app drains in-flight requests for up to a
+# second (its shutdown hook) — 15s of patience before systemd escalates.
+TimeoutStopSec=15
+# This unit owns nothing outside its own directories.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
