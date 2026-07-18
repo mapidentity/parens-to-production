@@ -25,6 +25,37 @@
 
 (set! *warn-on-reflection* true)
 
+(def ^:private loopback-peers
+  ;; The addresses the reverse proxy connects from. In prod the app binds
+  ;; 127.0.0.1, so the ONLY peer it ever sees is the on-box proxy — which is
+  ;; exactly what makes the forwarded header trustworthy from these, and
+  ;; only these, sources.
+  #{"127.0.0.1" "::1" "0:0:0:0:0:0:0:1"})
+
+(defn wrap-client-ip
+  "Resolve the real client IP and assoc it as `:client-ip`.
+
+  The app sits behind Caddy on loopback, so `:remote-addr` is ALWAYS the
+  proxy (127.0.0.1) in production — which silently collapsed every per-IP
+  control to one global bucket. Caddy sets `X-Client-IP` to the real peer
+  it saw (`header_up X-Client-IP {remote_host}`, ops/Caddyfile),
+  overwriting anything the client sent, so the header is authoritative —
+  but ONLY when the request actually reached us through the proxy. We
+  trust it solely when the TCP peer is loopback; a direct hit (no proxy)
+  keeps its own peer address, so the header can never be spoofed by a
+  client that bypasses Caddy. `:remote-addr` is left untouched for the
+  code that genuinely wants the peer (the /metrics loopback belt)."
+  [handler]
+  (fn [request]
+    (let [peer (:remote-addr request)
+          fwd (when (contains? loopback-peers peer)
+                (some-> (get-in request [:headers "x-client-ip"])
+                        str/trim
+                        not-empty))]
+      (handler
+        (assoc request
+          :client-ip (or fwd peer "?"))))))
+
 (defn wrap-locale
   "Determine locale from session, Accept-Language header, or default.
   Assoc it as `:locale` on the request."
@@ -487,6 +518,7 @@
   "Compiled Ring handler, built lazily to avoid loading config at compile time."
   (delay
     (let [base-mw [[wrap-panic]
+                   [wrap-client-ip]
                    [wrap-metrics]
                    [params/wrap-params] [keyword-params/wrap-keyword-params]
                    [session/wrap-session

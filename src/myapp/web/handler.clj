@@ -92,7 +92,7 @@
   operator reads. (A managed report-to collector is the buy-side answer;
   one box's answer is the log it already has.)"
   [request]
-  (let [ip (or (:remote-addr request) "?")]
+  (let [ip (or (:client-ip request) "?")]
     (when (ratelimit/allow? (str "report-ip:" ip) report-sink-per-ip report-sink-window-ms)
       (try
         (when-let [report (read-report request)]
@@ -108,7 +108,7 @@
   forwards it here. Same posture as the CSP sink — public, so the source
   is rate-limited and the body truncated. A beacon, not an API."
   [request]
-  (let [ip (or (:remote-addr request) "?")]
+  (let [ip (or (:client-ip request) "?")]
     (when (ratelimit/allow? (str "report-ip:" ip) report-sink-per-ip report-sink-window-ms)
       (try
         (when-let [report (read-report request)]
@@ -203,7 +203,7 @@
   [request]
   (let [raw-email (get-in request [:params :email])
         email (normalize-email raw-email)
-        ip (or (:remote-addr request) "?")
+        ip (or (:client-ip request) "?")
         locale (:locale request)
         ;; Check the per-IP limit even on invalid input, so malformed-email
         ;; spam still counts against the source.

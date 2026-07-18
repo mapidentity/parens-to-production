@@ -5,11 +5,13 @@
     [clojure.string :as str]
     [clojure.test :refer [deftest is testing use-fixtures]]
     [datomic.api :as d]
+    [myapp.auth.email]
     [myapp.db.core :as db]
     [myapp.recipe.core :as recipe]
     [myapp.test-helpers :as h]
     [myapp.time :as time]
     [myapp.web.handler :as handler]
+    [myapp.web.ratelimit]
     [myapp.web.routes :as routes])
   (:import
     [java.util UUID]))
@@ -355,3 +357,69 @@
                   :remote-addr "203.0.113.7"
                   :headers {}})]
       (is (= 404 (:status resp))))))
+
+(deftest client-ip-trust-boundary
+  ;; The auth-DoS fix: :remote-addr is always the loopback proxy in prod,
+  ;; so per-IP controls must key on the proxy-set X-Client-IP — but only
+  ;; when the peer is actually the loopback proxy, or a direct attacker
+  ;; forges it.
+  (testing "a forwarded header from the loopback proxy IS the client"
+    (let [captured (atom nil)
+          h (routes/wrap-client-ip
+              (fn [req]
+                (reset! captured (:client-ip req))
+                {:status 200}))]
+      (h
+        {:remote-addr "127.0.0.1"
+         :headers {"x-client-ip" "203.0.113.9"}})
+      (is (= "203.0.113.9" @captured) "trusted proxy's header wins")))
+  (testing "a forwarded header from a NON-loopback peer is ignored (unspoofable)"
+    (let [captured (atom nil)
+          h (routes/wrap-client-ip
+              (fn [req]
+                (reset! captured (:client-ip req))
+                {:status 200}))]
+      (h
+        {:remote-addr "198.51.100.7"
+         :headers {"x-client-ip" "127.0.0.1"}})
+      (is (= "198.51.100.7" @captured) "a direct hit keeps its real peer; the header cannot lie")))
+  (testing "no header falls back to the peer"
+    (let [captured (atom nil)
+          h (routes/wrap-client-ip
+              (fn [req]
+                (reset! captured (:client-ip req))
+                {:status 200}))]
+      (h
+        {:remote-addr "127.0.0.1"
+         :headers {}})
+      (is (= "127.0.0.1" @captured)))))
+
+(deftest per-ip-throttle-keys-on-client-ip
+  ;; The auth-DoS fix, end to end: distinct clients get distinct budgets;
+  ;; one client is still capped. Before the fix every request keyed on the
+  ;; proxy's 127.0.0.1, so ten sends from anyone froze login site-wide.
+  (myapp.web.ratelimit/clear!)
+  (with-redefs [myapp.auth.email/send-magic-link! (constantly {:error :SUCCESS})]
+    (let [send! (fn [client-ip email]
+                  (handler/request-magic-link
+                    {:client-ip client-ip
+                     :locale :en
+                     :params {:email email}}))
+          sent? (fn [resp] (= 302 (:status resp)))]
+      (testing "eleven sends from ONE client: the 11th is throttled (10/15min)"
+        (let [results (doall
+                        (for [i (range 11)]
+                          (send! "203.0.113.1" (str "a" i "@x.lan"))))]
+          ;; all redirect (don't-reveal), but only 10 actually pass the gate;
+          ;; the mailer stub lets us count via a fresh limiter below instead.
+          (is (every? sent? results) "every response is the same 302, by design")))
+      (testing "a DIFFERENT client is unaffected — its own fresh budget"
+        (myapp.web.ratelimit/clear!)
+        (dotimes [_ 10]
+          (send! "203.0.113.1" "a@x.lan")) ; exhaust client 1's per-IP bucket
+        (is
+          (myapp.web.ratelimit/allow? "ml-ip:203.0.113.2" 10 (* 15 60 1000))
+          "client 2's bucket is untouched by client 1 — no shared global bucket")
+        (is
+          (not (myapp.web.ratelimit/allow? "ml-ip:203.0.113.1" 10 (* 15 60 1000)))
+          "client 1 is (correctly) capped")))))

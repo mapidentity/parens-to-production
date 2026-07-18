@@ -60,6 +60,13 @@ myapp.example.com {
 			health_interval 2s
 			fail_duration 10s
 			lb_try_duration 4s
+			# The app binds loopback, so every request reaches it from
+			# 127.0.0.1 — its own :remote-addr is useless for per-IP
+			# controls. Hand it the real client, authoritatively:
+			# {remote_host} is the TCP peer Caddy saw (the client, since
+			# Caddy is the TLS edge), and header_up OVERWRITES any
+			# X-Client-IP the client tried to forge.
+			header_up X-Client-IP {remote_host}
 		}
 	}
 
