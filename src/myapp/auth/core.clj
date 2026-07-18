@@ -83,6 +83,15 @@
                  :nonce (:nonce payload)}))))))
     (catch Exception _e nil)))
 
+(defn mark-activity-seen!
+  "Advance the user's activity cursor to now.
+  The dashboard calls this after computing the feed, so 'since your last
+  visit' is true by construction — the cursor always trails the render."
+  [conn user-eid]
+  @(db/transact* conn
+     [{:db/id user-eid
+       :user/activity-seen-at (time/now)}]))
+
 (defn find-user-by-email
   "Find user by email address."
   [db email]

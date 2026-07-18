@@ -102,6 +102,9 @@
    ;; Dashboard
    :dashboard/title "Dashboard"
    :dashboard/welcome "Welcome back"
+   :activity/title "While you were away"
+   :activity/forked-yours "forked your recipe:"
+   :activity/updated-upstream "updated the original of your fork:"
    :dashboard/your-recipes "Your recipes"
    :dashboard/no-recipes "You haven't created any recipes yet."
    :dashboard/create-cta "Create your first recipe"

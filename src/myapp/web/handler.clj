@@ -263,11 +263,21 @@
 ;; ---------------------------------------------------------------------------
 
 (defn dashboard
-  "Signed-in home: the user's own recipes."
+  "Signed-in home: the user's recipes, and what happened while away.
+  The feed — forks of their recipes, upstream edits to originals they
+  forked — is read from the transaction log via d/since. After it is
+  computed the cursor advances, so the panel is 'since your previous
+  visit' by construction: shown once, then folded into history."
   [request]
-  (let [db (d/db (db/get-connection))
-        recipes (recipe/recipes-by-user db (:user-eid request))]
-    (html (views/dashboard (:locale request) (:user-email request) (:admin? request) recipes))))
+  (let [conn (db/get-connection)
+        db (d/db conn)
+        user-eid (:user-eid request)
+        recipes (recipe/recipes-by-user db user-eid)
+        seen-at (:user/activity-seen-at (db/pull* db [:user/activity-seen-at] user-eid))
+        items (recipe/activity db user-eid seen-at)]
+    (auth/mark-activity-seen! conn user-eid)
+    (html
+      (views/dashboard (:locale request) (:user-email request) (:admin? request) recipes items))))
 
 ;; ---------------------------------------------------------------------------
 ;; Recipes

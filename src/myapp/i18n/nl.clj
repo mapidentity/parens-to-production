@@ -105,6 +105,9 @@
    ;; Dashboard
    :dashboard/title "Dashboard"
    :dashboard/welcome "Welkom terug"
+   :activity/title "Terwijl je weg was"
+   :activity/forked-yours "heeft je recept geforkt:"
+   :activity/updated-upstream "heeft het origineel van je fork bijgewerkt:"
    :dashboard/your-recipes "Jouw recepten"
    :dashboard/no-recipes "Je hebt nog geen recepten aangemaakt."
    :dashboard/create-cta "Maak je eerste recept"

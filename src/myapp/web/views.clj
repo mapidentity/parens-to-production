@@ -902,15 +902,41 @@
       (reorder-controls locale id)]
      [:div.min-w-0.flex-1 (recipe-card locale recipe)]]))
 
+(defn- activity-panel
+  "What happened while you were away, or nothing at all.
+  Each entry names the actor (the recipe's own author — the forker for a
+  :fork, the upstream owner for an :upstream-edit), what they did, and
+  links the recipe it happened to."
+  [locale items]
+  (when (seq items)
+    [:section.mb-8.rounded-lg.border.border-border.bg-surface.p-4
+     [:h2.text-sm.font-semibold.uppercase.tracking-wide.text-text-secondary.mb-3
+      (t locale :activity/title)]
+     [:ul.space-y-2
+      (for [{:keys [recipe at]
+             entry-type :type}
+            items]
+        [:li.text-sm.text-text-primary
+         [:span.font-medium (author-name (:recipe/user recipe))]
+         " "
+         (t locale (if (= entry-type :fork) :activity/forked-yours :activity/updated-upstream))
+         " "
+         [:a.text-primary-vivid.hover:text-primary
+          {:href (str "/recipes/" (:recipe/id recipe))}
+          (:recipe/title recipe)]
+         [:span.text-text-secondary " · " (fmt-time locale at)]])]]))
+
 (defn dashboard
   "Signed-in user's home: their own recipes, in their chosen order.
+  Leads with the activity panel when anything happened since last visit.
   Drag to reorder — see the sortable controller and POST /recipes/reorder."
-  [locale user-email admin? recipes]
+  [locale user-email admin? recipes activity]
   (app-layout
     locale
     user-email
     :dashboard
     {:admin? admin?}
+    (activity-panel locale activity)
     [:div.flex.items-center.justify-between.mb-6
      [:h1.text-2xl.font-bold.text-text-primary (t locale :dashboard/your-recipes)]
      [:a.inline-flex.items-center.gap-1.text-sm.font-semibold.text-white.bg-primary.hover:bg-primary-vivid.px-3.py-2.rounded-md

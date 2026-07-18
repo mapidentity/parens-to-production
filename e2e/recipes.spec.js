@@ -156,3 +156,32 @@ test('search finds a recipe by title word', async ({ page, request }) => {
   await page.goto('/search?q=sesame');
   await expect(page.getByRole('link', { name: new RegExp(title) })).toBeVisible();
 });
+
+test('the dashboard reports forks that happened while you were away', async ({ page, request }) => {
+  // Alice creates; Bob forks; Alice returns to news.
+  const alice = uniqueEmail();
+  const title = `Fork Me Focaccia ${Date.now()}`;
+  await registerUser(page, request, alice);
+  await createRecipe(page, { title, servings: 2, ingredients: 'flour', steps: 'bake' });
+  const recipeUrl = page.url();
+  await page.getByRole('button', { name: 'Sign out' }).click();
+
+  await registerUser(page, request, uniqueEmail());
+  await page.goto(recipeUrl);
+  await page.getByRole('button', { name: 'Fork this recipe' }).click();
+  await page.getByRole('button', { name: 'Sign out' }).click();
+
+  // Alice signs back in: the activity panel leads the dashboard —
+  // computed from the transaction log, no notification machinery anywhere.
+  await page.goto('/');
+  await page.fill('input[name="email"]', alice);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  const magicLink = await getMagicLink(request, alice);
+  await page.goto(magicLink);
+  await expect(page.getByText('While you were away')).toBeVisible();
+  await expect(page.getByText('forked your recipe:')).toBeVisible();
+
+  // Refresh: the cursor advanced; the news is folded into history.
+  await page.reload();
+  await expect(page.getByText('While you were away')).toHaveCount(0);
+});

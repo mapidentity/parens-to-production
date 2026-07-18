@@ -41,6 +41,7 @@
 - [Search: The Index the Schema Already Carries](23-search.md)
 - [Passwordless Auth Part 1: HMAC-Signed Magic Link Tokens](24-auth-tokens.md)
 - [Passwordless Auth Part 2: Magic Link Emails and the Full Login Flow](25-auth-email-flow.md)
+- [What Happened While You Were Away: Activity from the Log](26-activity.md)
 - [E2E Testing a Clojure Web App with Playwright](27-e2e-testing.md)
 - [The Admin Dashboard: Locking Down a Privileged Surface](28-admin-dashboard.md)
 

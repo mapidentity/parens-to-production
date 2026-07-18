@@ -372,3 +372,50 @@
       (is
         (= [] (recipe/search db "AND OR * ~ ("))
         "Lucene operator soup is neutralized, not thrown"))))
+
+;; --- activity: notifications as a query (d/since) ---
+
+(deftest activity-reads-forks-and-upstream-edits-from-the-log
+  (let [alice (mk-user! "alice3@x.lan")
+        bob (mk-user! "bob3@x.lan")
+        orig (recipe/create!
+               h/*conn*
+               alice
+               {:title "Alice's Bread"
+                :servings 1})
+        ;; Bob forks Alice's recipe → Alice hears about it; Bob doesn't.
+        _ (recipe/fork! h/*conn* bob orig)
+        items (recipe/activity (d/db h/*conn*) alice nil)]
+    (is (= [:fork] (map :type items)))
+    (is
+      (=
+        "bob3@x.lan"
+        (-> items
+            first
+            :recipe
+            :recipe/user
+            :user/email)))
+    ;; Alice edits her original → Bob (who forked it) hears about that.
+    (recipe/update! h/*conn* alice orig {:recipe/title "Alice's Better Bread"})
+    (let [bob-items (recipe/activity (d/db h/*conn*) bob nil)
+          upstream (filter #(= :upstream-edit (:type %)) bob-items)]
+      (is (seq upstream))
+      (is (= "Alice's Better Bread" (:recipe/title (:recipe (first upstream))))))
+    ;; Nobody is notified about themselves.
+    (is
+      (empty? (filter #(= :fork (:type %)) (recipe/activity (d/db h/*conn*) bob nil)))
+      "bob's own fork is not bob's news")))
+
+(deftest activity-cursor-narrows-the-window
+  (let [alice (mk-user! "alice4@x.lan")
+        bob (mk-user! "bob4@x.lan")
+        orig (recipe/create!
+               h/*conn*
+               alice
+               {:title "Cursor Soup"
+                :servings 2})]
+    (recipe/fork! h/*conn* bob orig)
+    (is (= 1 (count (recipe/activity (d/db h/*conn*) alice nil))) "the fork is visible")
+    (is
+      (empty? (recipe/activity (d/db h/*conn*) alice (time/now)))
+      "…and invisible past a cursor set after it")))

@@ -22,7 +22,7 @@
     [myapp.db.core :as db]
     [myapp.time :as time])
   (:import
-    [java.util UUID]))
+    [java.util Date UUID]))
 
 (set! *warn-on-reflection* true)
 
@@ -165,6 +165,58 @@
          (sort-by :recipe/created-at)
          vec)
     []))
+
+;; ---------------------------------------------------------------------------
+;; Activity (notifications as a query — d/since)
+;; ---------------------------------------------------------------------------
+
+(defn activity
+  "What happened around `user-eid`'s recipes since the cursor.
+  `since` is an Instant (nil means ever). Two kinds of news: forks of
+  their recipes by others, and content edits to originals they forked.
+  Newest first.
+
+  A read, not infrastructure: `d/since` narrows the database to datoms
+  asserted after the cursor, and each query joins that window back to the
+  full db for identity — a since-db alone knows nothing older than the
+  cursor, so the two-source join is the idiom, not a workaround. Entries
+  are {:type :fork|:upstream-edit, :recipe <pull>, :at Instant}."
+  [db user-eid since]
+  (let [since-db (if since (d/since db (Date/from since)) db)
+        fork-rows (d/q
+                    '[:find ?f ?inst
+                      :in $s $ ?u
+                      :where
+                      [$s ?f :recipe/forked-from ?orig ?tx]
+                      [$ ?orig :recipe/user ?u]
+                      (not [$ ?f :recipe/user ?u])
+                      [$ ?tx :db/txInstant ?inst]]
+                    since-db
+                    db
+                    user-eid)
+        upstream (d/q
+                   '[:find ?orig (max ?inst)
+                     :in $s $ ?u [?a ...]
+                     :where
+                     [$ ?mine :recipe/user ?u]
+                     [$ ?mine :recipe/forked-from ?orig]
+                     (not [$ ?orig :recipe/user ?u])
+                     [$s ?orig ?a _ ?tx]
+                     [$ ?tx :db/txInstant ?inst]]
+                   since-db
+                   db
+                   user-eid
+                   versioned-attrs)]
+    (->> (concat (for [[f inst] fork-rows]
+                   {:type :fork
+                    :recipe (db/pull* db pull-pattern f)
+                    :at (db/as-instant inst)})
+                 (for [[orig inst] upstream]
+                   {:type :upstream-edit
+                    :recipe (db/pull* db pull-pattern orig)
+                    :at (db/as-instant inst)}))
+         (sort-by :at #(compare %2 %1))
+         vec)))
 
 ;; ---------------------------------------------------------------------------
 ;; Version history (time travel over a single recipe)

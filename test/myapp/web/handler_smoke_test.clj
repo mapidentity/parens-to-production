@@ -234,3 +234,22 @@
     (testing "query without hits says so"
       (let [resp (handler/search-page (h/request :get "/search" :locale :en :params {:q "zzz"}))]
         (is (str/includes? (:body resp) "No recipes match"))))))
+
+(deftest dashboard-activity-shows-once-then-advances
+  (let [alice (mk-user! "alice5@x.lan")
+        bob (mk-user! "bob5@x.lan")
+        orig (recipe/create!
+               h/*conn*
+               alice
+               {:title "Seen Once Stew"
+                :servings 2})
+        _ (recipe/fork! h/*conn* bob orig)
+        req #(assoc (h/auth-request :get "/dashboard" "alice5@x.lan" :locale :en)
+               :user-eid alice)
+        first-view (handler/dashboard (req))
+        second-view (handler/dashboard (req))]
+    (is (str/includes? (:body first-view) "While you were away") "the panel leads")
+    (is (str/includes? (:body first-view) "forked your recipe"))
+    (is
+      (not (str/includes? (:body second-view) "While you were away"))
+      "the cursor advanced: shown once, then folded into history")))
