@@ -309,19 +309,43 @@
   (html (views/recipe-form (:locale request) (:user-email request) (:admin? request) nil)))
 
 (defn- recipe-params
-  "Extract the recipe content fields from request params."
+  "The recipe form fields exactly as submitted — raw strings, no trimming,
+  no defaults. Coercion and validation are `recipe/conform`'s job; keeping
+  the raw map intact is what lets an invalid submission re-render the form
+  with precisely what the user typed."
   [request]
-  {:title (str/trim (or (get-in request [:params :title]) ""))
-   :description (or (get-in request [:params :description]) "")
-   :servings (or (parse-long (str (get-in request [:params :servings]))) 1)
-   :ingredients (or (get-in request [:params :ingredients]) "")
-   :steps (or (get-in request [:params :steps]) "")})
+  {:title (get-in request [:params :title])
+   :description (get-in request [:params :description])
+   :servings (get-in request [:params :servings])
+   :ingredients (get-in request [:params :ingredients])
+   :steps (get-in request [:params :steps])})
+
+(defn- invalid-form
+  "422 re-render of the recipe form: field errors + the submitted values.
+  The dispatcher morphs this over the live form (typed input and focus
+  survive — dispatcher.js's 4xx-with-HTML rule); without JavaScript it is
+  the same page as a full response. The 422 keeps the contract honest for
+  machines: this POST changed nothing."
+  [request recipe raw errors]
+  (-> (html (views/recipe-form (:locale request)
+                               (:user-email request)
+                               (:admin? request)
+                               recipe
+                               {:errors errors
+                                :submitted raw}))
+      (assoc :status 422)))
 
 (defn recipe-create
-  "POST /recipes/new — create a recipe owned by the current user."
+  "POST /recipes/new — create a recipe owned by the current user.
+  Invalid input re-renders the form at 422; only conformed values reach the
+  domain."
   [request]
-  (let [id (recipe/create! (db/get-connection) (:user-eid request) (recipe-params request))]
-    (response/redirect (str "/recipes/" id))))
+  (let [raw (recipe-params request)
+        {:keys [values errors]} (recipe/conform raw)]
+    (if errors
+      (invalid-form request nil raw errors)
+      (let [id (recipe/create! (db/get-connection) (:user-eid request) values)]
+        (response/redirect (str "/recipes/" id))))))
 
 (defn recipe-edit-form
   "GET /recipes/:id/edit — prefilled edit form (owner only)."
@@ -335,20 +359,29 @@
 
 (defn recipe-update
   "POST /recipes/:id/edit — apply an edit (owner only).
-  Creates a new version in Datomic history."
+  Creates a new version in Datomic history. Invalid input re-renders the
+  form at 422 — against the stored recipe (so the heading and action URL
+  stay right) with the submitted values painted on top."
   [request]
   (let [id (path-uuid request)
-        {:keys [title description servings ingredients steps]} (recipe-params request)
-        ok? (recipe/update!
-              (db/get-connection)
-              (:user-eid request)
-              id
-              {:recipe/title title
-               :recipe/description description
-               :recipe/servings servings
-               :recipe/ingredients ingredients
-               :recipe/steps steps})]
-    (if ok? (response/redirect (str "/recipes/" id)) (not-found request))))
+        raw (recipe-params request)
+        {:keys [values errors]} (recipe/conform raw)]
+    (if errors
+      (let [r (recipe/recipe-by-id (d/db (db/get-connection)) id)]
+        (if (and r (recipe/owned-by? r (:user-eid request)))
+          (invalid-form request r raw errors)
+          (not-found request)))
+      (let [{:keys [title description servings ingredients steps]} values
+            ok? (recipe/update!
+                  (db/get-connection)
+                  (:user-eid request)
+                  id
+                  {:recipe/title title
+                   :recipe/description description
+                   :recipe/servings servings
+                   :recipe/ingredients ingredients
+                   :recipe/steps steps})]
+        (if ok? (response/redirect (str "/recipes/" id)) (not-found request))))))
 
 (defn recipe-fork
   "POST /recipes/:id/fork — fork any recipe into one owned by the current user."

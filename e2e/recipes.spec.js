@@ -90,3 +90,32 @@ test('forking a recipe records lineage', async ({ page, request }) => {
   await expect(page.getByText('Descends from 1 ancestor')).toBeVisible();
   await expect(page.locator('a', { hasText: 'Original Loaf' }).first()).toBeVisible();
 });
+
+test('an invalid submit re-renders the form with errors and preserved input', async ({ page, request }) => {
+  await registerUser(page, request, uniqueEmail());
+  await page.goto('/recipes/new');
+  // A whitespace-only title slips through the HTML `required` courtesy layer;
+  // the server is the validator of record.
+  await page.fill('input[name="title"]', '   ');
+  await page.fill('input[name="servings"]', '4');
+  await page.fill('textarea[name="ingredients"]', 'typed and kept');
+  // Plant a marker a real navigation would wipe — the morph must not.
+  await page.evaluate(() => { window.__stillHere = true; });
+  await page.getByRole('button', { name: 'Create recipe' }).click();
+
+  // The server answered 422 and the dispatcher morphed the same form back in
+  // place: error line visible, URL unchanged, typed input intact.
+  await expect(page.getByText('Give the recipe a title.')).toBeVisible();
+  await expect(page).toHaveURL(/\/recipes\/new$/);
+  await expect(page.locator('textarea[name="ingredients"]')).toHaveValue('typed and kept');
+  // In place, not a navigation: the page's JS world survived…
+  expect(await page.evaluate(() => window.__stillHere)).toBe(true);
+  // …and focus moved to the first invalid field, whose aria-describedby
+  // announces the error.
+  await expect(page.locator('input[name="title"]')).toBeFocused();
+
+  // Fixing the field completes on the same form.
+  await page.fill('input[name="title"]', 'Recovered Recipe');
+  await page.getByRole('button', { name: 'Create recipe' }).click();
+  await expect(page).toHaveURL(/\/recipes\/[0-9a-f-]{36}$/);
+});

@@ -253,6 +253,16 @@ export async function fetchAndMorph(url, opts = {}) {
 
     updateTitle(parsedDoc);
 
+    // A non-GET morph that surfaced server-side field errors: move focus to
+    // the first invalid control. Its aria-describedby points at the error
+    // line, so screen readers announce the problem, and keyboard users land
+    // exactly where the fix starts. GETs are exempt — stealing focus on
+    // ordinary navigation would be worse than the disease.
+    if (method !== 'GET') {
+      const firstInvalid = targetEl.querySelector('[aria-invalid="true"]');
+      if (firstInvalid) firstInvalid.focus();
+    }
+
     // History bookkeeping. When fetch followed a 302, finalUrl reflects
     // the redirect target — we want that in the address bar, not the
     // originally-requested URL. Normalise both to absolute URLs before

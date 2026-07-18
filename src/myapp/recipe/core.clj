@@ -294,10 +294,76 @@
             user-eid)]
     (if m (inc (long m)) 0)))
 
+(def ^:private limits
+  "Field size ceilings for `conform`. The content ceilings are deliberately
+  generous — the goal is refusing the absurd (a pasted novel, an overflowing
+  integer), not policing prose."
+  {:title 200
+   :description 20000
+   :ingredients 20000
+   :steps 20000})
+
+(defn conform
+  "Validate and coerce raw recipe form fields (strings, straight off the
+  wire) into the content values `create!`/`update!` accept.
+
+  Returns `{:values {…}}` when everything conforms, else
+  `{:errors {field [code …]}}` — e.g. `{:title [:blank]}`. Error codes are
+  data: the domain decides *what* is wrong, and rendering translates codes
+  into words (i18n) at the boundary — so the rules live in exactly one
+  place for every caller, the form handler today, an API tomorrow."
+  [{:keys [title description servings ingredients steps]}]
+  (let [title (str/trim (or title ""))
+        description (or description "")
+        ingredients (or ingredients "")
+        steps (or steps "")
+        servings-n (parse-long (str/trim (str (or servings ""))))
+        errors (cond-> {}
+                 (str/blank? title) (assoc :title
+                                      [:blank])
+                 (> (count title) (:title limits)) (assoc :title
+                                                     [:too-long])
+                 (nil? servings-n) (assoc :servings
+                                     [:not-a-number])
+                 (and servings-n (not (<= 1 servings-n 100))) (assoc :servings
+                                                                [:out-of-range])
+                 (> (count description) (:description limits)) (assoc :description
+                                                                 [:too-long])
+                 (> (count ingredients) (:ingredients limits)) (assoc :ingredients
+                                                                 [:too-long])
+                 (> (count steps) (:steps limits)) (assoc :steps
+                                                     [:too-long]))]
+    (if (seq errors)
+      {:errors errors}
+      {:values {:title title
+                :description description
+                :servings servings-n
+                :ingredients ingredients
+                :steps steps}})))
+
+(defn- assert-content!
+  "Defense in depth: refuse content `conform` would reject instead of
+  repairing it. The old behavior — coining \"Untitled recipe\" for a blank
+  title — put a lie in the database and kept it forever; a throw here means
+  a handler that skipped `conform` fails loudly in development, not quietly
+  in the data."
+  [{:keys [title servings]}]
+  (when (or (str/blank? title) (not (int? servings)) (not (<= 1 servings 100)))
+    (throw
+      (ex-info
+        "unconformed recipe content — call conform first"
+        {:title title
+         :servings servings}))))
+
 (defn create!
   "Create a new recipe owned by `user-eid`. Returns the new `:recipe/id` (UUID).
-  Pass `:forked-from-eid` to record provenance (used by `fork!`)."
-  [conn user-eid {:keys [title description servings ingredients steps forked-from-eid]}]
+  `content` must be conformed (see `conform`) — the domain refuses
+  unvalidated input. Pass `:forked-from-eid` to record provenance (used by
+  `fork!`)."
+  [conn user-eid
+   {:keys [title description servings ingredients steps forked-from-eid]
+    :as content}]
+  (assert-content! content)
   (let [id (UUID/randomUUID)
         now (time/now)
         position (next-position (d/db conn) user-eid)]
@@ -305,9 +371,9 @@
        [(cond-> {:db/id "new-recipe"
                  :recipe/id id
                  :recipe/user user-eid
-                 :recipe/title (or title "Untitled recipe")
+                 :recipe/title title
                  :recipe/description (or description "")
-                 :recipe/servings (long (or servings 1))
+                 :recipe/servings (long servings)
                  :recipe/ingredients (or ingredients "")
                  :recipe/steps (or steps "")
                  :recipe/position position
@@ -376,11 +442,29 @@
          :steps (:recipe/steps src)
          :forked-from-eid src-eid}))))
 
+(defn- assert-changes!
+  "`assert-content!` for a partial `changes` map: only the keys present are
+  held to `conform`'s rules — `update!` legitimately takes subsets."
+  [{:recipe/keys [title servings]
+    :as changes}]
+  (when
+    (or
+      (and (contains? changes :recipe/title) (str/blank? (or title "")))
+      (and
+        (contains? changes :recipe/servings)
+        (or (not (int? servings)) (not (<= 1 servings 100)))))
+    (throw
+      (ex-info
+        "unconformed recipe changes — call conform first"
+        {:changes (select-keys changes [:recipe/title :recipe/servings])}))))
+
 (defn update!
   "Apply `changes` (a subset of the `:recipe/*` content keys) to recipe `id`, if owned by `user-eid`.
+  Content must be conformed (see `conform`); the keys present are checked.
   Bumps `:recipe/updated-at`. Returns true on success,
   nil if the recipe is missing or not owned by the user."
   [conn user-eid id changes]
+  (assert-changes! changes)
   (let [db (d/db conn)]
     (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
       @(db/transact* conn

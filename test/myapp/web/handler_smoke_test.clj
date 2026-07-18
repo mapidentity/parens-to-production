@@ -147,3 +147,45 @@
             (wrapped (assoc-in (h/request :get "/recipes/x/at/1") [:session :user-email] "a@b.lan"))
             [:headers "Cache-Control"]))
         "authenticated: no-store overrides the immutable header"))))
+
+(deftest invalid-recipe-create-rerenders-at-422
+  (let [u (mk-user! "typo@x.lan")
+        resp (handler/recipe-create
+               (assoc (h/auth-request :post
+                                      "/recipes/new" "typo@x.lan"
+                                      :locale :en
+                                      :params {:title "   " ; passes HTML `required`, fails conform
+                                               :servings "0"
+                                               :ingredients "kept exactly as typed"
+                                               :steps ""})
+                 :user-eid u))]
+    (is (= 422 (:status resp)) "nothing was created, and the status says so")
+    (is (str/includes? (:body resp) "Give the recipe a title.") "title error rendered")
+    (is (str/includes? (:body resp) "between 1 and 100") "servings error rendered")
+    (is
+      (str/includes? (:body resp) "kept exactly as typed")
+      "submitted values survive the round trip")
+    (is (str/includes? (:body resp) "aria-invalid") "the failure is announced, not just painted")
+    (is (zero? (recipe/total-recipes (d/db h/*conn*))) "the database is untouched")))
+
+(deftest invalid-recipe-update-rerenders-at-422
+  (let [u (mk-user! "editor@x.lan")
+        id (recipe/create!
+             h/*conn*
+             u
+             {:title "Stew"
+              :servings 4})
+        resp (handler/recipe-update
+               (assoc (h/auth-request :post
+                                      (str "/recipes/" id "/edit")
+                                      "editor@x.lan"
+                                      :locale :en
+                                      :params {:title ""
+                                               :servings "4"})
+                 :user-eid u
+                 :path-params {:id (str id)}))]
+    (is (= 422 (:status resp)))
+    (is (str/includes? (:body resp) "Give the recipe a title."))
+    (is
+      (= "Stew" (:recipe/title (recipe/recipe-by-id (d/db h/*conn*) id)))
+      "the stored recipe is unchanged")))

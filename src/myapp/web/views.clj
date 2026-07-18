@@ -36,8 +36,7 @@
 (defn- fmt-time
   "Format an Instant as a human date/time in the display timezone, localized to `locale`."
   [locale ^Instant inst]
-  (when inst
-    (.format ^DateTimeFormatter (formatter-for (or locale :en)) inst)))
+  (when inst (.format ^DateTimeFormatter (formatter-for (or locale :en)) inst)))
 
 (defn- author-name
   "Display name for a pulled `:recipe/user` map, falling back to the email local-part."
@@ -521,63 +520,112 @@
              " " (t locale :recipe/by) " " (author-name (:recipe/user f))]])]
         [:p.text-sm.text-text-secondary (t locale :recipe/no-forks)])]]))
 
+(defn- field-error
+  "Inline error line under a form field, or nil.
+  `codes` is the vector of error-code keywords `recipe/conform` produced for
+  this field; we show the first — one problem at a time reads better than a
+  stack. The element id is what the input's `aria-describedby` points at."
+  [locale field codes]
+  (when-let [code (first codes)]
+    [:p.mt-1.text-sm.text-negative
+     {:id (str (name field) "-error")}
+     (t locale (keyword "error" (str (name field) "-" (name code))))]))
+
+(defn- field-aria
+  "Accessibility attributes for a field in error.
+  Screen readers announce the state and read the error line as the field's
+  description."
+  [field codes]
+  (when (seq codes)
+    {:aria-invalid "true"
+     :aria-describedby (str (name field) "-error")}))
+
 (defn recipe-form
-  "Create/edit form. `recipe` is nil for new, or a pulled map for edit."
-  [locale user-email admin? recipe]
-  (let [editing? (some? recipe)
-        action (if editing? (str "/recipes/" (:recipe/id recipe) "/edit") "/recipes/new")
-        active (if editing? :browse :new)]
-    (app-layout
-      locale
-      user-email
-      active
-      {:admin? admin?}
-      [:div.max-w-2xl.mx-auto
-       [:h1.text-2xl.font-bold.text-text-primary.mb-6
-        (if editing? (t locale :recipe/edit) (t locale :recipe/new))]
-       [:form.space-y-5
-        {:method "POST"
-         :action action}
-        [:div
-         [:label.block.text-sm.font-medium.text-text-primary {:for "title"}
-          (t locale :recipe/title-label)]
-         [:input#title.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
-          {:type "text"
-           :name "title"
-           :required true
-           :value (:recipe/title recipe)}]]
-        [:div
-         [:label.block.text-sm.font-medium.text-text-primary {:for "servings"}
-          (t locale :recipe/servings-label)]
-         [:input#servings.mt-1.block.w-32.px-3.py-2.border.border-border.rounded-md.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
-          {:type "number"
-           :name "servings"
-           :min "1"
-           :value (or (:recipe/servings recipe) 1)}]]
-        [:div
-         [:label.block.text-sm.font-medium.text-text-primary {:for "description"}
-          (t locale :recipe/description-label)]
-         [:textarea#description.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
-          {:name "description"
-           :rows "3"} (:recipe/description recipe)]]
-        [:div
-         [:label.block.text-sm.font-medium.text-text-primary {:for "ingredients"}
-          (t locale :recipe/ingredients-label)]
-         [:textarea#ingredients.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.font-mono.text-sm.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
-          {:name "ingredients"
-           :rows "8"} (:recipe/ingredients recipe)]]
-        [:div
-         [:label.block.text-sm.font-medium.text-text-primary {:for "steps"}
-          (t locale :recipe/steps-label)]
-         [:textarea#steps.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.font-mono.text-sm.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
-          {:name "steps"
-           :rows "8"} (:recipe/steps recipe)]]
-        [:div.flex.items-center.gap-3
-         [:button.py-2.px-4.rounded-md.text-sm.font-semibold.text-white.bg-primary.hover:bg-primary-vivid
-          {:type "submit"} (if editing? (t locale :recipe/save) (t locale :recipe/create))]
-         (when editing?
-           [:a.text-sm.text-text-secondary.hover:text-text-primary
-            {:href (str "/recipes/" (:recipe/id recipe))} "Cancel"])]]])))
+  "Create/edit form. `recipe` is nil for new, or a pulled map for edit.
+
+  The optional trailing map carries a failed submission back to the user:
+  `:errors` is `recipe/conform`'s `{field [code …]}`, and `:submitted` the
+  raw params — which take precedence over the stored recipe, so what the
+  user typed survives the round trip, mistakes and all. A field's error
+  renders directly under it; the input keeps `aria-invalid` +
+  `aria-describedby` so the failure is announced, not just painted."
+  ([locale user-email admin? recipe] (recipe-form locale user-email admin? recipe nil))
+  ([locale user-email admin? recipe {:keys [errors submitted]}]
+   (let [editing? (some? recipe)
+         action (if editing? (str "/recipes/" (:recipe/id recipe) "/edit") "/recipes/new")
+         active (if editing? :browse :new)
+         ;; Submitted values (raw strings) win over stored ones: after a 422
+         ;; the form must show what was typed, not what the database holds.
+         fv (fn [field db-key] (if submitted (get submitted field) (get recipe db-key)))]
+     (app-layout
+       locale
+       user-email
+       active
+       {:admin? admin?}
+       [:div.max-w-2xl.mx-auto
+        [:h1.text-2xl.font-bold.text-text-primary.mb-6
+         (if editing? (t locale :recipe/edit) (t locale :recipe/new))]
+        [:form.space-y-5
+         {:method "POST"
+          :action action}
+         [:div
+          [:label.block.text-sm.font-medium.text-text-primary {:for "title"}
+           (t locale :recipe/title-label)]
+          [:input#title.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
+           (merge
+             {:type "text"
+              :name "title"
+              :required true
+              :value (fv :title :recipe/title)}
+             (field-aria :title (:title errors)))]
+          (field-error locale :title (:title errors))]
+         [:div
+          [:label.block.text-sm.font-medium.text-text-primary {:for "servings"}
+           (t locale :recipe/servings-label)]
+          [:input#servings.mt-1.block.w-32.px-3.py-2.border.border-border.rounded-md.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
+           (merge
+             {:type "number"
+              :name "servings"
+              :min "1"
+              :value (if submitted (:servings submitted) (or (:recipe/servings recipe) 1))}
+             (field-aria :servings (:servings errors)))]
+          (field-error locale :servings (:servings errors))]
+         [:div
+          [:label.block.text-sm.font-medium.text-text-primary {:for "description"}
+           (t locale :recipe/description-label)]
+          [:textarea#description.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
+           (merge
+             {:name "description"
+              :rows "3"}
+             (field-aria :description (:description errors)))
+           (fv :description :recipe/description)]
+          (field-error locale :description (:description errors))]
+         [:div
+          [:label.block.text-sm.font-medium.text-text-primary {:for "ingredients"}
+           (t locale :recipe/ingredients-label)]
+          [:textarea#ingredients.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.font-mono.text-sm.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
+           (merge
+             {:name "ingredients"
+              :rows "8"}
+             (field-aria :ingredients (:ingredients errors)))
+           (fv :ingredients :recipe/ingredients)]
+          (field-error locale :ingredients (:ingredients errors))]
+         [:div
+          [:label.block.text-sm.font-medium.text-text-primary {:for "steps"}
+           (t locale :recipe/steps-label)]
+          [:textarea#steps.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.font-mono.text-sm.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
+           (merge
+             {:name "steps"
+              :rows "8"}
+             (field-aria :steps (:steps errors)))
+           (fv :steps :recipe/steps)]
+          (field-error locale :steps (:steps errors))]
+         [:div.flex.items-center.gap-3
+          [:button.py-2.px-4.rounded-md.text-sm.font-semibold.text-white.bg-primary.hover:bg-primary-vivid
+           {:type "submit"} (if editing? (t locale :recipe/save) (t locale :recipe/create))]
+          (when editing?
+            [:a.text-sm.text-text-secondary.hover:text-text-primary
+             {:href (str "/recipes/" (:recipe/id recipe))} "Cancel"])]]]))))
 
 (defn recipe-history
   "Version timeline for a recipe (newest first), built from Datomic history."

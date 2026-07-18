@@ -80,6 +80,7 @@
              h/*conn*
              u
              {:title "Soup"
+              :servings 2
               :ingredients "water"})]
     (recipe/update! h/*conn* u id {:recipe/ingredients "water\nsalt"})
     (recipe/update! h/*conn* u id {:recipe/ingredients "water\nsalt\npepper"})
@@ -124,6 +125,7 @@
                h/*conn*
                alice
                {:title "Pesto"
+                :servings 2
                 :ingredients "basil\noil"})
         fork-id (recipe/fork! h/*conn* bob orig)
         f (recipe/recipe-by-id (d/db h/*conn*) fork-id)]
@@ -133,7 +135,11 @@
 
 (deftest lineage-walks-to-root
   (let [a (mk-user! "a@x.lan")
-        r1 (recipe/create! h/*conn* a {:title "v1"})
+        r1 (recipe/create!
+             h/*conn*
+             a
+             {:title "v1"
+              :servings 1})
         r2 (recipe/fork! h/*conn* a r1)
         r3 (recipe/fork! h/*conn* a r2)
         r4 (recipe/fork! h/*conn* a r3)
@@ -144,7 +150,11 @@
 
 (deftest forks-lists-direct-children
   (let [a (mk-user! "a@x.lan")
-        orig (recipe/create! h/*conn* a {:title "base"})
+        orig (recipe/create!
+               h/*conn*
+               a
+               {:title "base"
+                :servings 1})
         _f1 (recipe/fork! h/*conn* a orig)
         _f2 (recipe/fork! h/*conn* a orig)
         children (recipe/forks (d/db h/*conn*) orig)]
@@ -159,6 +169,7 @@
              h/*conn*
              alice
              {:title "Mine"
+              :servings 2
               :ingredients "secret"})]
     (is
       (nil? (recipe/update! h/*conn* mallory id {:recipe/title "Hacked"}))
@@ -172,7 +183,11 @@
 (deftest only-owner-can-delete
   (let [alice (mk-user! "alice@x.lan")
         mallory (mk-user! "mallory@x.lan")
-        id (recipe/create! h/*conn* alice {:title "Keep"})]
+        id (recipe/create!
+             h/*conn*
+             alice
+             {:title "Keep"
+              :servings 1})]
     (is (nil? (recipe/delete! h/*conn* mallory id)))
     (is (some? (recipe/recipe-by-id (d/db h/*conn*) id)) "still there")
     (is (true? (recipe/delete! h/*conn* alice id)))
@@ -182,7 +197,91 @@
 
 (deftest aggregate-counts
   (let [a (mk-user! "a@x.lan")
-        orig (recipe/create! h/*conn* a {:title "x"})]
+        orig (recipe/create!
+               h/*conn*
+               a
+               {:title "x"
+                :servings 1})]
     (recipe/fork! h/*conn* a orig)
     (is (= 2 (recipe/total-recipes (d/db h/*conn*))))
     (is (= 1 (recipe/total-forks (d/db h/*conn*))))))
+
+;; --- conform: the validation boundary ---
+
+(deftest conform-coerces-and-trims
+  (let [{:keys [values errors]} (recipe/conform
+                                  {:title "  Carbonara  "
+                                   :servings "4"
+                                   :description "d"
+                                   :ingredients "eggs"
+                                   :steps "whisk"})]
+    (is (nil? errors))
+    (is (= "Carbonara" (:title values)) "title arrives trimmed")
+    (is (= 4 (:servings values)) "servings arrives as a long")))
+
+(deftest conform-names-the-field-and-the-problem
+  (is
+    (=
+      {:title [:blank]
+       :servings [:not-a-number]}
+      (:errors
+        (recipe/conform
+          {:title "   "
+           :servings "many"})))
+    "codes are data, keyed by field — no prose in the domain")
+  (is
+    (=
+      {:servings [:out-of-range]}
+      (:errors
+        (recipe/conform
+          {:title "ok"
+           :servings "0"}))))
+  (is
+    (=
+      {:servings [:out-of-range]}
+      (:errors
+        (recipe/conform
+          {:title "ok"
+           :servings "101"}))))
+  (is
+    (nil?
+      (:errors
+        (recipe/conform
+          {:title "ok"
+           :servings "1"})))
+    "range is inclusive low")
+  (is
+    (nil?
+      (:errors
+        (recipe/conform
+          {:title "ok"
+           :servings "100"})))
+    "range is inclusive high")
+  (is
+    (=
+      [:too-long]
+      (:title
+        (:errors
+          (recipe/conform
+            {:title (apply str (repeat 201 "x"))
+             :servings "2"}))))))
+
+(deftest domain-refuses-unconformed-content
+  (let [u (mk-user! "strict@x.lan")]
+    (is
+      (thrown?
+        clojure.lang.ExceptionInfo
+        (recipe/create!
+          h/*conn*
+          u
+          {:title "   "
+           :servings 2}))
+      "create! throws instead of coining a title — no more \"Untitled recipe\"")
+    (let [id (recipe/create!
+               h/*conn*
+               u
+               {:title "Real"
+                :servings 2})]
+      (is
+        (thrown? clojure.lang.ExceptionInfo (recipe/update! h/*conn* u id {:recipe/servings 0}))
+        "update! holds the keys it is given to the same rules"))))

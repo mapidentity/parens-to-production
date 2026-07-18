@@ -52,8 +52,10 @@
   (when (not= (alength k) 16)
     (throw
       (ex-info
-        (str "Session key must be exactly 16 bytes (got " (alength k)
-             "). Ring's cookie store uses AES-128.")
+        (str
+          "Session key must be exactly 16 bytes (got "
+          (alength k)
+          "). Ring's cookie store uses AES-128.")
         {:length (alength k)})))
   k)
 

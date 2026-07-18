@@ -107,4 +107,12 @@
    :error/title "Error"
    :error/invalid-magic-link "Invalid or expired magic link. Please request a new one."
    :error/not-found "Not found."
-   :error/server-error "Something went wrong on our end. Please try again."})
+   :error/server-error "Something went wrong on our end. Please try again."
+   ;; Form validation — one message per (field, code) from recipe/conform.
+   :error/title-blank "Give the recipe a title."
+   :error/title-too-long "Keep the title under 200 characters."
+   :error/servings-not-a-number "Servings must be a whole number."
+   :error/servings-out-of-range "Servings must be between 1 and 100."
+   :error/description-too-long "This description is too long."
+   :error/ingredients-too-long "The ingredient list is too long."
+   :error/steps-too-long "The method is too long."})

@@ -109,4 +109,12 @@
    :error/title "Fout"
    :error/invalid-magic-link "Ongeldige of verlopen magic link. Vraag een nieuwe aan."
    :error/not-found "Niet gevonden."
-   :error/server-error "Er ging iets mis aan onze kant. Probeer het opnieuw."})
+   :error/server-error "Er ging iets mis aan onze kant. Probeer het opnieuw."
+   ;; Formuliervalidatie — één melding per (veld, code) uit recipe/conform.
+   :error/title-blank "Geef het recept een titel."
+   :error/title-too-long "Houd de titel korter dan 200 tekens."
+   :error/servings-not-a-number "Porties moet een geheel getal zijn."
+   :error/servings-out-of-range "Porties moet tussen 1 en 100 liggen."
+   :error/description-too-long "Deze beschrijving is te lang."
+   :error/ingredients-too-long "De ingrediëntenlijst is te lang."
+   :error/steps-too-long "De bereidingswijze is te lang."})
