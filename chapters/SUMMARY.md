@@ -49,6 +49,7 @@
 # Production Hardening
 
 - [The Production Asset Pipeline: Content Hashing, SRI, Import Maps, and CSP](29-asset-pipeline.md)
+- [The Database Already Knows: Conditional GET from basis-t](31-conditional-get.md)
 - [100% Lighthouse Scores: Automated Performance Audits in CI](33-lighthouse.md)
 - [CI/CD for a Clojure SaaS: Forgejo Actions, Podman, and Automated Deployment](34-ci-cd.md)
 

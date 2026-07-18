@@ -35,6 +35,58 @@
         (assoc request
           :locale locale)))))
 
+(defonce ^:private boot-token
+  ;; Part of the page validator: a deploy or restart mints a new token and
+  ;; so invalidates every cached page — over-invalidation, never staleness.
+  ;; A UUID, not a timestamp: it is an identity for this process, and the
+  ;; swappable clock (myapp.time) must stay free to lie in tests.
+  (str (random-uuid)))
+
+(defn- current-validator
+  "The ETag any anonymous HTML page has RIGHT NOW.
+  Such a page is a pure function of exactly three things: the database
+  basis-t, the locale, and this build of the rendering code (boot-token).
+  Computable without rendering anything — which is what lets a matching
+  If-None-Match short-circuit the whole handler."
+  [locale]
+  (str "W/\"" (d/basis-t (d/db (db/get-connection))) "-" (name locale) "-" boot-token "\""))
+
+(defn wrap-conditional-get
+  "Conditional GET for anonymous HTML pages, validated by basis-t.
+  Request side: a matching If-None-Match answers 304 before the handler
+  runs — no query, no render. Response side: 200 text/html responses that
+  carry no Cache-Control of their own get the validator plus no-cache
+  (always revalidate; revalidation is the cheap part). Authenticated
+  requests pass through untouched (wrap-no-cache-authenticated owns them),
+  as do responses that already state a cache policy (immutable
+  point-in-time pages, no-store partials) and non-HTML (static assets have
+  their own hashed-URL story)."
+  [handler]
+  (fn [request]
+    (if-not (and (= :get (:request-method request)) (nil? (get-in request [:session :user-email])))
+      (handler request)
+      (let [validator (current-validator (:locale request))]
+        (if (= validator (get-in request [:headers "if-none-match"]))
+          {:status 304
+           :headers {"ETag" validator
+                     "Cache-Control" "no-cache"
+                     "Vary" "Accept-Language"}}
+          (let [response (handler request)]
+            (if
+              (and
+                (= 200 (:status response))
+                (some-> (get-in response [:headers "Content-Type"])
+                        (str/starts-with? "text/html"))
+                (nil? (get-in response [:headers "Cache-Control"])))
+              (update
+                response
+                :headers
+                merge
+                {"ETag" validator
+                 "Cache-Control" "no-cache"
+                 "Vary" "Accept-Language"})
+              response)))))))
+
 (defn wrap-no-cache-authenticated
   "Set Cache-Control: no-store on authenticated HTML responses.
   This stops the browser bfcache showing a stale page after logout."
@@ -368,6 +420,7 @@
                                     :same-site :lax
                                     :max-age (* 30 24 60 60)}}]
                    [wrap-locale]
+                   [wrap-conditional-get]
                    [wrap-no-cache-authenticated]
                    [wrap-csp]
                    ;; Innermost: catches what routes/handlers throw; its 500
