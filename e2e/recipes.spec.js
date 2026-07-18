@@ -119,3 +119,30 @@ test('an invalid submit re-renders the form with errors and preserved input', as
   await page.getByRole('button', { name: 'Create recipe' }).click();
   await expect(page).toHaveURL(/\/recipes\/[0-9a-f-]{36}$/);
 });
+
+test('the preview pane renders unsaved edits, server-side', async ({ page, request }) => {
+  await registerUser(page, request, uniqueEmail());
+  await createRecipe(page, {
+    title: 'Preview Base',
+    servings: 2,
+    ingredients: 'one thing',
+    steps: 'do it',
+  });
+  await page.getByRole('button', { name: 'Actions' }).click();
+  await page.getByRole('link', { name: 'Edit' }).click();
+
+  // The edit page's pane is server-rendered before any keystroke.
+  const pane = page.locator('#recipe-preview');
+  await expect(pane).toContainText('Preview Base');
+
+  // Type an unsaved markdown edit: the island debounces, POSTs the form to
+  // the preview endpoint, and morphs back HTML rendered from a d/with
+  // database — real markdown pipeline included.
+  await page.fill('textarea[name="description"]', 'A **speculative** delight');
+  await expect(pane.locator('strong')).toHaveText('speculative');
+
+  // Leave without saving: the recipe is untouched.
+  await page.goto('/recipes');
+  await page.getByRole('link', { name: 'Preview Base' }).click();
+  await expect(page.getByText('speculative')).toHaveCount(0);
+});

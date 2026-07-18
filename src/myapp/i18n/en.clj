@@ -69,6 +69,8 @@
    :recipe/forked-from "Forked from"
    :recipe/original "Original recipe"
    :recipe/no-recipes "No recipes yet."
+   :recipe/preview-title "Preview"
+   :recipe/preview-waiting "The preview appears once the recipe has a title and servings."
    :recipe/title-label "Title"
    :recipe/description-label "Description (Markdown supported)"
    :recipe/servings-label "Servings"

@@ -189,3 +189,32 @@
     (is
       (= "Stew" (:recipe/title (recipe/recipe-by-id (d/db h/*conn*) id)))
       "the stored recipe is unchanged")))
+
+(deftest preview-endpoint-renders-speculatively
+  (let [u (mk-user! "previewer@x.lan")
+        resp (handler/recipe-preview
+               (assoc (h/auth-request :post
+                                      "/recipes/new/preview" "previewer@x.lan"
+                                      :locale :en
+                                      :params {:title "Draft Cake"
+                                               :servings "8"
+                                               :description "Very **fluffy** indeed."})
+                 :user-eid u))]
+    (is (ok? resp))
+    (is (str/includes? (:body resp) "Draft Cake"))
+    (is
+      (str/includes? (:body resp) "<strong>fluffy</strong>")
+      "the preview runs the real markdown pipeline")
+    (is (= "no-store" (get-in resp [:headers "Cache-Control"])))
+    (is (zero? (recipe/total-recipes (d/db h/*conn*))) "nothing was created"))
+  (testing "unconformable input gets the waiting state, still 200"
+    (let [u2 (mk-user! "previewer2@x.lan")
+          resp (handler/recipe-preview
+                 (assoc (h/auth-request :post
+                                        "/recipes/new/preview" "previewer2@x.lan"
+                                        :locale :en
+                                        :params {:title ""
+                                                 :servings "0"})
+                   :user-eid u2))]
+      (is (ok? resp))
+      (is (str/includes? (:body resp) "appears once the recipe")))))

@@ -285,3 +285,58 @@
       (is
         (thrown? clojure.lang.ExceptionInfo (recipe/update! h/*conn* u id {:recipe/servings 0}))
         "update! holds the keys it is given to the same rules"))))
+
+;; --- preview: the speculative database ---
+
+(deftest preview-renders-the-future-without-writing-it
+  (let [u (mk-user! "seer@x.lan")
+        id (recipe/create!
+             h/*conn*
+             u
+             {:title "Bolognese"
+              :servings 4
+              :ingredients "beef"})
+        db (d/db h/*conn*)
+        p (recipe/preview
+            db
+            u
+            id
+            {:title "Bolognese v2"
+             :servings 6
+             :description "Now with **wine**."
+             :ingredients "beef\nwine"
+             :steps "simmer"})]
+    (is (= "Bolognese v2" (:recipe/title p)) "the preview carries the unsaved edit")
+    (is (= 6 (:recipe/servings p)))
+    (is (= "seer@x.lan" (get-in p [:recipe/user :user/email])) "pulled through the real pattern")
+    (is
+      (= "Bolognese" (:recipe/title (recipe/recipe-by-id (d/db h/*conn*) id)))
+      "…and the database never heard about it")
+    (is (= 1 (count (recipe/version-history (d/db h/*conn*) id))) "no phantom version either")))
+
+(deftest preview-respects-ownership-and-supports-new
+  (let [alice (mk-user! "alice2@x.lan")
+        mallory (mk-user! "mallory2@x.lan")
+        id (recipe/create!
+             h/*conn*
+             alice
+             {:title "Hers"
+              :servings 2})
+        db (d/db h/*conn*)]
+    (is
+      (nil?
+        (recipe/preview
+          db
+          mallory
+          id
+          {:title "Mine now"
+           :servings 2}))
+      "previewing someone else's recipe is refused like any other write")
+    (let [p (recipe/preview
+              db
+              mallory
+              nil
+              {:title "Fresh"
+               :servings 3})]
+      (is (= "Fresh" (:recipe/title p)) "a new-recipe preview needs no existing entity")
+      (is (= 1 (recipe/total-recipes (d/db h/*conn*))) "and creates nothing"))))

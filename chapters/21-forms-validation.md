@@ -36,8 +36,9 @@ The first decision is where the rules live. Not in the handler (the handler tran
    :steps 20000})
 
 (defn conform
-  "Validate and coerce raw recipe form fields (strings, straight off the
-  wire) into the content values `create!`/`update!` accept.
+  "Validate and coerce raw recipe form fields into content values.
+  Takes the strings straight off the wire; produces what `create!` and
+  `update!` accept.
 
   Returns `{:values {…}}` when everything conforms, else
   `{:errors {field [code …]}}` — e.g. `{:title [:blank]}`. Error codes are
@@ -82,8 +83,8 @@ Three properties of this function do the chapter's work.
 
 ```clojure
 (defn- assert-content!
-  "Defense in depth: refuse content `conform` would reject instead of
-  repairing it. The old behavior — coining \"Untitled recipe\" for a blank
+  "Defense in depth: refuse what `conform` would reject, never repair it.
+  The old behavior — coining \"Untitled recipe\" for a blank
   title — put a lie in the database and kept it forever; a throw here means
   a handler that skipped `conform` fails loudly in development, not quietly
   in the data."
@@ -108,8 +109,8 @@ With the domain holding the rules, the handler collapses into a shape you can re
 
 ```clojure
 (defn- recipe-params
-  "The recipe form fields exactly as submitted — raw strings, no trimming,
-  no defaults. Coercion and validation are `recipe/conform`'s job; keeping
+  "The recipe form fields exactly as submitted: raw strings, no defaults.
+  Coercion and validation are `recipe/conform`'s job; keeping
   the raw map intact is what lets an invalid submission re-render the form
   with precisely what the user typed."
   [request]
@@ -135,7 +136,7 @@ The failure exit:
 
 ```clojure
 (defn- invalid-form
-  "422 re-render of the recipe form: field errors + the submitted values.
+  "Re-render the recipe form at 422 with field errors + submitted values.
   The dispatcher morphs this over the live form (typed input and focus
   survive — dispatcher.js's 4xx-with-HTML rule); without JavaScript it is
   the same page as a full response. The 422 keeps the contract honest for

@@ -304,8 +304,9 @@
    :steps 20000})
 
 (defn conform
-  "Validate and coerce raw recipe form fields (strings, straight off the
-  wire) into the content values `create!`/`update!` accept.
+  "Validate and coerce raw recipe form fields into content values.
+  Takes the strings straight off the wire; produces what `create!` and
+  `update!` accept.
 
   Returns `{:values {…}}` when everything conforms, else
   `{:errors {field [code …]}}` — e.g. `{:title [:blank]}`. Error codes are
@@ -342,8 +343,7 @@
                 :steps steps}})))
 
 (defn- assert-content!
-  "Defense in depth: refuse content `conform` would reject instead of
-  repairing it. The old behavior — coining \"Untitled recipe\" for a blank
+  "Defense in depth: refuse what `conform` would reject, never repair it. The old behavior — coining \"Untitled recipe\" for a blank
   title — put a lie in the database and kept it forever; a throw here means
   a handler that skipped `conform` fails loudly in development, not quietly
   in the data."
@@ -356,7 +356,7 @@
          :servings servings}))))
 
 (defn create!
-  "Create a new recipe owned by `user-eid`. Returns the new `:recipe/id` (UUID).
+  "Create a new recipe owned by `user-eid`; returns the new `:recipe/id`.
   `content` must be conformed (see `conform`) — the domain refuses
   unvalidated input. Pass `:forked-from-eid` to record provenance (used by
   `fork!`)."
@@ -442,9 +442,51 @@
          :steps (:recipe/steps src)
          :forked-from-eid src-eid}))))
 
+(defn preview
+  "The recipe as it WOULD read, rendered from a speculative database.
+  Applies conformed content `values` — to the existing recipe `id` (owner
+  only), or as a new recipe when `id` is nil. `d/with` returns a db that contains
+  the change without transacting anything; we pull from it exactly as
+  `recipe-by-id` would. Returns the pulled map, or nil when `id` isn't the
+  caller's to preview.
+
+  Because the speculative db is a real db value, everything downstream is
+  the real read path: same pull pattern, same markdown, same formatting —
+  and, for an edit, the recipe's real fork provenance and timestamps."
+  [db user-eid id {:keys [title description servings ingredients steps]}]
+  (assert-content!
+    {:title title
+     :servings servings})
+  (let [now (time/now)
+        content {:recipe/title title
+                 :recipe/description (or description "")
+                 :recipe/servings (long servings)
+                 :recipe/ingredients (or ingredients "")
+                 :recipe/steps (or steps "")}]
+    (if id
+      (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
+        (let [{:keys [db-after]} (db/with*
+                                   db
+                                   [(assoc content
+                                      :db/id eid
+                                      :recipe/updated-at now)])]
+          (db/pull* db-after pull-pattern eid)))
+      (let [{:keys [db-after tempids]}
+            (db/with*
+              db
+              [(assoc content
+                 :db/id "preview"
+                 :recipe/id (UUID/randomUUID)
+                 :recipe/user user-eid
+                 :recipe/position 0
+                 :recipe/created-at now
+                 :recipe/updated-at now)])]
+        (db/pull* db-after pull-pattern (d/resolve-tempid db-after tempids "preview"))))))
+
 (defn- assert-changes!
-  "`assert-content!` for a partial `changes` map: only the keys present are
-  held to `conform`'s rules — `update!` legitimately takes subsets."
+  "`assert-content!` for a partial `changes` map.
+  Only the keys present are held to `conform`'s rules — `update!`
+  legitimately takes subsets."
   [{:recipe/keys [title servings]
     :as changes}]
   (when

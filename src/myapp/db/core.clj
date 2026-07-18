@@ -103,6 +103,13 @@
   [conn tx-data]
   (d/transact conn (mapv convert-instants tx-data)))
 
+(defn with*
+  "Like d/with, with the java.time bridge applied to tx-data.
+  Converts Instant values to Date exactly as `transact*` does — for a
+  database value that will never be transacted (speculative writes)."
+  [db tx-data]
+  (d/with db (mapv convert-instants tx-data)))
+
 (defn q*
   "Like d/q but converts Date values to Instant in result tuples."
   [query & args]

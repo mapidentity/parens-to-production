@@ -186,6 +186,10 @@
       ;; Dashboard reorder (drag-drop full order, or no-JS up/down step). Static
       ;; path declared before the dynamic `/recipes/:id` reads so it wins.
       ["/recipes/reorder" {:post #'handler/recipe-reorder}]
+      ["/recipes/new/preview"
+       {:post #'handler/recipe-preview}]
+      ["/recipes/:id/preview"
+       {:post #'handler/recipe-preview}]
       ["/recipes/:id/edit"
        {:get #'handler/recipe-edit-form
         :post #'handler/recipe-update}]

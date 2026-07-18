@@ -309,8 +309,7 @@
   (html (views/recipe-form (:locale request) (:user-email request) (:admin? request) nil)))
 
 (defn- recipe-params
-  "The recipe form fields exactly as submitted — raw strings, no trimming,
-  no defaults. Coercion and validation are `recipe/conform`'s job; keeping
+  "The recipe form fields exactly as submitted: raw strings, no defaults. Coercion and validation are `recipe/conform`'s job; keeping
   the raw map intact is what lets an invalid submission re-render the form
   with precisely what the user typed."
   [request]
@@ -321,7 +320,7 @@
    :steps (get-in request [:params :steps])})
 
 (defn- invalid-form
-  "422 re-render of the recipe form: field errors + the submitted values.
+  "Re-render the recipe form at 422 with field errors + submitted values.
   The dispatcher morphs this over the live form (typed input and focus
   survive — dispatcher.js's 4xx-with-HTML rule); without JavaScript it is
   the same page as a full response. The 422 keeps the contract honest for
@@ -382,6 +381,19 @@
                    :recipe/ingredients ingredients
                    :recipe/steps steps})]
         (if ok? (response/redirect (str "/recipes/" id)) (not-found request))))))
+
+(defn recipe-preview
+  "POST /recipes/new/preview and /recipes/:id/preview — the preview pane. Renders the shared recipe views against a d/with speculative db;
+  transacts nothing. Always 200 — a preview is not a mutation attempt, and
+  until the input conforms the pane simply shows its waiting state.
+  no-store: every keystroke is a new hypothetical."
+  [request]
+  (let [id (path-uuid request)
+        {:keys [values errors]} (recipe/conform (recipe-params request))
+        pulled (when-not errors
+                 (recipe/preview (d/db (db/get-connection)) (:user-eid request) id values))]
+    (-> (html (views/recipe-preview-pane (:locale request) pulled))
+        (assoc-in [:headers "Cache-Control"] "no-store"))))
 
 (defn recipe-fork
   "POST /recipes/:id/fork — fork any recipe into one owned by the current user."

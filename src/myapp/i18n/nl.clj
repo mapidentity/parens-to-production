@@ -71,6 +71,9 @@
    :recipe/forked-from "Geforkt van"
    :recipe/original "Origineel recept"
    :recipe/no-recipes "Nog geen recepten."
+   :recipe/preview-title "Voorvertoning"
+   :recipe/preview-waiting
+   "De voorvertoning verschijnt zodra het recept een titel en porties heeft."
    :recipe/title-label "Titel"
    :recipe/description-label "Omschrijving (Markdown ondersteund)"
    :recipe/servings-label "Porties"

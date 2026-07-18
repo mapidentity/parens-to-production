@@ -463,6 +463,22 @@
          (recipe-card locale r))]
       [:p.text-text-secondary (t locale :recipe/no-recipes)])))
 
+(defn- recipe-body
+  "The recipe's content: markdown description, ingredients, steps. Shared verbatim between the detail page and the live-preview
+  pane: the preview is not a reimplementation of this view, it IS this
+  view, fed a database value that was never transacted."
+  [locale recipe]
+  (list
+    (when-not (str/blank? (:recipe/description recipe))
+      [:div.legal-content.mt-4 (h/raw (markdown/render (:recipe/description recipe)))])
+    [:div.mt-8.grid.gap-8.sm:grid-cols-2
+     [:section
+      [:h2.text-lg.font-semibold.text-text-primary.mb-2 (t locale :recipe/ingredients)]
+      (text-block (:recipe/ingredients recipe) false)]
+     [:section
+      [:h2.text-lg.font-semibold.text-text-primary.mb-2 (t locale :recipe/steps)]
+      (text-block (:recipe/steps recipe) true)]]))
+
 (defn recipe-detail
   "A single recipe at its current version, with actions, lineage, and forks."
   [locale user-email admin? recipe {:keys [owner? lineage forks version-count]}]
@@ -490,16 +506,7 @@
           (t locale :recipe/login-to-fork)])
        (when owner? (owner-actions-menu locale recipe))]]
 
-     (when-not (str/blank? (:recipe/description recipe))
-       [:div.legal-content.mt-4 (h/raw (markdown/render (:recipe/description recipe)))])
-
-     [:div.mt-8.grid.gap-8.sm:grid-cols-2
-      [:section
-       [:h2.text-lg.font-semibold.text-text-primary.mb-2 (t locale :recipe/ingredients)]
-       (text-block (:recipe/ingredients recipe) false)]
-      [:section
-       [:h2.text-lg.font-semibold.text-text-primary.mb-2 (t locale :recipe/steps)]
-       (text-block (:recipe/steps recipe) true)]]
+     (recipe-body locale recipe)
 
      [:div.mt-8.flex.flex-wrap.items-center.gap-4.text-sm.border-t.border-border.pt-4
       [:a.text-primary-vivid.hover:text-primary
@@ -519,6 +526,28 @@
             [:span.text-text-secondary.text-sm
              " " (t locale :recipe/by) " " (author-name (:recipe/user f))]])]
         [:p.text-sm.text-text-secondary (t locale :recipe/no-forks)])]]))
+
+(defn- recipe-preview-content
+  "Inside of the live-preview pane.
+  A compact header (title, servings) over the shared `recipe-body`, or the
+  waiting hint until the input conforms."
+  [locale recipe]
+  (if recipe
+    (list
+      [:h2.text-2xl.font-bold.text-text-primary (:recipe/title recipe)]
+      [:p.mt-1.text-sm.text-text-secondary
+       (t locale :recipe/servings) " " (:recipe/servings recipe)]
+      (recipe-body locale recipe))
+    [:p.text-sm.text-text-secondary (t locale :recipe/preview-waiting)]))
+
+(defn recipe-preview-pane
+  "The fragment the preview endpoint returns.
+  The root id must stay `recipe-preview`: it is the stable morph target — the dispatcher picks
+  this element out of the response and morphs its children over the live
+  pane's, leaving the pane's own marker attributes untouched."
+  [locale recipe]
+  [:div#recipe-preview
+   (recipe-preview-content locale recipe)])
 
 (defn- field-error
   "Inline error line under a form field, or nil.
@@ -562,70 +591,84 @@
        user-email
        active
        {:admin? admin?}
-       [:div.max-w-2xl.mx-auto
-        [:h1.text-2xl.font-bold.text-text-primary.mb-6
-         (if editing? (t locale :recipe/edit) (t locale :recipe/new))]
-        [:form.space-y-5
-         {:method "POST"
-          :action action}
-         [:div
-          [:label.block.text-sm.font-medium.text-text-primary {:for "title"}
-           (t locale :recipe/title-label)]
-          [:input#title.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
-           (merge
-             {:type "text"
-              :name "title"
-              :required true
-              :value (fv :title :recipe/title)}
-             (field-aria :title (:title errors)))]
-          (field-error locale :title (:title errors))]
-         [:div
-          [:label.block.text-sm.font-medium.text-text-primary {:for "servings"}
-           (t locale :recipe/servings-label)]
-          [:input#servings.mt-1.block.w-32.px-3.py-2.border.border-border.rounded-md.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
-           (merge
-             {:type "number"
-              :name "servings"
-              :min "1"
-              :value (if submitted (:servings submitted) (or (:recipe/servings recipe) 1))}
-             (field-aria :servings (:servings errors)))]
-          (field-error locale :servings (:servings errors))]
-         [:div
-          [:label.block.text-sm.font-medium.text-text-primary {:for "description"}
-           (t locale :recipe/description-label)]
-          [:textarea#description.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
-           (merge
-             {:name "description"
-              :rows "3"}
-             (field-aria :description (:description errors)))
-           (fv :description :recipe/description)]
-          (field-error locale :description (:description errors))]
-         [:div
-          [:label.block.text-sm.font-medium.text-text-primary {:for "ingredients"}
-           (t locale :recipe/ingredients-label)]
-          [:textarea#ingredients.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.font-mono.text-sm.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
-           (merge
-             {:name "ingredients"
-              :rows "8"}
-             (field-aria :ingredients (:ingredients errors)))
-           (fv :ingredients :recipe/ingredients)]
-          (field-error locale :ingredients (:ingredients errors))]
-         [:div
-          [:label.block.text-sm.font-medium.text-text-primary {:for "steps"}
-           (t locale :recipe/steps-label)]
-          [:textarea#steps.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.font-mono.text-sm.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
-           (merge
-             {:name "steps"
-              :rows "8"}
-             (field-aria :steps (:steps errors)))
-           (fv :steps :recipe/steps)]
-          (field-error locale :steps (:steps errors))]
-         [:div.flex.items-center.gap-3
-          [:button.py-2.px-4.rounded-md.text-sm.font-semibold.text-white.bg-primary.hover:bg-primary-vivid
-           {:type "submit"} (if editing? (t locale :recipe/save) (t locale :recipe/create))]
-          (when editing?
-            [:a.text-sm.text-text-secondary.hover:text-text-primary
-             {:href (str "/recipes/" (:recipe/id recipe))} "Cancel"])]]]))))
+       [:div.max-w-6xl.mx-auto.lg:grid.lg:grid-cols-2.lg:gap-10
+        [:div
+         [:h1.text-2xl.font-bold.text-text-primary.mb-6
+          (if editing? (t locale :recipe/edit) (t locale :recipe/new))]
+         [:form#recipe-form.space-y-5
+          {:method "POST"
+           :action action}
+          [:div
+           [:label.block.text-sm.font-medium.text-text-primary {:for "title"}
+            (t locale :recipe/title-label)]
+           [:input#title.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
+            (merge
+              {:type "text"
+               :name "title"
+               :required true
+               :value (fv :title :recipe/title)}
+              (field-aria :title (:title errors)))]
+           (field-error locale :title (:title errors))]
+          [:div
+           [:label.block.text-sm.font-medium.text-text-primary {:for "servings"}
+            (t locale :recipe/servings-label)]
+           [:input#servings.mt-1.block.w-32.px-3.py-2.border.border-border.rounded-md.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
+            (merge
+              {:type "number"
+               :name "servings"
+               :min "1"
+               :value (if submitted (:servings submitted) (or (:recipe/servings recipe) 1))}
+              (field-aria :servings (:servings errors)))]
+           (field-error locale :servings (:servings errors))]
+          [:div
+           [:label.block.text-sm.font-medium.text-text-primary {:for "description"}
+            (t locale :recipe/description-label)]
+           [:textarea#description.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
+            (merge
+              {:name "description"
+               :rows "3"}
+              (field-aria :description (:description errors)))
+            (fv :description :recipe/description)]
+           (field-error locale :description (:description errors))]
+          [:div
+           [:label.block.text-sm.font-medium.text-text-primary {:for "ingredients"}
+            (t locale :recipe/ingredients-label)]
+           [:textarea#ingredients.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.font-mono.text-sm.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
+            (merge
+              {:name "ingredients"
+               :rows "8"}
+              (field-aria :ingredients (:ingredients errors)))
+            (fv :ingredients :recipe/ingredients)]
+           (field-error locale :ingredients (:ingredients errors))]
+          [:div
+           [:label.block.text-sm.font-medium.text-text-primary {:for "steps"}
+            (t locale :recipe/steps-label)]
+           [:textarea#steps.mt-1.block.w-full.px-3.py-2.border.border-border.rounded-md.font-mono.text-sm.focus:outline-none.focus:ring-2.focus:ring-primary-vivid
+            (merge
+              {:name "steps"
+               :rows "8"}
+              (field-aria :steps (:steps errors)))
+            (fv :steps :recipe/steps)]
+           (field-error locale :steps (:steps errors))]
+          [:div.flex.items-center.gap-3
+           [:button.py-2.px-4.rounded-md.text-sm.font-semibold.text-white.bg-primary.hover:bg-primary-vivid
+            {:type "submit"} (if editing? (t locale :recipe/save) (t locale :recipe/create))]
+           (when editing?
+             [:a.text-sm.text-text-secondary.hover:text-text-primary
+              {:href (str "/recipes/" (:recipe/id recipe))} "Cancel"])]]]
+        ;; The live-preview column. The aside is the server-preview island's
+        ;; marker: on debounced input it POSTs the form's fields to the
+        ;; preview endpoint and morphs the response into itself. Initial
+        ;; content is server-rendered — an edit page shows the stored recipe
+        ;; before a single keystroke, with no JavaScript involved.
+        [:div.mt-10.lg:mt-0
+         [:h2.text-xs.font-semibold.uppercase.tracking-wide.text-text-secondary.mb-3
+          (t locale :recipe/preview-title)]
+         [:aside#recipe-preview.rounded-lg.border.border-border.bg-surface.p-6
+          {:data-preview-action
+           (if editing? (str "/recipes/" (:recipe/id recipe) "/preview") "/recipes/new/preview")
+           :data-preview-from "#recipe-form input, #recipe-form textarea"}
+          (recipe-preview-content locale recipe)]]]))))
 
 (defn recipe-history
   "Version timeline for a recipe (newest first), built from Datomic history."
