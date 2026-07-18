@@ -79,6 +79,19 @@
          :main-opts ["-m" "cognitect.test-runner"]
          :exec-fn cognitect.test-runner.api/test}
 
+  ;; Measurement for the server render path (ch.32): criterium benchmarks +
+  ;; async-profiler flamegraphs. Compose with :dev for the seeded in-memory
+  ;; database:
+  ;;   clojure -M:dev:measure -m bench          benchmark the hot renders
+  ;;   clojure -M:dev:measure -m bench flame    flamegraph -> /tmp/clj-async-profiler/results/
+  :measure {:extra-deps {criterium/criterium {:mvn/version "0.4.6"}
+                         com.clojure-goes-fast/clj-async-profiler {:mvn/version "1.6.2"}}
+            ;; async-profiler attaches to its own JVM and needs accurate
+            ;; line-level frames from the JIT.
+            :jvm-opts ["-Djdk.attach.allowAttachSelf"
+                       "-XX:+UnlockDiagnosticVMOptions"
+                       "-XX:+DebugNonSafepoints"]}
+
   :coverage {:extra-paths ["test"]
              :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}
                           com.icegreen/greenmail {:mvn/version "2.1.8"}}

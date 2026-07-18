@@ -51,6 +51,7 @@
 - [The Production Asset Pipeline: Content Hashing, SRI, Import Maps, and CSP](29-asset-pipeline.md)
 - [Legible to Machines: Open Graph, schema.org, and a Sitemap from Datomic](30-machine-legibility.md)
 - [The Database Already Knows: Conditional GET from basis-t](31-conditional-get.md)
+- [The Server Path, Measured: Criterium and a Flamegraph](32-server-path-measured.md)
 - [100% Lighthouse Scores: Automated Performance Audits in CI](33-lighthouse.md)
 - [CI/CD for a Clojure SaaS: Forgejo Actions, Podman, and Automated Deployment](34-ci-cd.md)
 
