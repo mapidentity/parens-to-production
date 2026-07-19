@@ -370,6 +370,8 @@
     ;; Declared last so the static mutation paths above win over `:id`.
     ["/recipes/:id" {:get #'handler/recipe-show}]
     ["/recipes/:id/history" {:get #'handler/recipe-history}]
+    ;; Live viewer presence (SSE) — public, stateful, real-time.
+    ["/recipes/:id/viewers" {:get #'handler/viewers-stream}]
     ["/recipes/:id/at/:t" {:get #'handler/recipe-version}]
     ["/recipes/:id/diff" {:get #'handler/recipe-diff}]]
    ["/dev/ws"

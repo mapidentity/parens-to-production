@@ -19,6 +19,7 @@
     [myapp.recipe.core :as recipe]
     [myapp.recipe.proposal :as proposal]
     [myapp.time :as time]
+    [myapp.web.presence :as presence]
     [myapp.web.ratelimit :as ratelimit]
     [myapp.web.security :as security]
     [myapp.web.views :as views]
@@ -682,6 +683,14 @@
       (and move-id (#{:up :down} dir))
       (recipe/move! conn user-eid move-id dir))
     (response/redirect "/dashboard")))
+
+(defn viewers-stream
+  "GET /recipes/:id/viewers — the live viewer-count SSE stream (public).
+  Held open by http-kit; each connect/disconnect rebroadcasts the count."
+  [request]
+  (if-let [id (path-uuid request)]
+    (presence/stream id request)
+    (not-found request)))
 
 (defn recipe-history
   "GET /recipes/:id/history — the version timeline (public)."

@@ -76,5 +76,6 @@
 # Collaboration
 
 - [Proposing Changes Back: The Three-Way Merge](44-three-way-merge.md)
+- [N People Are Looking: Real-Time Presence Without Leaving SSR](45-live-presence.md)
 
 [Afterword: What You Built, and Where It Goes](afterword.md)

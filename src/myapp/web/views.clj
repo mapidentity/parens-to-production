@@ -132,6 +132,7 @@
       (script-tag "js/server-preview.js" {:type "module"})
       (script-tag "js/admin-stats.js" {:type "module"})
       (script-tag "js/tagline.js" {:type "module"})
+      (script-tag "js/viewers.js" {:type "module"})
       ;; Speculation Rules: prerender same-origin GET pages on hover, so a click
       ;; activates an already-built page. Honoured only where supported; an inert
       ;; <script type=speculationrules> elsewhere. CSP allows it by content hash.
@@ -606,7 +607,12 @@
        [:h1.text-3xl.font-bold.text-text-primary (:recipe/title recipe)]
        [:p.mt-1.text-text-secondary
         (t locale :recipe/by) " " [:span.font-medium (author-name (:recipe/user recipe))]
-        " · " (t locale :recipe/servings) " " (:recipe/servings recipe)]]
+        " · " (t locale :recipe/servings) " " (:recipe/servings recipe)]
+       ;; Live viewer count — filled in by the viewers island over SSE.
+       ;; Empty (and hidden) until JS connects: pure enhancement.
+       [:p.mt-1.text-sm.text-primary-vivid
+        {:data-viewers-url (str "/recipes/" (:recipe/id recipe) "/viewers")
+         :hidden true}]]
       [:div.flex.flex-col.items-end.gap-2
        (if user-email
          [:form
