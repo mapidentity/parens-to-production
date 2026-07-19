@@ -22,12 +22,24 @@
   [recipe-id]
   (str "data: " (json/write-str {:count (count (get @viewers recipe-id))}) "\n\n"))
 
+(defn- drop-channels
+  "Atomically remove `chans` from `recipe-id`'s set, cleaning an emptied entry.
+  One swap, not two: removing the last channel and dropping the now-empty key
+  must be a single transition, or a viewer that arrives in the gap between a
+  separate remove-then-dissoc would be silently discarded with the key."
+  [recipe-id chans]
+  (swap! viewers
+    (fn [m]
+      (let [remaining (reduce disj (get m recipe-id) chans)]
+        (if (empty? remaining)
+          (dissoc m recipe-id)
+          (assoc m
+            recipe-id remaining))))))
+
 (defn- prune!
   "Drop `dead` channels from `recipe-id`'s set, cleaning an emptied entry."
   [recipe-id dead]
-  (when (seq dead)
-    (swap! viewers update recipe-id #(reduce disj % dead))
-    (when (empty? (get @viewers recipe-id)) (swap! viewers dissoc recipe-id))))
+  (when (seq dead) (drop-channels recipe-id dead)))
 
 (defn- broadcast!
   "Push the current count to every open channel watching `recipe-id`.
@@ -65,8 +77,7 @@
                 (swap! viewers update recipe-id (fnil conj #{}) ch)
                 (broadcast! recipe-id))
      :on-close (fn [ch _status]
-                 (swap! viewers update recipe-id disj ch)
-                 (when (empty? (get @viewers recipe-id)) (swap! viewers dissoc recipe-id))
+                 (drop-channels recipe-id [ch])
                  (broadcast! recipe-id))}))
 
 (defn count-for

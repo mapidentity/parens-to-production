@@ -618,7 +618,7 @@
                          (db/get-connection)
                          (:user-eid request)
                          pid
-                         (resolutions-from request merge)
+                         (resolutions-from request mrg)
                          expected)
                 re-render (fn [notice]
                             (let [{:keys [mrg]} (proposal-parties request prop)]

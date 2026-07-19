@@ -61,3 +61,34 @@
         (testing "the last departure cleans the registry entry"
           (is (zero? (presence/count-for rid)))
           (is (not (contains? @presence/viewers rid))))))))
+
+(deftest broadcast-prunes-a-dead-channel
+  ;; http-kit reports a closed-but-not-yet-noticed connection by returning
+  ;; false from send!. Such a channel must be pruned on the next broadcast,
+  ;; so a lagging disconnect self-heals rather than inflating the count.
+  (reset! presence/viewers {})
+  (let [rid (random-uuid)
+        open-cbs (atom [])
+        ;; send! returns false only for channels marked dead.
+        dead (atom #{})]
+    (with-redefs [hk/as-channel (fn [_req {:keys [on-open]}]
+                                  (swap! open-cbs conj on-open)
+                                  {:mock-channel true})
+                  hk/send! (fn [ch _data _close?] (not (contains? @dead ch)))]
+      (let [chA (Object.)
+            chB (Object.)
+            chC (Object.)
+            connect (fn [ch]
+                      (presence/stream rid {})
+                      ((last @open-cbs) ch))]
+        (connect chA)
+        (connect chB)
+        (is (= 2 (presence/count-for rid)) "A and B are registered")
+        ;; A's socket has quietly closed; http-kit will now report send! false.
+        (swap! dead conj chA)
+        ;; C connecting triggers a broadcast, which discovers and prunes A.
+        (connect chC)
+        (testing "the dead channel is pruned on the next broadcast"
+          (is (= 2 (presence/count-for rid)) "B and C remain; A is dropped")
+          (is (not (contains? (get @presence/viewers rid) chA)) "A is gone from the set")
+          (is (contains? (get @presence/viewers rid) chC) "C is present"))))))

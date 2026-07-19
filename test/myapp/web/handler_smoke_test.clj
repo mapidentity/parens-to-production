@@ -8,6 +8,7 @@
     [myapp.auth.email]
     [myapp.db.core :as db]
     [myapp.recipe.core :as recipe]
+    [myapp.recipe.proposal :as proposal]
     [myapp.test-helpers :as h]
     [myapp.time :as time]
     [myapp.web.handler :as handler]
@@ -499,3 +500,120 @@
                 (:recipe/ingredients (recipe/recipe-by-id (d/db h/*conn*) orig))
                 "pecorino")
               "merged into the original")))))))
+
+(defn- conflicting-proposal!
+  "Diverge Alice's original and Bob's fork on the SAME field, then propose.
+  Returns {:alice :orig :pid} for the target-owner accept path."
+  []
+  (let [alice (mk-user! "alice@x.lan")
+        bob (mk-user! "bob@x.lan")
+        orig (recipe/create!
+               h/*conn*
+               alice
+               {:title "Carbonara"
+                :servings 2
+                :ingredients "pasta\neggs"
+                :steps "boil\nmix"})
+        fork (recipe/fork! h/*conn* bob orig)
+        _ (recipe/update! h/*conn* bob fork {:recipe/ingredients "pasta\neggs\npecorino"})
+        _ (recipe/update! h/*conn* alice orig {:recipe/ingredients "pasta\neggs\nguanciale"})
+        propose (myapp.web.handler/proposal-propose
+                  (assoc (h/auth-request :post (str "/recipes/" fork "/propose") "bob@x.lan")
+                    :user-eid bob
+                    :path-params {:id (str fork)}))]
+    {:alice alice
+     :orig orig
+     :pid (UUID/fromString (last (str/split (get-in propose [:headers "Location"]) #"/")))}))
+
+(defn- token-for
+  "The stringified optimistic-concurrency token for a recipe's current version."
+  [id]
+  (str (inst-ms (:recipe/updated-at (recipe/recipe-by-id (d/db h/*conn*) id)))))
+
+(deftest proposal-conflict-accept-through-handlers
+  ;; The regression guard for the `merge`/`mrg` typo that passed clojure.core's
+  ;; `merge` where the local merge result belonged: `resolutions-from` then read
+  ;; the ours/theirs radios off a function, always got {}, and every conflicting
+  ;; proposal answered 409 unresolved instead of merging the chosen side.
+  ;; (An unresolved 409 is unreachable from the browser — the radios render
+  ;; `checked`, so a choice is always posted — hence the reachable branches are
+  ;; the stale-token 409 and the merge itself, both exercised here.)
+  (let [{:keys [alice orig pid]} (conflicting-proposal!)
+        accept (fn [params]
+                 (myapp.web.handler/proposal-accept
+                   (assoc (h/auth-request :post (str "/proposals/" pid "/accept") "alice@x.lan")
+                     :locale :en
+                     :user-eid alice
+                     :path-params {:id (str pid)}
+                     :params params)))]
+    (testing "resolving 'theirs' but with a stale target token → 409 stale notice"
+      (let [stale (token-for orig)]
+        (recipe/update! h/*conn* alice orig {:recipe/steps "boil\nmix\nserve"})
+        (let [resp (accept
+                     {:expected-version stale
+                      :resolve-ingredients "theirs"})]
+          (is (= 409 (:status resp)))
+          (is (str/includes? (:body resp) "This recipe changed while you were reviewing")))))
+    (testing "resolving 'theirs' with the fresh token merges the chosen side → 302"
+      (let [resp (accept
+                   {:expected-version (token-for orig)
+                    :resolve-ingredients "theirs"})]
+        (is (= 302 (:status resp)))
+        (is
+          (str/includes?
+            (:recipe/ingredients (recipe/recipe-by-id (d/db h/*conn*) orig))
+            "pecorino")
+          "the chosen (theirs) value won — the radios ARE read")))))
+
+(deftest proposal-decline-through-handlers
+  (let [alice (mk-user! "alice@x.lan")
+        bob (mk-user! "bob@x.lan")
+        orig (recipe/create!
+               h/*conn*
+               alice
+               {:title "Stew"
+                :servings 2
+                :ingredients "beef"
+                :steps "simmer"})
+        fork (recipe/fork! h/*conn* bob orig)
+        _ (recipe/update! h/*conn* bob fork {:recipe/ingredients "beef\ncarrot"})
+        pid (proposal/create-proposal! h/*conn* bob fork)
+        decline (fn [id]
+                  (myapp.web.handler/proposal-decline
+                    (assoc (h/auth-request :post (str "/proposals/" id "/decline") "alice@x.lan")
+                      :user-eid alice
+                      :path-params {:id (str id)})))]
+    (testing "a missing proposal → 404" (is (= 404 (:status (decline (UUID/randomUUID))))))
+    (testing "the target owner declines → 302 to the target, proposal closed"
+      (let [resp (decline pid)]
+        (is (= 302 (:status resp)))
+        (is (str/includes? (get-in resp [:headers "Location"]) (str orig)))
+        (is (empty? (proposal/open-proposals-targeting (d/db h/*conn*) orig)))))))
+
+(deftest proposal-show-visibility
+  (let [{:keys [orig pid]} (conflicting-proposal!)
+        bob (d/q '[:find ?e . :in $ ?m :where [?e :user/email ?m]] (d/db h/*conn*) "bob@x.lan")
+        carol (mk-user! "carol@x.lan")
+        show (fn [email eid id]
+               (myapp.web.handler/proposal-show
+                 (assoc (h/auth-request :get (str "/proposals/" id) email)
+                   :locale :en
+                   :user-eid eid
+                   :path-params {:id (str id)})))]
+    (testing "a non-party sees a 404, not the merge"
+      (is (= 404 (:status (show "carol@x.lan" carol pid)))))
+    (testing "the source owner sees the preview but no accept form"
+      (let [resp (show "bob@x.lan" bob pid)]
+        (is (= 200 (:status resp)))
+        (is
+          (str/includes? (:body resp) "Waiting for the recipe")
+          "the source owner is told to await review — no accept form")))
+    (testing "a missing proposal → 404"
+      (is (= 404 (:status (show "carol@x.lan" carol (UUID/randomUUID))))))
+    (testing "a closed proposal redirects to the (merged) target"
+      (let [alice
+            (d/q '[:find ?e . :in $ ?m :where [?e :user/email ?m]] (d/db h/*conn*) "alice@x.lan")]
+        (proposal/decline! h/*conn* alice pid)
+        (let [resp (show "alice@x.lan" alice pid)]
+          (is (= 302 (:status resp)))
+          (is (str/includes? (get-in resp [:headers "Location"]) (str orig))))))))

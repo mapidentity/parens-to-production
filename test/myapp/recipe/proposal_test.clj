@@ -132,6 +132,23 @@
           (is (true? (prop/accept! h/*conn* alice pid {} fresh)))
           (is (= 3 (:recipe/servings (recipe/recipe-by-id (d/db h/*conn*) orig)))))))))
 
+(deftest closed-proposal-is-idempotent
+  ;; The lifecycle guard on :open protects the double-submit path — a second
+  ;; accept (or a decline after accept) must be a no-op, never a second merge.
+  (let [{:keys [alice bob orig fork]} (setup-fork!)]
+    (recipe/update! h/*conn* bob fork {:recipe/ingredients "pasta\neggs\npecorino"})
+    (let [pid (prop/create-proposal! h/*conn* bob fork)
+          fresh (fn [] (:recipe/updated-at (recipe/recipe-by-id (d/db h/*conn*) orig)))]
+      (is (true? (prop/accept! h/*conn* alice pid {} (fresh))) "the first accept merges")
+      (let [merged (:recipe/ingredients (recipe/recipe-by-id (d/db h/*conn*) orig))]
+        (testing "accepting an already-accepted proposal is a no-op (nil)"
+          (is (nil? (prop/accept! h/*conn* alice pid {} (fresh))))
+          (is
+            (= merged (:recipe/ingredients (recipe/recipe-by-id (d/db h/*conn*) orig)))
+            "no second merge landed"))
+        (testing "declining a closed proposal is refused (nil)"
+          (is (nil? (prop/decline! h/*conn* alice pid))))))))
+
 (deftest proposal-authz
   (let [{:keys [alice bob orig fork]} (setup-fork!)
         carol (mk-user! "carol@x.lan")]
