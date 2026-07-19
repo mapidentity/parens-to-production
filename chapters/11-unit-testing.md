@@ -1,8 +1,8 @@
 # Testing a Clojure App: Fixtures, Helpers, and Coverage
 
-You have a web app. It loads config, connects to Datomic, defines routes, renders pages. It works when you try it in the browser. But "works when I try it" is not a testing strategy. The moment you refactor a handler or change a route, you need something that tells you -- in seconds -- whether you broke anything.
+You have a web app. It loads config, connects to Datomic, defines routes, renders pages. It works when you try it in the browser. But "works when I try it" is not a testing strategy. The moment you refactor a handler or change a route, you need something that tells you, in seconds, whether you broke anything.
 
-This chapter covers the testing infrastructure we put in place early: a test helpers module with fixtures for fresh in-memory databases and deterministic config, a set of initial tests for configuration and routing, a coverage tool with a minimum threshold, and the two `deps.edn` aliases that run it all. None of this is exotic. That is the point. Setting up boring, reliable test infrastructure early pays dividends for every feature that follows.
+This chapter covers the testing infrastructure we put in place early: a test helpers module with fixtures for fresh in-memory databases and deterministic config, a set of initial tests for configuration and routing, a coverage tool with a minimum threshold, and the two `deps.edn` aliases that run it all. None of this is exotic. That is the point. Setting up boring, reliable test infrastructure early saves work on every feature that follows.
 
 ## The testing philosophy: fresh state per test
 
@@ -32,7 +32,7 @@ This `ns` form is the slice this chapter builds on; the file grows two requires 
 
 ### The database fixture
 
-The centerpiece is `with-test-db`, which creates a throwaway in-memory Datomic database per test, binds `*conn*`, and stubs `db/get-connection` so application code transparently hits the test DB. We built it in [the Datomic chapter](08-datomic.md#isolated-test-databases) -- a unique `datomic:mem://` URI per test (via `System/nanoTime`, so parallel runs never collide), the full schema transacted, and the database deleted when the test function returns -- so we will not reprint it here. This chapter is about the infrastructure that surrounds it: deterministic config and a request builder, plus -- for apps that grow a second database -- a parallel fixture you can copy when you need it.
+The centerpiece is `with-test-db`, which creates a throwaway in-memory Datomic database per test, binds `*conn*`, and stubs `db/get-connection` so application code transparently hits the test DB. We built it in [the Datomic chapter](08-datomic.md#isolated-test-databases): a unique `datomic:mem://` URI per test (via `System/nanoTime`, so parallel runs never collide), the full schema transacted, and the database deleted when the test function returns. So we will not reprint it here. This chapter is about the infrastructure that surrounds it: deterministic config and a request builder, plus, for apps that grow a second database, a parallel fixture you can copy when you need it.
 
 ### Deterministic config
 
@@ -131,7 +131,7 @@ When an app grows a second Datomic database, the same fixture pattern scales to 
       (d/delete-database uri))))
 ```
 
-It is the same shape as `with-test-db`, pointed at a second URI and a second pair of stubs. That is the whole point: one fixture pattern, however many databases your app keeps.
+It is the same shape as `with-test-db`, pointed at a second URI and a second pair of stubs. That is the idea: one fixture pattern, however many databases your app keeps.
 
 ## Example test: configuration
 
@@ -294,7 +294,7 @@ One more test verifies security-relevant behavior -- that authenticated response
       "Unauthenticated responses should not have Cache-Control")))
 ```
 
-This tests a middleware function in isolation by wrapping a dummy handler. It verifies both the positive case (authenticated requests get the header) and the negative case (unauthenticated requests do not). Testing middleware this way -- by composing it with a trivial handler -- is clean and fast.
+This tests a middleware function in isolation by wrapping a dummy handler. It verifies both the positive case (authenticated requests get the header) and the negative case (unauthenticated requests do not). Testing middleware this way, by composing it with a trivial handler, is clean and fast.
 
 ## Coverage with Cloverage
 
@@ -349,16 +349,16 @@ clojure -M:coverage  # run under Cloverage, enforce the coverage threshold
 
 ## In-file tests: co-locating quick tests with source
 
-Everything above lives in `test/`. That is the right home for most tests -- the database fixtures, the route table, the middleware checks -- and it is where this project keeps its suite. But there is a second place a test can live: directly underneath the function it tests, in the source file itself. The two approaches are complements, not substitutes, and the only real question is which job goes where; the co-located form is worth knowing for the specific cases below, even where you reach for it sparingly.
+Everything above lives in `test/`. That is the right home for most tests (the database fixtures, the route table, the middleware checks), and it is where this project keeps its suite. But there is a second place a test can live: directly underneath the function it tests, in the source file itself. The two approaches are complements, not substitutes, and the only real question is which job goes where. The co-located form is worth knowing for the specific cases below, even where you reach for it sparingly.
 
 Like the routes section, this one teaches the technique through a self-contained example. The companion repo keeps its whole suite under `test/`: the `tests` macro, its `myapp.inline-tests` home, and the `parse-port` example below exist only on this page, not in the repo's `src/`. What the repo does carry is the build-side binding that strips in-file tests from the artifact, shown in [Stripping for production](#stripping-for-production) below.
 
-The division of labor is worth stating plainly:
+The division of labor is simple:
 
 - **In-file (co-located) tests** suit the light cases: example or doc-style tests, short assertions, and, above all, assertions on **private** functions. Inside the function's own namespace you call a `defn-` directly. No exposing it, no `(var myapp.ns/private-fn)` indirection. The test sits next to the code and reads as living documentation.
 - **Separate `test/` files** -- the approach built earlier in this chapter -- carry the heavy lifting: larger standalone tests, anything with substantial setup, and integration tests like the DB-fixture style above. Those do not belong in-file.
 
-The signal is the dependency. The only test-only dependency a light in-file test needs is `clojure.test` itself (`deftest`/`is`/`testing`), plus maybe a small helper or data generator. The moment a test reaches for something heavy -- a JDBC driver, testcontainers, anything not on the production classpath -- that is the cue to move it to a `test/` file. The macro below would technically strip it, but a test that needs that machinery is not an example anymore.
+The signal is the dependency. The only test-only dependency a light in-file test needs is `clojure.test` itself (`deftest`/`is`/`testing`), plus maybe a small helper or data generator. The moment a test reaches for something heavy (a JDBC driver, testcontainers, anything not on the production classpath), that is the cue to move it to a `test/` file. The macro below would technically strip it, but a test that needs that machinery is not an example anymore.
 
 ### The problem: test dependencies in production code
 
@@ -385,9 +385,9 @@ The fix leans on a built-in: `clojure.test/*load-tests*` is a dynamic var, defau
     `(comment ~@body)))
 ```
 
-The `if` runs at *macroexpansion* (compile) time. With `*load-tests*` true, `(tests (require '[clojure.test ...]) (deftest ...))` expands to `(do (require ...) (deftest ...))`, and it loads and runs exactly as written. That works where failure mode 2 failed because this `do` sits at the top level, and the compiler treats a top-level `do` specially: rather than compiling the whole form and then running it, it compiles and evaluates each child form in turn, as if each were itself top level. By the time the compiler reaches the `(deftest ...)` form, the `(require ...)` before it has already run, so `deftest` and `is` resolve. Move the same two forms inside a function body and compilation fails; that is exactly failure mode 2.
+The `if` runs at *macroexpansion* (compile) time. With `*load-tests*` true, `(tests (require '[clojure.test ...]) (deftest ...))` expands to `(do (require ...) (deftest ...))`, and it loads and runs as written. That works where failure mode 2 failed because this `do` sits at the top level, and the compiler treats a top-level `do` specially: rather than compiling the whole form and then running it, it compiles and evaluates each child form in turn, as if each were itself top level. By the time the compiler reaches the `(deftest ...)` form, the `(require ...)` before it has already run, so `deftest` and `is` resolve. Move the same two forms inside a function body and compilation fails; that is exactly failure mode 2.
 
-With `*load-tests*` false, the same form expands to `(clojure.core/comment (require ...) (deftest ...))`, and `comment` evaluates to `nil` and never evaluates its body. Even a `(require '[does.not.exist])` inside it is inert. So when `*load-tests*` is false at compile time, the entire block -- test-only requires and all -- is gone from the compiled output.
+With `*load-tests*` false, the same form expands to `(clojure.core/comment (require ...) (deftest ...))`, and `comment` evaluates to `nil` and never evaluates its body. Even a `(require '[does.not.exist])` inside it is inert. So when `*load-tests*` is false at compile time, the entire block, test-only requires and all, is gone from the compiled output.
 
 To use it, refer the macro into the namespace and write the test under the function it covers:
 
@@ -413,11 +413,11 @@ To use it, refer the macro into the namespace and write the test under the funct
     (is (= 65535 (parse-port "70000")))))  ; clamped down
 ```
 
-`parse-port` is private, and the test calls it directly -- no var gymnastics -- documenting the clamping behavior right where a reader will look for it. The `myapp.inline-tests` require does put `clojure.test` itself on the production load path. That is the one test dependency the pattern accepts: it ships with Clojure, and the macro cannot read `*load-tests*` without it. Everything else -- the test bodies and any heavier test-only requires -- is what the macro strips.
+`parse-port` is private, and the test calls it directly, no var gymnastics, documenting the clamping behavior right where a reader will look for it. The `myapp.inline-tests` require does put `clojure.test` itself on the production load path. That is the one test dependency the pattern accepts: it ships with Clojure, and the macro cannot read `*load-tests*` without it. Everything else, the test bodies and any heavier test-only requires, is what the macro strips.
 
 ### Stripping for production
 
-In normal dev and test runs, `*load-tests*` stays `true`, so these blocks load and run as written. You only flip it false for the AOT build. The strict-compilation chapter's `compile-strict` carries exactly that entry in its `:bindings` map -- shipped as hygiene whether or not any in-file tests exist, so a stray `(tests …)` or `deftest` in a source namespace can never ride into the artifact:
+In normal dev and test runs, `*load-tests*` stays `true`, so these blocks load and run as written. You only flip it false for the AOT build. The strict-compilation chapter's `compile-strict` carries that entry in its `:bindings` map -- shipped as hygiene whether or not any in-file tests exist, so a stray `(tests …)` or `deftest` in a source namespace can never ride into the artifact:
 
 ```clojure
 ;; the :bindings map inside compile-strict's b/compile-clj call
@@ -471,6 +471,6 @@ That diagram is the running system; the checklist is what it guarantees -- and e
 - [x] A running web server with data-driven routing and profile-based config
 - [x] A tight feedback loop: save a file, see the result in the browser
 - [x] A time-aware database with isolated, instant test instances
-- [x] Test infrastructure that every feature from here inherits for free
+- [x] Test infrastructure that every feature from here inherits automatically
 
 What is *not* here yet is the application above the domain: the recipe model exists and is tested, but nothing renders it -- no views, no styling, no authentication. That is the rest of the book. The next movement puts content on the screen -- internationalization, Tailwind, and the server-rendered Hiccup views that the live-reload loop above was built to make a pleasure to write.

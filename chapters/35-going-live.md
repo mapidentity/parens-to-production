@@ -2,7 +2,7 @@
 
 [The CI/CD chapter](34-ci-cd.md) ends with an `scp` and a `systemctl restart` -- against a host this book never built. That was not an oversight so much as a series of honest sentences pointing at a box that did not exist: [the Datomic chapter](08-datomic.md) named the transactor as "a piece of production infrastructure the dev loop cannot rehearse" and stopped there; ch.34 told you the systemd unit "owns restart-on-failure, logging, and the JVM flags" and never showed it; the `:prod` profile reads ten environment variables that no chapter ever inventoried; the pipeline ships static files to `/mnt/data/static` while every Caddyfile in the book roots at `/static`. Each debt was individually defensible. Together they meant the book's deploy chapter deployed to a promise.
 
-This chapter pays the debts. Everything it adds is committed under `ops/` -- two systemd units, the transactor config, the production Caddyfile, the environment template, the deploy script -- and the claims a repository checkout can prove were *run*, not described: at the end of this chapter, the application boots its real `:prod` profile against a real PostgreSQL-backed Datomic, is killed, boots again, and still has its data.
+This chapter pays the debts. Everything it adds is committed under `ops/` (two systemd units, the transactor config, the production Caddyfile, the environment template, the deploy script), and the claims a repository checkout can prove were *run*, not described: at the end of this chapter, the application boots its real `:prod` profile against a real PostgreSQL-backed Datomic, is killed, boots again, and still has its data.
 
 ## The environment, refused into existence
 
@@ -79,7 +79,7 @@ CREATE TABLE datomic_kvs
 );
 ```
 
-Four columns. Datomic uses a SQL database as a key-value shelf for immutable storage segments -- all the structure you have spent this whole book querying (indexes, history, basis-t) lives in those `bytea` blobs and in the peer, not in tables. This is worth internalizing for two operational reasons. It is why "which SQL database" barely matters (the storage protocol asks nothing interesting of it), and it is why backing up this application is *ordinary PostgreSQL backup* -- one table, plus Datomic's own `backup-db`. The mechanics get their own chapter -- [backed up, restored, and drilled](39-backup-restore.md) -- and the *what* is no longer mysterious.
+Four columns. Datomic uses a SQL database as a key-value shelf for immutable storage segments -- all the structure you have spent this whole book querying (indexes, history, basis-t) lives in those `bytea` blobs and in the peer, not in tables. This matters for two operational reasons. It is why "which SQL database" barely matters (the storage protocol asks nothing interesting of it), and it is why backing up this application is *ordinary PostgreSQL backup* -- one table, plus Datomic's own `backup-db`. The mechanics get their own chapter ([backed up, restored, and drilled](39-backup-restore.md)), and the *what* is no longer mysterious.
 
 Provisioning is three scripts that ship inside the Datomic Pro distribution (`bin/sql/postgres-db.sql`, `postgres-table.sql`, `postgres-user.sql`): create a `datomic` database, that table, and a `datomic` role. Change the role's stock password; it lands next to the URI in exactly two root-owned files. The transactor's own config is a dozen lines, trimmed from the distribution's sample and committed as `ops/transactor.properties`:
 
@@ -138,7 +138,7 @@ ProtectSystem=full
 WantedBy=multi-user.target
 ```
 
-Almost every line closes a loop opened elsewhere in the book. `After=myapp-transactor.service` exists for *first* boot only -- thereafter [the peer reconnects through blips on its own](08-datomic.md), and ordering is a courtesy, not a crutch. The `-Xmx1g` is not a superstition: the peer gives half its heap to the object cache that [the measurement chapter](32-server-path-measured.md) showed serving reads, so heap size *is* read-cache size, and raising it is a measured decision, not a reflex. `ExitOnOutOfMemoryError` pairs with `Restart=on-failure` to prefer a two-second death-and-rebirth over the far worse mode -- a heap-starved JVM that answers health checks and serves nothing well. And `TimeoutStopSec=15` is [the restart-window section's](34-ci-cd.md) drain hook, seen from the other side: the app asks for one second; systemd grants fifteen before escalating to SIGKILL; nobody ever waits on the default ninety. The transactor's unit (`ops/myapp-transactor.service`) is the same shape minus the ceremony -- `ExecStart=/opt/datomic/bin/transactor`, restart-on-failure, after PostgreSQL.
+Almost every line closes a loop opened elsewhere in the book. `After=myapp-transactor.service` exists for *first* boot only -- thereafter [the peer reconnects through blips on its own](08-datomic.md), and ordering is a courtesy. The `-Xmx1g` is not a superstition: the peer gives half its heap to the object cache that [the measurement chapter](32-server-path-measured.md) showed serving reads, so heap size *is* read-cache size, and raising it is a measured decision. `ExitOnOutOfMemoryError` pairs with `Restart=on-failure` to prefer a two-second death-and-rebirth over the far worse mode -- a heap-starved JVM that answers health checks and serves nothing well. And `TimeoutStopSec=15` is [the restart-window section's](34-ci-cd.md) drain hook, seen from the other side: the app asks for one second; systemd grants fifteen before escalating to SIGKILL; nobody ever waits on the default ninety. The transactor's unit (`ops/myapp-transactor.service`) is the same shape minus the ceremony -- `ExecStart=/opt/datomic/bin/transactor`, restart-on-failure, after PostgreSQL.
 
 Logging is the unit's third ownership, and it is two pieces. journald captures stdout -- retention, rotation, and the 3am interface are the supervisor's, which is the entire logging runbook this box needs: `journalctl -u myapp -S -15min` for the app, `-u myapp-transactor` for the writer. What goes *into* stdout is the app's half, and it is one committed file, `resources/logback.xml`:
 
@@ -158,7 +158,7 @@ Logging is the unit's third ownership, and it is two pieces. journald captures s
 </root>
 ```
 
-That file earns its place with a confession: it did not exist until this chapter's audit. `logback-classic` had been on the classpath since chapter 5, and logback without configuration defaults to *everything at DEBUG* -- so the jar would have shipped narrating the peer's index merges over the one `ERROR` line that mattered, the [500-boundary's logged stack trace](25-auth-email-flow.md). A log configuration is not polish; it is the difference between a signal and a haystack, and it is eleven lines.
+That file justifies itself with a confession: it did not exist until this chapter's audit. `logback-classic` had been on the classpath since chapter 5, and logback without configuration defaults to *everything at DEBUG* -- so the jar would have shipped narrating the peer's index merges over the one `ERROR` line that mattered, the [500-boundary's logged stack trace](25-auth-email-flow.md). A log configuration is not polish; it is the difference between a signal and a haystack, and it is eleven lines.
 
 ## The front door
 
@@ -188,12 +188,12 @@ The whole box, assembled once:
 1. PostgreSQL, stock install. Run the three `bin/sql/postgres-*.sql` scripts; change the role password.
 2. Unpack the Datomic Pro distribution (version matching `deps.edn`'s peer) at `/opt/datomic`; install `/etc/myapp/transactor.properties`; enable `myapp-transactor.service` and wait for its log line, which is literally `System started`.
 3. Write `/etc/myapp/env` from `ops/env.example`, `chmod 0600`.
-4. Verify the clock is disciplined: `timedatectl` should report `System clock synchronized: yes` and an active NTP service. It is a box dependency, not an app one, but [magic-link expiry and the rate-limit window](07-time-clock.md) lean on wall-clock accuracy directly -- a drifting clock is a correctness bug, not a cosmetic one.
+4. Verify the clock is disciplined: `timedatectl` should report `System clock synchronized: yes` and an active NTP service. It is a box dependency, not an app one, but [magic-link expiry and the rate-limit window](07-time-clock.md) lean on wall-clock accuracy directly -- a drifting clock is a correctness bug.
 5. Create `/opt/myapp`, install the unit, `systemctl enable --now myapp` -- first boot runs `create-database!` for both databases and transacts the schema.
 6. Caddy with `ops/Caddyfile`; DNS A record; ports 80/443 open. Certificates arrive on their own.
 7. Point [the pipeline's](34-ci-cd.md) deploy step at the box. From here on, every deploy is the script you have already read.
 
-Step 4 quietly settles a question the book has never had to answer on a durable database: migrations. Boot *always* transacts the schema, and [chapter 8 showed](08-datomic.md) that re-transacting installed attributes is an idempotent no-op -- so "the deploy carries the schema" is the entire migration mechanism, and its discipline is Datomic's own: schema grows by accretion, attributes are added and never repurposed. What is state on this box, for the day you back it up, is now a two-item list: the PostgreSQL data directory, and `/etc/myapp`. The jar and the static tree are pipeline output; the box holds nothing else worth keeping.
+Step 4 settles a question the book has never had to answer on a durable database: migrations. Boot *always* transacts the schema, and [chapter 8 showed](08-datomic.md) that re-transacting installed attributes is an idempotent no-op -- so "the deploy carries the schema" is the entire migration mechanism, and its discipline is Datomic's own: schema grows by accretion, attributes are added and never repurposed. What is state on this box, for the day you back it up, is now a two-item list: the PostgreSQL data directory, and `/etc/myapp`. The jar and the static tree are pipeline output; the box holds nothing else worth keeping.
 
 ## Proof, from a repo checkout
 
@@ -213,7 +213,7 @@ DATABASE_URI, SMTP_HOST env var(s) are required in :prod — refusing to start.
 
 ## Trade-offs & limitations, in one place
 
-- **It is one box.** Every process named here is a single point of failure, deliberately: this chapter removes the *mystery* from the deployment, not the SPOF. [The next chapter](36-minimal-downtime.md) removes the deploy window; removing the box itself is [the scaling audit's](41-beyond-one-box.md) subject, priced there rather than built.
+- **It is one box.** Every process named here is a single point of failure by design: this chapter removes the deployment's *mystery* while leaving the SPOF. [The next chapter](36-minimal-downtime.md) removes the deploy window; removing the box itself is [the scaling audit's](41-beyond-one-box.md) subject, priced there rather than built.
 - **The transactor's only supervisor is `Restart=on-failure`.** No metrics, no alerting, no capacity signal -- [ch.32's flagged question](32-server-path-measured.md) of peer-cache behavior under real storage remains open and measured-elsewhere. Systemd keeps it alive; [the metrics](37-runtime-legibility.md) and [the watchdog](38-alerting.md) later make "unwell" visible and loud -- though the transactor's own metrics callback stays unwired even there.
 - **Storage credentials sit in two `0600` files.** Argued above as the single-box answer; the moment there are two boxes, the argument expires and a secrets manager stops being machinery.
 - **`/health` proves reads, not writes.** Its own comment says so: there is no side-effect-free probe for the transactor's liveness, so a health-checked box can still be write-dead. The deploy script's poll inherits this blind spot knowingly.

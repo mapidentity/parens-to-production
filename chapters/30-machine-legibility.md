@@ -2,7 +2,7 @@
 
 Every public page this application serves has been written for an audience of one kind: a person, in a browser. But a public URL collects other readers the moment it exists. A search crawler deciding whether the page deserves an index entry and what to show for it. A chat client asked to unfurl a pasted link into a title and description. A recipe aggregator looking for structured data. These readers do not see your typography; they read your `<head>`, and until this chapter, this application's head said the same thing on every page: `<title>MyApp</title>` and one generic description.
 
-The single-page world has a whole genre of infrastructure for this problem -- server-side rendering bolted onto client frameworks largely *because* crawlers and unfurlers cannot run an app to find out what it says. [We took the server first](02-positioning.md), so the hard part -- the content being present in the HTML -- has been true since chapter 5. What is missing is only the introduction: pages that say, in the vocabularies machines actually read, *what they are*. This chapter adds that vocabulary in four registers -- title and description, canonical URLs, Open Graph, and schema.org structured data -- and then publishes the catalog itself as a sitemap. All of it from one source of truth, because all of it is [the same pulled map the page already renders](09-recipe-domain.md).
+The single-page world has a whole genre of infrastructure for this problem: server-side rendering bolted onto client frameworks largely *because* crawlers and unfurlers cannot run an app to find out what it says. [We took the server first](02-positioning.md), so the hard part (the content being present in the HTML) has been true since chapter 5. What is missing is only the introduction: pages that say, in the vocabularies machines actually read, *what they are*. This chapter adds that vocabulary in four registers -- title and description, canonical URLs, Open Graph, and schema.org structured data -- and then publishes the catalog itself as a sitemap. All of it from one source of truth, because all of it is [the same pulled map the page already renders](09-recipe-domain.md).
 
 ## The plumbing: one optional map
 
@@ -31,7 +31,7 @@ The single-page world has a whole genre of infrastructure for this problem -- se
   ,,,)
 ```
 
-`nil` means what it meant yesterday -- the defaults -- so thirty views changed by zero lines and the recipe page changed by one map. That map is built inside `recipe-detail` from two inputs it already had reach to: the pulled recipe, and the application's `:base-url` (passed down by the handler from [config](05-web-server.md), because a view should not know its own deployment address).
+`nil` means what it meant yesterday (the defaults), so thirty views changed by zero lines and the recipe page changed by one map. That map is built inside `recipe-detail` from two inputs it already had reach to: the pulled recipe, and the application's `:base-url` (passed down by the handler from [config](05-web-server.md), because a view should not know its own deployment address).
 
 ## Structured data is the same data
 
@@ -59,7 +59,7 @@ The centerpiece is the JSON-LD block, and the point of showing it is how little 
     ,,,))
 ```
 
-Look at `recipeIngredient` and `recipeInstructions`. [Chapter 9 chose](09-recipe-domain.md) to store ingredients and steps as newline-separated text *because the line was the unit of meaning* -- it is what made the diffs line diffs. That same decision now means the schema.org shapes -- an array of ingredient strings, an array of steps -- fall out of the existing `lines` helper with no parsing, no NLP, no annotation format. A decision made for version control pays off in search-result recipe cards. Data modeled on its real grain keeps being the right shape for audiences you had not met yet.
+Look at `recipeIngredient` and `recipeInstructions`. [Chapter 9 chose](09-recipe-domain.md) to store ingredients and steps as newline-separated text *because the line was the unit of meaning*. It is what made the diffs line diffs. That same decision now means the schema.org shapes -- an array of ingredient strings, an array of steps -- fall out of the existing `lines` helper with no parsing, no NLP, no annotation format. A decision made for version control pays off in search-result recipe cards. Data modeled on its real grain keeps being the right shape for audiences you had not met yet.
 
 One question hangs over any `<script>` tag in this application, because [the CSP chapter](29-asset-pipeline.md) was strict on purpose: does a JSON-LD block need a CSP carve-out? No -- and the *why* is worth thirty seconds. `script-src` governs what may *execute*; a `<script type="application/ld+json">` is inert data wearing a script element's clothes, never evaluated, and so never subject to the execution policy. The strict CSP and the structured data coexist without either yielding. (Machines that read it fetch the page source; they do not run it. That is rather the theme of the chapter.)
 
@@ -81,7 +81,7 @@ The web has a two-part answer, and the historical pages now carry both:
 
 `noindex` says *do not list this page*; the canonical pointing at the **current** recipe says *credit whatever you learned here to that URL*. Two declarative lines per page class, and the version history is a feature for humans again instead of an SEO liability. The live recipe page, by contrast, canonicalizes to itself -- the one true URL for the content, stated explicitly so that query-string variants and future mirrors never split its identity.
 
-Open Graph rides along in the same map -- title, type, URL, site name, first description line -- which is what turns a pasted link into a card in chat clients. What the card will not have is an image, because [the recipes have none](21-forms-validation.md); the product has no photo feature, and shipping a decorative placeholder as `og:image` would be the small dishonesty this book keeps declining. The day photos exist, one more pair goes in the map.
+Open Graph rides along in the same map (title, type, URL, site name, first description line), which is what turns a pasted link into a card in chat clients. What the card will not have is an image, because [the recipes have none](21-forms-validation.md); the product has no photo feature, and shipping a decorative placeholder as `og:image` would be the small dishonesty this book keeps declining. The day photos exist, one more pair goes in the map.
 
 ## The catalog, published
 
@@ -100,7 +100,7 @@ A sitemap is the standing invitation: every URL worth indexing, with a change da
   ,,,)
 ```
 
-`lastmod` is `:recipe/updated-at` -- maintained since chapter 9, now doing double duty. The sitemap can never be stale (it is computed from the same value every page renders from) and never needs regenerating (there is nothing generated). `robots.txt` is its companion handler: name the sitemap, allow the public surface, and fence `/dashboard` and `/admin` -- rooms a crawler could never enter anyway, but the polite fence saves everyone the 302s.
+`lastmod` is `:recipe/updated-at`, maintained since chapter 9, now doing double duty. The sitemap can never be stale (it is computed from the same value every page renders from) and never needs regenerating (there is nothing generated). `robots.txt` is its companion handler: name the sitemap, allow the public surface, and fence `/dashboard` and `/admin` -- rooms a crawler could never enter anyway, but the polite fence saves everyone the 302s.
 
 ## Proof
 
@@ -118,11 +118,11 @@ The smoke test reads like a checklist of the four vocabularies:
 (is (str/includes? body "Sitemap: https://test.myapp.lan/sitemap.xml"))
 ```
 
-and [the Lighthouse chapter](33-lighthouse.md), three chapters from here, is where these claims meet an external auditor: its SEO category checks precisely this surface -- meta description, canonical validity, crawlability -- in CI, on every build, so the introduction this chapter wrote can never silently regress.
+and [the Lighthouse chapter](33-lighthouse.md), three chapters from here, is where these claims meet an external auditor: its SEO category checks precisely this surface (meta description, canonical validity, crawlability) in CI, on every build, so the introduction this chapter wrote can never silently regress.
 
 ## Trade-offs & limitations, in one place
 
-- **Descriptions are the raw first line, markdown and all.** A `**bold**` in a recipe's opening line reaches the meta description with its asterisks on. The honest fix is a plain-text projection of the markdown AST -- [the renderer](14-hiccup-views.md) could grow one -- and it is deliberately deferred: a seam, labeled, costing a few odd characters in snippets meanwhile.
+- **Descriptions are the raw first line, markdown and all.** A `**bold**` in a recipe's opening line reaches the meta description with its asterisks on. The honest fix is a plain-text projection of the markdown AST ([the renderer](14-hiccup-views.md) could grow one), and it is deliberately deferred: a seam, labeled, costing a few odd characters in snippets meanwhile.
 - **Only the recipe page gets the full treatment.** The browse index and [search results](23-search.md) ride the site defaults, which for list pages is nearly right anyway; per-page titles for them are an afternoon, using plumbing that now exists.
 - **The sitemap is unbounded**, like [the browse read it reuses](09-recipe-domain.md) -- one `<urlset>`, no pagination. The sitemap protocol caps a file at 50,000 URLs; the catalog is nowhere near; the seam is the same seam, and it is labeled in both places.
 - **JSON-LD duplicates content into every recipe response** -- ingredients and steps appear twice in the bytes. That is the protocol's design (machines should not have to parse your markup), it compresses well, and [the next chapter](31-conditional-get.md) is about to make repeat fetches of those bytes mostly stop happening anyway.

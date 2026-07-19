@@ -8,7 +8,7 @@ The [recording chapter](17-construction-view.md) made `GET /dev/__trace/:id` ret
 
 Before the code, here is the finished tool end to end, so the pieces below have something to attach to. You load the recipe index under the `:storm` alias and press `Alt+Shift+I`. A panel docks to the right with the call tree for the request that built the page: middleware narrowing to the handler `recipes-index`, which fetches with `all-recipes` and renders the eight `recipe-card` frames. Hover a frame and its instance lights up on the page; click it and a details pane fills with that call's arguments and Hiccup return (navigable level by level), the `pull` and `d/q` that fed it as full Datalog, a `db→map→hiccup` transforms badge, and the conditionals in its body that rendered nothing. Alt+click a card on the page and a flow card pins that specific instance: its ancestor path, the reads whose results contained its entity, and finally a `d/history` pivot for the write behind it. An always-on icicle strip above the tree maps the request's shape at a glance, and a header toggle flips the tree between lexical and temporal parenting. The rest of the chapter assembles that tool in the order you'd build it.
 
-> **What this investment buys, and when.** This is the third chapter ([16](16-inspector.md), [17](17-construction-view.md), 18) on a single dev tool, and the cumulative machinery is substantial: a compiler swap, a recording middleware, seven `/dev/__*` projections, a roughly 900-line overlay. So it is worth being clear about what it is for. The everyday "why is this value wrong?" still has its cheap answer, a `println` and a REPL, and that is often enough. What the construction view adds is the question those are bad at: *which* of N identical components on the page in front of you rendered the wrong thing, fed by *which* query, read at *which* basis-t. You answer it by clicking the pixel. That is the inspector's REPL-to-the-browser thesis ([chapter 16](16-inspector.md)) carried one step further: from *where is this element from?* to *everything the server did to build it*. The reusable idea travels even if you never build this exact tool; the tool itself earns its keep the day you hunt a wrong value across identical components.
+> **What this investment buys, and when.** This is the third chapter ([16](16-inspector.md), [17](17-construction-view.md), 18) on a single dev tool, and the cumulative machinery is substantial: a compiler swap, a recording middleware, seven `/dev/__*` projections, a roughly 900-line overlay. So it is worth being clear about what it is for. The everyday "why is this value wrong?" still has its cheap answer, a `println` and a REPL, and that is often enough. What the construction view adds is the question those are bad at: *which* of N identical components on the page in front of you rendered the wrong thing, fed by *which* query, read at *which* basis-t. You answer it by clicking the pixel. That is the inspector's REPL-to-the-browser thesis ([chapter 16](16-inspector.md)) carried one step further: from *where is this element from?* to *everything the server did to build it*. The reusable idea travels even if you never build this exact tool; the tool itself pays off the day you hunt a wrong value across identical components.
 >
 > The listings below are abridged to the parts that carry the idea; `,,,` marks elided plumbing. The complete, runnable file is `src/myapp/web/trace-overlay.js` in the companion repo; this chapter is a guided tour of it, not a transcription, so read the two together when a skeleton leaves you wanting the body.
 
@@ -144,7 +144,7 @@ function renderNode(id, depth) {
 }
 ```
 
-`childrenOf`/`rootsOf` read a `temporal` flag, so a single header button flips the whole tree between **lexical** order (nested where the code is written, with lazy frames re-parented to their owner) and **temporal** order (where it actually ran). The server emitted both parentings in `build-spans` precisely so this toggle costs nothing but a re-render.
+`childrenOf`/`rootsOf` read a `temporal` flag, so a single header button flips the whole tree between **lexical** order (nested where the code is written, with lazy frames re-parented to their owner) and **temporal** order (where it actually ran). The server emitted both parentings in `build-spans` so this toggle costs nothing but a re-render.
 
 The reverse direction, hovering a *page* element to reveal its tree row, uses `compInfo` to map an element to its component name and DOM index, then scrolls the matching row into view:
 
@@ -312,7 +312,7 @@ function subtreeSize(id, cache) {
 }
 ```
 
-`buildIcicle` lays the cells out by recursively partitioning each frame's horizontal span among its children in proportion to subtree size. Hovering a cell peeks the element on the page, and clicking opens the source and selects the frame, exactly as a tree row does, so the overview and the detail stay in lockstep.
+`buildIcicle` lays the cells out by recursively partitioning each frame's horizontal span among its children in proportion to subtree size. Hovering a cell peeks the element on the page, and clicking opens the source and selects the frame just as a tree row does, so the overview and the detail stay in lockstep.
 
 A cell click also applies **degree-of-interest focus+context**: the clicked frame's subtree and its ancestor path stay lit while the other overview cells dim, and a click on the icicle's empty background clears the focus. Value-threading (the ⌖ from step two) goes through the same `applyDOI`, its set being the frames the value flowed through plus their ancestor paths. The rule is deliberately asymmetric: an icicle click dims only the overview cells, so the tree stays fully readable, while value-threading isolates a flow and therefore gently dims the tree rows too. The page-hovered row is never dimmed, which keeps the inspect-sync visible:
 
@@ -392,7 +392,7 @@ Flow mode is the projection worth dwelling on, because it does what the inspecto
 
 Two capabilities make this more than the inspector could do, and both live in `flow`.
 
-**Per-instance resolution.** Eight recipe cards share one `data-myapp-name`; the inspector, keyed on source location, can only highlight all of them. But the *timeline* has order: the k-th card in the DOM is the k-th element-producing `recipe-card` frame in the recording: exactly the per-instance rank (the `:instance` flag) `build-spans` computed in chapter 17. So clicking the third card resolves to *that instance's* frame.
+**Per-instance resolution.** Eight recipe cards share one `data-myapp-name`; the inspector, keyed on source location, can only highlight all of them. But the *timeline* has order: the k-th card in the DOM is the k-th element-producing `recipe-card` frame in the recording: the per-instance rank (the `:instance` flag) `build-spans` computed in chapter 17. So clicking the third card resolves to *that instance's* frame.
 
 **Eid-matched source.** A recipe card renders data some *sibling* call fetched earlier: `all-recipes`' `d/q` and the per-recipe `pull`, not anything in the card's own subtree. Which read produced *this* card? We have the card's entity id (from its argument map) and every db-op's recorded result, so we ask Datomic identity directly:
 
@@ -507,7 +507,7 @@ document.addEventListener("dispatcher:morphed", function (e) {
 });
 ```
 
-So the overlay follows one *active* trace, and the plain click is the interaction that switches it per region: click a component inside a morphed `<main>` and the overlay fetches that region's trace, activates it, and selects the frame there; click back in the chrome and `<html>`'s trace becomes active again. Hover and Alt+click stay on whatever trace is active: a page hover still boxes any element, but it reveals a tree row only when that element belongs to the active trace, and an Alt+click's flow queries the active recording. The same machinery fixed dev-hot-reload staleness for free: after you edit a view and the page morphs, the overlay shows the *new* construction, not the pre-edit one.
+So the overlay follows one *active* trace, and the plain click is the interaction that switches it per region: click a component inside a morphed `<main>` and the overlay fetches that region's trace, activates it, and selects the frame there; click back in the chrome and `<html>`'s trace becomes active again. Hover and Alt+click stay on whatever trace is active: a page hover still boxes any element, but it reveals a tree row only when that element belongs to the active trace, and an Alt+click's flow queries the active recording. The same machinery fixed dev-hot-reload staleness at no extra cost: after you edit a view and the page morphs, the overlay shows the *new* construction, not the pre-edit one.
 
 ## Surfacing a prior error, and detaching the panel
 
@@ -534,10 +534,10 @@ function loadTrace(id) {
 
 ## Keeping production clean
 
-Trace every piece of the whole feature -- across all three chapters -- and confirm it vanishes:
+Trace every piece of the whole feature (across all three chapters) and confirm it vanishes:
 
 - **The compiler.** `:storm` is a dev alias. Production resolves `org.clojure/clojure`, sets no storm properties, and records nothing. With no recording there is no timeline to read.
-- **The middleware.** `wrap-trace` is added to the stack only when `clojure.storm.instrumentEnable` is set, and only via `requiring-resolve` of a namespace under `dev/`. Plain `:dev` -- never mind prod -- neither adds it nor loads the namespace.
+- **The middleware.** `wrap-trace` is added to the stack only when `clojure.storm.instrumentEnable` is set, and only via `requiring-resolve` of a namespace under `dev/`. Plain `:dev` (never mind prod) neither adds it nor loads the namespace.
 - **The endpoints.** Every `/dev/__*` route resolves its handler through `requiring-resolve`, which is `nil` without the dev namespace, so they 404 in production.
 - **The trace id and the overlay.** Two different gates. The trace id is reached *via the storm property*: `data-myapp-trace-id` is stamped only by the middleware, which is only mounted under `:storm`. The overlay ships in the **dev asset block** (the same `requiring-resolve` gate as the inspector, so it's prod-absent), and at runtime it is simply *inert* without a storm-stamped trace id. In production the script is absent; under plain `:dev` it may load but finds no trace id and does nothing.
 

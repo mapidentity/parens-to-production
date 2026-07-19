@@ -9,11 +9,11 @@ Front-end frameworks have had the first half for years (React/Vue/Svelte inspect
 
 ![Inspect mode on: hovering a recipe title boxes it and shows the breadcrumb of its tagged ancestors, ending in the exact source location `myapp/web/views.clj:361:6`.](images/inspector-hover.png)
 
-*Element → code. With inspect mode on, hovering an element draws its box and a breadcrumb of tagged ancestors -- `recipe-card () λ` marks the component and its call site -- ending in the precise `file:line:col` a click will open.*
+*Element → code. With inspect mode on, hovering an element draws its box and a breadcrumb of tagged ancestors (`recipe-card () λ` marks the component and its call site), ending in the precise `file:line:col` a click will open.*
 
 It reuses the file watcher and the `dev-reload` WebSocket from [the live-reload chapter](06-live-reload.md), and hooks into the `base-layout` from [the Hiccup views chapter](14-hiccup-views.md). Everything here is dev-only and **structurally absent** from production builds, the same as the rest of our dev infrastructure. If you read strictly in order, the Hiccup views chapter's layout sections are the relevant background.
 
-> **Why build this on a server-rendered app?** Because it keeps a workflow Clojure programmers refuse to give up. The REPL habit is to stay in live contact with the running system: evaluate, inspect the value, navigate the data, redefine, look again. The browser is normally where that contact ends. The server ships HTML across the wire, and the rendered page is a dead artifact with no thread back to the process that built it. The inspector reopens that thread at the border, and it runs both ways. Element → code makes the page interrogable the way the REPL makes a namespace interrogable: hover a pixel and your editor opens the line that produced it. Code → element closes the other half. Put your cursor on a view function and the element it rendered lights up in the live page, folding the editor into the loop exactly as REPL evaluation already does. Editor, running process, and rendered page stop being three windows you alt-tab between and become one connected surface.
+> **Why build this on a server-rendered app?** Because it keeps a workflow Clojure programmers refuse to give up. The REPL habit is to stay in live contact with the running system: evaluate, inspect the value, navigate the data, redefine, look again. The browser is normally where that contact ends. The server ships HTML across the wire, and the rendered page is a dead artifact with no thread back to the process that built it. The inspector reopens that thread at the border, and it runs both ways. Element → code makes the page interrogable the way the REPL makes a namespace interrogable: hover a pixel and your editor opens the line that produced it. Code → element closes the other half. Put your cursor on a view function and the element it rendered lights up in the live page, folding the editor into the loop the way REPL evaluation already does. Editor, running process, and rendered page stop being three windows you alt-tab between and become one connected surface.
 >
 > A React or Vue developer takes element-to-source inspection for granted because it ships with the framework, and the instinct is that server-rendered Hiccup means doing without. It does not, *because we own the rendering path and can instrument it ourselves*. That is the lesson of this chapter and the construction-view chapters that follow: choosing SSR costs you neither the interactive, REPL-driven development Clojure is built on nor a toolbox an SPA would have. You extend that workflow across the browser boundary instead of surrendering it there.
 >
@@ -52,7 +52,7 @@ By the time `[:tr …]` exists it is a runtime value with no idea what line it c
 ;;=> nil
 ```
 
-So the obvious approaches are dead ends. We cannot ask a Hiccup value where it lives, and the reader will not tell us. The whole feature hinges on getting around exactly this.
+So the obvious approaches are dead ends. We cannot ask a Hiccup value where it lives, and the reader will not tell us. The whole feature hinges on getting around this.
 
 ### Three coordinates of "where did this come from?"
 
@@ -70,7 +70,7 @@ The element coordinate is the hard, interesting one. It did not exist for Hiccup
 
 The keystone is this: a Hiccup element's source position can ride on the runtime value itself -- no separate index, no matching DOM nodes back to source after the fact. That rests on two facts, stacked.
 
-**Fact one:** `clojure.tools.reader` -- a pure-Clojure reader maintained by core -- *does* attach `:line`/`:column`/`:end-line`/`:end-column` to every nested form, vectors included, at every depth:
+**Fact one:** `clojure.tools.reader` (a pure-Clojure reader maintained by core) *does* attach `:line`/`:column`/`:end-line`/`:end-column` to every nested form, vectors included, at every depth:
 
 ```clojure
 (require '[clojure.tools.reader :as tr]
@@ -92,7 +92,7 @@ The **end** positions matter later (the reverse direction does span-containment)
 ;;=> ({:line 9} {:line 9} {:line 9})
 ```
 
-Three `<li>`s, each tagged with the *one* source line of their template. That is exactly the semantics we want: clicking a `for`-generated row should land on the `for`'s `[:tr …]` line, not on three different places.
+Three `<li>`s, each tagged with the *one* source line of their template. That is the semantics we want: clicking a `for`-generated row should land on the `for`'s `[:tr …]` line, not on three different places.
 
 Put the facts together:
 
@@ -155,7 +155,7 @@ That this can be a plain `clojure.walk/postwalk` rests on a guarantee that only 
 
 The *component* coordinate (which view function produced a given root element) can't come from a literal's source position. It needs the enclosing `defn`. The loader supplies it invisibly by instrumenting every function a view namespace defines, so views stay plain `defn` with no annotation.
 
-The loader -- `dev/inspector_load.clj`, under `dev/` and so never on the prod classpath -- reads each file with tools.reader, and then does three things to it: stamps file metadata (element layer), **auto-instruments every function the namespace defined** (component layer), and **indexes** it (for the reverse direction, Part II).
+The loader (`dev/inspector_load.clj`, under `dev/` and so never on the prod classpath) reads each file with tools.reader, and then does three things to it: stamps file metadata (element layer), **auto-instruments every function the namespace defined** (component layer), and **indexes** it (for the reverse direction, Part II).
 
 ```clojure
 (ns inspector-load
@@ -189,7 +189,7 @@ The loader -- `dev/inspector_load.clj`, under `dev/` and so never on the prod cl
           (inspector/index-ns! file (ns-name *ns*) forms))))))  ;; reverse-direction index
 ```
 
-Two ordering subtleties hide in that little loop. We need the file's function names *before* evaluating any body form (so call-site wrapping knows which calls are components), which pushes us toward reading everything up front. But we must **evaluate the `ns` form before reading the rest**. `tools.reader` resolves auto-namespaced keywords like `::alias/kw` against the current namespace's aliases *at read time*, so the namespace has to exist first. Read the whole file before the `ns` form runs and such a keyword throws: the file falls back to a plain `load`, and you silently lose its tags. So: read the `ns` form, eval it, *then* read the body. Binding `*file*` to the classpath-relative path also means the *vars* get a correct `:file` -- exactly what the component layer reads:
+Two ordering subtleties hide in that little loop. We need the file's function names *before* evaluating any body form (so call-site wrapping knows which calls are components), which pushes us toward reading everything up front. But we must **evaluate the `ns` form before reading the rest**. `tools.reader` resolves auto-namespaced keywords like `::alias/kw` against the current namespace's aliases *at read time*, so the namespace has to exist first. Read the whole file before the `ns` form runs and such a keyword throws: the file falls back to a plain `load`, and you silently lose its tags. So: read the `ns` form, eval it, *then* read the body. Binding `*file*` to the classpath-relative path also means the *vars* get a correct `:file`, which is what the component layer reads:
 
 ```clojure
 (defn instrument-var!
@@ -228,7 +228,7 @@ Wrap `tr-load!` in a `try` that falls back to `load-file` -- a reader edge case 
 
 ### Keeping the tags alive
 
-The source tags exist only because the loader applied them. So any reload that goes around the loader -- a plain `load-file`, or an editor's eval-on-save -- re-defs those functions with the default reader and no `instrument-ns!`, and silently strips every tag until the next loader pass. The symptom: elements lose their inspection border after a save. The fix is a principle, not a mechanism: **`tr-load!` is the single source of truth for tagged view code** -- make it the only path that reloads views (let the file-watcher own reloads, turn off editor eval-on-save for views) and the problem can't occur. Resist the temptation to heal it reactively with a var watch; that is asynchronous and racy. The loader does degrade per form rather than per file -- each tagged form evals inside a `try`, so a form the rewrite mishandles loads plain and logs, leaving the function defined and root-tagged with only its element-level tags missing.
+The source tags exist only because the loader applied them. So any reload that goes around the loader (a plain `load-file`, or an editor's eval-on-save) re-defs those functions with the default reader and no `instrument-ns!`, and silently strips every tag until the next loader pass. The symptom: elements lose their inspection border after a save. The fix is a principle, not a mechanism: **`tr-load!` is the single source of truth for tagged view code** -- make it the only path that reloads views (let the file-watcher own reloads, turn off editor eval-on-save for views) and the problem can't occur. Resist the temptation to heal it reactively with a var watch; that is asynchronous and racy. The loader does degrade per form rather than per file -- each tagged form evals inside a `try`, so a form the rewrite mishandles loads plain and logs, leaving the function defined and root-tagged with only its element-level tags missing.
 
 ### Call-site tagging: telling instances apart
 
@@ -358,7 +358,7 @@ function chain(node) {
 
 `shortName` reads the node's `data-myapp-name` and trims any namespace for display: `stat-card` from `myapp.admin.views/stat-card` on a component root, the bare `dl`/`dd` that `tag-tree` stamped on plain elements.
 
-**Alt+wheel walks the chain without moving the mouse.** Hover selects the most-nested element (`e.target.closest('[data-myapp-src]')`); holding Alt and scrolling then walks *outward* (λ → () → parent element → …) and back in, so you can select an outer component or its call site without nudging the pointer. While Alt is held we freeze the selection, so a mouse jitter during scrolling can't reset it. A click then opens whatever step is currently selected -- the λ, the `()`, or an element -- not whatever is physically under the cursor.
+**Alt+wheel walks the chain without moving the mouse.** Hover selects the most-nested element (`e.target.closest('[data-myapp-src]')`); holding Alt and scrolling then walks *outward* (λ → () → parent element → …) and back in, so you can select an outer component or its call site without nudging the pointer. While Alt is held we freeze the selection, so a mouse jitter during scrolling can't reset it. A click then opens whatever step is currently selected (the λ, the `()`, or an element), not whatever is physically under the cursor.
 
 ### The editor bridge
 
@@ -433,7 +433,7 @@ Because the index lives in an atom the dev loader refreshes on every reload, it 
 
 Capturing cursor movement requires running code in the editor's extension host -- there is no config-only or LSP route (the language-server protocol has no cursor-moved notification, and Calva exposes no such hook). So we need an extension. But we don't have to *write and package* one: **Joyride** (Calva's sibling) runs ClojureScript in VS Code's extension host with full access to the `vscode` API. So the editor agent is a script that lives in the repo under `.joyride/scripts/`, installed by adding `betterthantomorrow.joyride` to the devcontainer's extension list. No TypeScript, no build, no `.vsix`.
 
-> **Why Joyride and not a custom extension?** A TypeScript extension is fully decoupled and works for non-Joyride users, but you must build and auto-install a `.vsix` from a lifecycle hook (the declarative `customizations.vscode.extensions` only takes marketplace IDs). For a Clojure team in a devcontainer, a Joyride script is genuinely project code, a `.cljs` in the repo, with none of that overhead. The cost is coupling navigation to Joyride being installed. But since Joyride already supplies the reverse direction, requiring it for the forward direction too is a fair trade. It also lets us drop a fragile `code -g` shell-out fallback that had to sniff the newest `VSCODE_IPC_HOOK_CLI` socket to land in the right window.
+> **Why Joyride and not a custom extension?** A TypeScript extension is fully decoupled and works for non-Joyride users, but you must build and auto-install a `.vsix` from a lifecycle hook (the declarative `customizations.vscode.extensions` only takes marketplace IDs). For a Clojure team in a devcontainer, a Joyride script is project code, a `.cljs` in the repo, with none of that overhead. The cost is coupling navigation to Joyride being installed. But since Joyride already supplies the reverse direction, requiring it for the forward direction too is a fair trade. It also lets us drop a fragile `code -g` shell-out fallback that had to sniff the newest `VSCODE_IPC_HOOK_CLI` socket to land in the right window.
 
 The script holds one WebSocket to the dev server. It **sends** the cursor (debounced) and **receives** open commands (opening the file via the vscode API -- exact window, exact range, no shell-out):
 
@@ -535,7 +535,7 @@ Trace every piece and confirm it disappears in prod:
 - `tag-root` expands to the bare literal, so Hiccup precompiles your markup exactly as before: no `tag-tree`, no `data-*` attributes in the output.
 - `inspector.js` is emitted by `defn-asset` only inside the dev-gated block (next to the dev-reload script), so it never reaches a production page.
 - `inspector-load` and the editor/relay code live under `dev/`, on the classpath only via the `:dev` alias.
-- `tr-load!` -- and therefore all instrumentation, call-site wrapping, and indexing -- is dev-only. Production loads views the normal way: no tools.reader, no metadata, no wrapping, an empty `view-index`.
+- `tr-load!` (and therefore all instrumentation, call-site wrapping, and indexing) is dev-only. Production loads views the normal way: no tools.reader, no metadata, no wrapping, an empty `view-index`.
 - The editor agent is a Joyride script in `.joyride/`; it does nothing without the Joyride extension and a running dev server.
 
 The feature is structurally absent, not merely disabled.
@@ -565,4 +565,4 @@ The feature is structurally absent, not merely disabled.
 
 ## What it rests on
 
-The whole thing rests on one move the front-end world never had to make: Hiccup is plain data with no source information, so you manufacture it -- and `clojure.tools.reader` plus the Clojure compiler will, between them, carry a line number from your file to a running vector if you simply stop throwing it away. Everything else -- call sites, the reverse direction, the editor bridge -- is built on that single welded coordinate.
+The whole thing rests on one move the front-end world never had to make: Hiccup is plain data with no source information, so you manufacture it -- and `clojure.tools.reader` plus the Clojure compiler will, between them, carry a line number from your file to a running vector if you simply stop throwing it away. Everything else (call sites, the reverse direction, the editor bridge) is built on that single welded coordinate.
