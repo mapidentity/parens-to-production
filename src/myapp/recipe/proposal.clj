@@ -1,0 +1,191 @@
+(ns myapp.recipe.proposal
+  "A fork's changes offered back to the recipe it forked from.
+  A pull request for recipes, resolved by a three-way merge.
+
+  The whole reason this is small is that immutable history hands us the
+  merge's three inputs for free. A classic 3-way merge needs a common
+  ANCESTOR (base), plus each side's current state; the hard part elsewhere
+  is reconstructing the base. Here the base is the fork's own first version
+  — the content copied out of the parent at fork time — read straight from
+  `version-history`. ours = the parent now, theirs = the fork now."
+  (:require
+    [datomic.api :as d]
+    [myapp.db.core :as db]
+    [myapp.recipe.core :as recipe]
+    [myapp.time :as time]))
+
+(set! *warn-on-reflection* true)
+
+(def ^:private merge-fields
+  "The content fields a merge reconciles.
+  The versioned ones, minus the structural `:recipe/forked-from`."
+  [:recipe/title :recipe/description :recipe/servings
+   :recipe/ingredients :recipe/steps])
+
+(defn three-way-merge
+  "Field-level three-way merge of three pulled recipe maps.
+
+  - `base`   — the common ancestor (the fork's first version)
+  - `ours`   — the target's current state
+  - `theirs` — the fork's current state (the proposed changes)
+
+  Per field the base is what distinguishes a clean apply from a conflict —
+  a two-way diff sees only that two values differ, never *who* changed:
+    - the fork left the field alone (theirs = base)     → keep ours
+    - only the fork changed it (ours = base)            → apply theirs
+    - both changed it to the same thing (ours = theirs) → keep ours
+    - both changed it differently                       → CONFLICT
+  Returns {:fields {field {:status :unchanged|:applied|:conflict
+                           :value <resolved> (absent when :conflict)
+                           :base .. :ours .. :theirs ..}}
+           :conflict? bool
+           :clean {recipe-key value …}}  ; the auto-mergeable fields."
+  [base ours theirs]
+  (let [decide (fn [f]
+                 (let [b (get base f)
+                       o (get ours f)
+                       t (get theirs f)]
+                   (cond
+                     (= t b) {:status :unchanged
+                              :value o}
+                     (= o b) {:status :applied
+                              :value t
+                              :base b
+                              :ours o
+                              :theirs t}
+                     (= o t) {:status :unchanged
+                              :value o}
+                     :else {:status :conflict
+                            :base b
+                            :ours o
+                            :theirs t})))
+        fields (into {} (map (juxt identity decide)) merge-fields)
+        conflict? (boolean (some (fn [[_ v]] (= :conflict (:status v))) fields))
+        clean (into {} (keep (fn [[f v]] (when (contains? v :value) [f (:value v)]))) fields)]
+    {:fields fields
+     :conflict? conflict?
+     :clean clean}))
+
+;; ---------------------------------------------------------------------------
+;; Reads
+;; ---------------------------------------------------------------------------
+
+(def ^:private pull-pattern
+  [:proposal/id :proposal/status :proposal/created-at
+   {:proposal/source [:recipe/id]}
+   {:proposal/target [:recipe/id]}])
+
+(defn proposal-by-id
+  "Pull a proposal by its UUID (with source/target recipe ids), or nil."
+  [db pid]
+  (when pid
+    (when-let [eid (d/entid db [:proposal/id pid])]
+      (db/pull* db pull-pattern eid))))
+
+(defn merge-for
+  "Compute the three-way merge for `proposal` (a pulled proposal map).
+  Reads base (fork's first version), ours (target now), theirs (fork now)
+  and returns the `three-way-merge` result plus the three source maps, or
+  nil if either recipe is gone."
+  [db proposal]
+  (let [source-id (get-in proposal [:proposal/source :recipe/id])
+        target-id (get-in proposal [:proposal/target :recipe/id])
+        base (:recipe (first (recipe/version-history db source-id)))
+        ours (recipe/recipe-by-id db target-id)
+        theirs (recipe/recipe-by-id db source-id)]
+    (when (and base ours theirs)
+      (assoc (three-way-merge base ours theirs)
+        :base base
+        :ours ours
+        :theirs theirs))))
+
+(defn open-proposals-targeting
+  "Open proposals whose target is recipe `target-id`, newest first.
+  What the recipe's owner sees as pending suggestions."
+  [db target-id]
+  (if-let [eid (d/entid db [:recipe/id target-id])]
+    (->> (d/q '[:find [?p ...]
+                :in $ ?t
+                :where
+                [?p :proposal/target ?t]
+                [?p :proposal/status :open]]
+              db
+              eid)
+         (map #(db/pull* db pull-pattern %))
+         (sort-by :proposal/created-at #(compare %2 %1))
+         vec)
+    []))
+
+;; ---------------------------------------------------------------------------
+;; Writes
+;; ---------------------------------------------------------------------------
+
+(defn create-proposal!
+  "Open a proposal: offer fork `source-id`'s changes back to its parent.
+  Caller must own the fork, and it must actually be a fork with a live
+  parent. Returns the new proposal id, or nil."
+  [conn user-eid source-id]
+  (let [db (d/db conn)
+        src (recipe/recipe-by-id db source-id)
+        parent-id (get-in src [:recipe/forked-from :recipe/id])]
+    (when (and src (recipe/owned-by? src user-eid) parent-id (recipe/recipe-by-id db parent-id))
+      (let [pid (random-uuid)]
+        @(db/transact* conn
+           [{:proposal/id pid
+             :proposal/source (d/entid db [:recipe/id source-id])
+             :proposal/target (d/entid db [:recipe/id parent-id])
+             :proposal/status :open
+             :proposal/created-at (time/now)}])
+        pid))))
+
+(defn accept!
+  "Merge an open proposal into its target — target owner only.
+
+  `resolutions` maps each CONFLICTING field to the chosen value; `expected`
+  is the target's `:recipe/updated-at` the reviewer saw. The merge is
+  recomputed against the CURRENT target, so the write goes through
+  `recipe/update!`'s optimistic-concurrency check: if the target moved
+  during review the merge is stale, `update!` returns `:conflict`, and the
+  proposal stays open for a re-review. Returns true, :conflict, :incomplete
+  (an unresolved conflict), or nil (not open / not owned / gone)."
+  [conn user-eid proposal-id resolutions expected]
+  (let [db (d/db conn)
+        prop (proposal-by-id db proposal-id)]
+    (when (and prop (= :open (:proposal/status prop)))
+      (let [target-id (get-in prop [:proposal/target :recipe/id])
+            target (recipe/recipe-by-id db target-id)]
+        (when (and target (recipe/owned-by? target user-eid))
+          (let [{:keys [clean fields conflict?]} (merge-for db prop)
+                conflict-fs (keep (fn [[f v]] (when (= :conflict (:status v)) f)) fields)]
+            (if (and conflict? (not (every? #(contains? resolutions %) conflict-fs)))
+              :incomplete
+              (let [merged (reduce
+                             #(assoc %1
+                                %2 (get resolutions %2))
+                             clean
+                             conflict-fs)
+                    result (recipe/update!
+                             conn
+                             user-eid
+                             target-id
+                             merged
+                             "Merged a proposed change"
+                             expected)]
+                (when (true? result)
+                  @(db/transact* conn
+                     [{:proposal/id proposal-id
+                       :proposal/status :accepted}]))
+                result))))))))
+
+(defn decline!
+  "Decline an open proposal — target owner only. Returns true or nil."
+  [conn user-eid proposal-id]
+  (let [db (d/db conn)
+        prop (proposal-by-id db proposal-id)
+        target (some->> (get-in prop [:proposal/target :recipe/id])
+                        (recipe/recipe-by-id db))]
+    (when (and prop (= :open (:proposal/status prop)) target (recipe/owned-by? target user-eid))
+      @(db/transact* conn
+         [{:proposal/id proposal-id
+           :proposal/status :declined}])
+      true)))

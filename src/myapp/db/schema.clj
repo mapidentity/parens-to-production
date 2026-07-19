@@ -124,8 +124,36 @@
     :db/cardinality :db.cardinality/one
     :db/doc "Optional user-supplied note: what changed, and why."}])
 
+(def proposal-schema
+  "A pull request for recipes: a fork's changes offered back to its parent.
+  It stores no content of its own — `source`
+  (the fork) and `target` (its parent) already carry every version, and the
+  three-way merge derives base, ours, and theirs from their histories. So a
+  proposal is just the intent plus its resolution."
+  [{:db/ident :proposal/id
+    :db/valueType :db.type/uuid
+    :db/unique :db.unique/identity
+    :db/cardinality :db.cardinality/one
+    :db/doc "Unique proposal ID."}
+   {:db/ident :proposal/source
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one
+    :db/doc "The fork whose changes are proposed."}
+   {:db/ident :proposal/target
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one
+    :db/doc "The recipe to merge into — the fork's parent."}
+   {:db/ident :proposal/status
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/doc "One of :open, :accepted, :declined."}
+   {:db/ident :proposal/created-at
+    :db/valueType :db.type/instant
+    :db/cardinality :db.cardinality/one
+    :db/doc "When the proposal was opened."}])
+
 (def schema
   "The full schema, transacted on database creation.
   Order matters only in that referenced idents must exist; these are all
   independent attribute installs, so a single concatenated vector is fine."
-  (vec (concat user-schema recipe-schema tx-schema)))
+  (vec (concat user-schema recipe-schema tx-schema proposal-schema)))

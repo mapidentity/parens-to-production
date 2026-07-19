@@ -458,3 +458,44 @@
         (is
           (= "First" (:recipe/title (recipe/recipe-by-id (d/db h/*conn*) id)))
           "the stale save changed nothing in the database")))))
+
+(deftest proposal-flow-through-handlers
+  (let [alice (mk-user! "alice@x.lan")
+        bob (mk-user! "bob@x.lan")
+        orig (recipe/create!
+               h/*conn*
+               alice
+               {:title "Carbonara"
+                :servings 2
+                :ingredients "pasta\neggs"
+                :steps "boil"})
+        fork (recipe/fork! h/*conn* bob orig)
+        _ (recipe/update! h/*conn* bob fork {:recipe/ingredients "pasta\neggs\npecorino"})
+        propose-req (assoc (h/auth-request :post (str "/recipes/" fork "/propose") "bob@x.lan")
+                      :user-eid bob
+                      :path-params {:id (str fork)})]
+    (testing "the fork owner proposes → redirect to the proposal page"
+      (let [resp (myapp.web.handler/proposal-propose propose-req)
+            pid (last (str/split (get-in resp [:headers "Location"]) #"/"))]
+        (is (= 302 (:status resp)))
+        (is (uuid? (java.util.UUID/fromString pid)))
+        (testing "the proposal page renders the clean-apply for the target owner"
+          (let [show (myapp.web.handler/proposal-show
+                       (assoc (h/auth-request :get (str "/proposals/" pid) "alice@x.lan")
+                         :user-eid alice
+                         :path-params {:id pid}))]
+            (is (= 200 (:status show)))
+            (is (str/includes? (:body show) "pecorino") "the proposed line is shown")))
+        (testing "the target owner accepts → the change merges into the original"
+          (let [tok (str (inst-ms (:recipe/updated-at (recipe/recipe-by-id (d/db h/*conn*) orig))))
+                acc (myapp.web.handler/proposal-accept
+                      (assoc (h/auth-request :post (str "/proposals/" pid "/accept") "alice@x.lan")
+                        :user-eid alice
+                        :path-params {:id pid}
+                        :params {:expected-version tok}))]
+            (is (= 302 (:status acc)))
+            (is
+              (str/includes?
+                (:recipe/ingredients (recipe/recipe-by-id (d/db h/*conn*) orig))
+                "pecorino")
+              "merged into the original")))))))

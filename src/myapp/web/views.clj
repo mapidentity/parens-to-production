@@ -578,7 +578,8 @@
   "A single recipe at its current version, with actions, lineage, and forks.
   When `base-url` is present the page introduces itself to machines too:
   canonical URL, Open Graph pairs, and schema.org/Recipe JSON-LD."
-  [locale user-email admin? recipe {:keys [owner? lineage forks version-count base-url]}]
+  [locale user-email admin? recipe
+   {:keys [owner? lineage forks version-count base-url pending-proposals]}]
   (app-layout
     locale
     user-email
@@ -615,7 +616,28 @@
            {:type "submit"} (t locale :recipe/fork-this)]]
          [:a.text-sm.font-semibold.text-primary-vivid.hover:text-primary {:href "/"}
           (t locale :recipe/login-to-fork)])
+       ;; If you own this recipe AND it is a fork, you can propose its
+       ;; changes back to the recipe it descends from — a pull request.
+       (when (and owner? (:recipe/forked-from recipe))
+         [:form
+          {:method "POST"
+           :action (str "/recipes/" (:recipe/id recipe) "/propose")}
+          [:button.text-sm.font-medium.text-primary-vivid.hover:text-primary
+           {:type "submit"} (t locale :proposal/propose)]])
        (when owner? (owner-actions-menu locale recipe))]]
+
+     ;; Pending suggestions for the owner: forks proposing changes back.
+     (when (and owner? (seq pending-proposals))
+       [:div
+        {:class "mt-6 rounded-md border border-primary bg-primary/5 p-4"}
+        [:p.text-sm.font-medium.text-text-primary
+         (t locale :proposal/pending-heading)]
+        [:ul.mt-2.space-y-1
+         (for [p pending-proposals]
+           [:li
+            [:a.text-sm.text-primary-vivid.hover:text-primary.underline
+             {:href (str "/proposals/" (:proposal/id p))}
+             (t locale :proposal/review-suggestion)]])]])
 
      (recipe-body locale recipe)
 
@@ -961,6 +983,115 @@
           [:h2.text-lg.font-semibold.text-text-primary.mb-2 (t locale :recipe/steps)]
           (diff-lines (:steps d))]]
         [:p.text-text-secondary (t locale :recipe/no-changes)])])))
+
+;; ---------------------------------------------------------------------------
+;; Proposals (a pull request's three-way merge)
+;; ---------------------------------------------------------------------------
+
+(def ^:private proposal-field-meta
+  "Which merge fields are line-diffed (text) vs shown as scalars."
+  [{:fkey :recipe/title
+    :label :recipe/title-label
+    :text? false}
+   {:fkey :recipe/servings
+    :label :recipe/servings
+    :text? false}
+   {:fkey :recipe/description
+    :label :recipe/description-label
+    :text? false}
+   {:fkey :recipe/ingredients
+    :label :recipe/ingredients
+    :text? true}
+   {:fkey :recipe/steps
+    :label :recipe/steps
+    :text? true}])
+
+(defn- merge-side
+  "Render one side of a value.
+  A line-diff from base for text fields, the bare value for scalars."
+  [text? base v]
+  (if text?
+    (diff-lines (recipe/line-diff (or base "") (or v "")))
+    [:span.text-sm [:span.diff-add.px-1 (str v)]]))
+
+(defn proposal-page
+  "A proposal's three-way merge: what applies cleanly, and what conflicts.
+  `merge` is `proposal/merge-for`'s result. Opts: `:target-owner?` gates
+  the accept/decline form; `:notice` shows a banner (e.g. after a stale
+  merge or an unresolved conflict)."
+  [locale user-email admin? proposal mrg {:keys [target-owner? notice]}]
+  (let [{:keys [fields ours theirs conflict?]} mrg
+        source-title (:recipe/title theirs)
+        target-title (:recipe/title ours)
+        target-id (get-in proposal [:proposal/target :recipe/id])]
+    (app-layout
+      locale
+      user-email
+      :browse
+      {:admin? admin?}
+      [:div.max-w-3xl.mx-auto
+       [:a.text-sm.text-primary-vivid.hover:text-primary
+        {:href (str "/recipes/" target-id)} (str "← " target-title)]
+       [:h1.text-2xl.font-bold.text-text-primary.mt-2 (t locale :proposal/title)]
+       [:p.text-sm.text-text-secondary.mb-6
+        (t locale :proposal/from) " " [:span.font-medium source-title]]
+       (when notice
+         [:div.mb-5.rounded-md.border.border-negative.p-4
+          [:p.text-sm.text-negative (t locale notice)]])
+
+       [:form
+        {:method "POST"
+         :action (str "/proposals/" (:proposal/id proposal) "/accept")}
+        ;; OCC token: the target's content clock, so accepting a stale merge
+        ;; (the recipe moved during review) is caught, not silently applied.
+        [:input
+         {:type "hidden"
+          :name "expected-version"
+          :value (some-> (:recipe/updated-at ours)
+                         inst-ms
+                         str)}]
+        (for [{:keys [fkey label text?]} proposal-field-meta
+              :let [{:keys [status base ours theirs]
+                     :as f}
+                    (get fields fkey)]
+              :when (not= status :unchanged)]
+          [:section.mb-6.rounded-lg.border.border-border.p-4
+           {:class (when (= status :conflict) "border-negative")}
+           [:h2.text-sm.font-semibold.text-text-primary.mb-2 (t locale label)]
+           (case status
+             :applied [:div
+                       [:p.text-xs.text-positive.mb-1 (t locale :proposal/applies-cleanly)]
+                       (merge-side text? (:base f) theirs)]
+             :conflict [:div
+                        [:p.text-xs.text-negative.mb-2 (t locale :proposal/conflict)]
+                        [:label.block.mb-2
+                         [:input.mr-2
+                          {:type "radio"
+                           :name (str "resolve-" (name fkey))
+                           :value "ours"
+                           :checked true}]
+                         [:span.text-sm.font-medium (t locale :proposal/keep-mine)]
+                         (merge-side text? base ours)]
+                        [:label.block
+                         [:input.mr-2
+                          {:type "radio"
+                           :name (str "resolve-" (name fkey))
+                           :value "theirs"}]
+                         [:span.text-sm.font-medium (t locale :proposal/take-theirs)]
+                         (merge-side text? base theirs)]])])
+        (when (empty? (remove #(= :unchanged (:status (val %))) fields))
+          [:p.text-text-secondary.mb-6 (t locale :proposal/nothing-to-merge)])
+        (when target-owner?
+          [:div.flex.items-center.gap-3.mt-6
+           [:button.py-2.px-4.rounded-md.text-sm.font-semibold.text-white.bg-primary.hover:bg-primary-vivid
+            {:type "submit"}
+            (if conflict? (t locale :proposal/resolve-and-merge) (t locale :proposal/merge))]
+           [:button.py-2.px-4.rounded-md.text-sm.text-text-secondary.hover:text-text-primary
+            {:type "submit"
+             :formaction (str "/proposals/" (:proposal/id proposal) "/decline")}
+            (t locale :proposal/decline)]])]
+       (when-not target-owner?
+         [:p.text-sm.text-text-secondary (t locale :proposal/awaiting-owner)])])))
 
 ;; ---------------------------------------------------------------------------
 ;; Dashboard

@@ -17,6 +17,7 @@
     [myapp.db.core :as db]
     [myapp.i18n :refer [t]]
     [myapp.recipe.core :as recipe]
+    [myapp.recipe.proposal :as proposal]
     [myapp.time :as time]
     [myapp.web.ratelimit :as ratelimit]
     [myapp.web.security :as security]
@@ -404,7 +405,10 @@
            :lineage (recipe/lineage db id)
            :forks (recipe/forks db id)
            :version-count (count (recipe/version-history db id))
-           :base-url (config/get-config :base-url)}))
+           :base-url (config/get-config :base-url)
+           ;; Pending suggestions, but only for the owner (who can act on them).
+           :pending-proposals (when (recipe/owned-by? r (:user-eid request))
+                                (proposal/open-proposals-targeting db id))}))
       (not-found request))))
 
 (defn recipe-new-form
@@ -535,6 +539,117 @@
         deleted? (recipe/delete! (db/get-connection) (:user-eid request) id)]
     (when-not deleted? (tenancy-check! request id))
     (response/redirect "/dashboard")))
+
+;; ---------------------------------------------------------------------------
+;; Proposals — a pull request's three-way merge
+;; ---------------------------------------------------------------------------
+
+(defn proposal-propose
+  "POST /recipes/:id/propose — the fork owner offers its changes to the parent."
+  [request]
+  (let [fork-id (path-uuid request)
+        pid (proposal/create-proposal! (db/get-connection) (:user-eid request) fork-id)]
+    (if pid
+      (response/redirect (str "/proposals/" pid))
+      (do (tenancy-check! request fork-id) (not-found request)))))
+
+(defn- proposal-parties
+  "Resolve the current db, the merge, and target/source ownership.
+  Returned as a map; the merge is nil if either recipe is gone."
+  [request prop]
+  (let [db (d/db (db/get-connection))
+        m (proposal/merge-for db prop)
+        target (recipe/recipe-by-id db (get-in prop [:proposal/target :recipe/id]))
+        source (recipe/recipe-by-id db (get-in prop [:proposal/source :recipe/id]))
+        uid (:user-eid request)]
+    {:db db
+     :mrg m
+     :target-owner? (recipe/owned-by? target uid)
+     :source-owner? (recipe/owned-by? source uid)}))
+
+(defn proposal-show
+  "GET /proposals/:id — the three-way merge preview (open proposals only).
+  Visible to the two parties; the target owner also gets the accept/decline
+  form. A closed proposal redirects to the (merged) target recipe."
+  [request]
+  (let [pid (path-uuid request)
+        prop (proposal/proposal-by-id (d/db (db/get-connection)) pid)]
+    (if (and prop (= :open (:proposal/status prop)))
+      (let [{:keys [mrg target-owner? source-owner?]} (proposal-parties request prop)]
+        (cond
+          (nil? mrg) (not-found request)
+          (or target-owner? source-owner?)
+          (html
+            (views/proposal-page
+              (:locale request)
+              (:user-email request)
+              (:admin? request)
+              prop
+              mrg
+              {:target-owner? target-owner?}))
+          :else (not-found request)))
+      (if prop
+        (response/redirect (str "/recipes/" (get-in prop [:proposal/target :recipe/id])))
+        (not-found request)))))
+
+(defn- resolutions-from
+  "Map each conflicting field to its chosen value (ours/theirs) from the form."
+  [request mrg]
+  (into
+    {}
+    (for [[f fv] (:fields mrg)
+          :when (= :conflict (:status fv))
+          :let [choice (get-in request [:params (keyword (str "resolve-" (name f)))])]]
+      [f (if (= "theirs" choice) (:theirs fv) (:ours fv))])))
+
+(defn proposal-accept
+  "POST /proposals/:id/accept — the target owner merges the proposal."
+  [request]
+  (let [pid (path-uuid request)
+        prop (proposal/proposal-by-id (d/db (db/get-connection)) pid)]
+    (if (and prop (= :open (:proposal/status prop)))
+      (let [{:keys [mrg target-owner?]} (proposal-parties request prop)]
+        (if (and mrg target-owner?)
+          (let [expected (some-> (get-in request [:params :expected-version])
+                                 parse-long
+                                 java.time.Instant/ofEpochMilli)
+                result (proposal/accept!
+                         (db/get-connection)
+                         (:user-eid request)
+                         pid
+                         (resolutions-from request merge)
+                         expected)
+                re-render (fn [notice]
+                            (let [{:keys [mrg]} (proposal-parties request prop)]
+                              (-> (html (views/proposal-page (:locale request)
+                                                             (:user-email request)
+                                                             (:admin? request)
+                                                             prop
+                                                             mrg
+                                                             {:target-owner? true
+                                                              :notice notice}))
+                                  (assoc :status 409))))]
+            (case result
+              true (response/redirect
+                     (str
+                       "/recipes/"
+                       (get-in prop [:proposal/target :recipe/id])
+                       "?toast=proposal-merged"))
+              :conflict (re-render :proposal/stale-notice)
+              :incomplete (re-render :proposal/unresolved-notice)
+              (not-found request)))
+          (not-found request)))
+      (not-found request))))
+
+(defn proposal-decline
+  "POST /proposals/:id/decline — the target owner declines."
+  [request]
+  (let [pid (path-uuid request)
+        prop (proposal/proposal-by-id (d/db (db/get-connection)) pid)]
+    (proposal/decline! (db/get-connection) (:user-eid request) pid)
+    (if prop
+      (response/redirect (str "/recipes/" (get-in prop [:proposal/target :recipe/id])))
+      (not-found request))))
 
 (defn- parse-uuid*
   "Parse an arbitrary string as a UUID, or nil.
