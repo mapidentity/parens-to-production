@@ -62,7 +62,7 @@ Four settings, one idea: Caddy actively polls each upstream's [`/health`](35-goi
 
 ## The deploy becomes a handoff
 
-`ops/deploy-pair.sh` replaces stop-swap-start with: find the idle port, give it the new build, gate it, then retire the old --
+`ops/deploy-pair.sh` replaces stop-swap-start with: find the idle port, give it the new build *and its assets*, smoke it, then retire the old --
 
 ```bash
 # Whichever port is serving stays up; the other is idle and gets the build.
@@ -71,22 +71,25 @@ for p in "${ports[@]}"; do
   if curl -fsS "http://127.0.0.1:$p/health" >/dev/null 2>&1; then live=$p; else idle=$p; fi
 done
 ,,,
+cp -a "$new_static/." "$static/"        # new assets, additively (old hashes stay)
 cp -f "$new_jar" "/opt/myapp/myapp-$idle.jar"
 sudo systemctl start "myapp@$idle"      # the old instance keeps serving meanwhile
 
-# Health-gate the newcomer directly on its own port, not through the proxy.
-for _ in $(seq 1 30); do
-  if curl -fsS "http://127.0.0.1:$idle/health" >/dev/null 2>&1; then
-    if [ -n "$live" ]; then
-      # SIGTERM → the shutdown hook drains in-flight requests, then the
-      # port closes and Caddy's health checks steer everything to the
-      # new instance. Old jar stays on disk as the rollback.
-      sudo systemctl stop "myapp@$live"
-    fi
-    ,,,
+# Smoke the newcomer on its own port: health, home render, every manifest asset
+# present. Only on a clean smoke do we drain the old instance.
+if smoke "$idle"; then
+  if [ -n "$live" ]; then
+    # SIGTERM → the shutdown hook drains in-flight requests, then the
+    # port closes and Caddy's health checks steer everything to the
+    # new instance. Old jar stays on disk as the rollback.
+    sudo systemctl stop "myapp@$live"
+  fi
+  ,,,
 ```
 
 Compare the failure modes with [chapter 34's script](34-ci-cd.md), because they have quietly inverted. There, an unhealthy new build meant *rollback under pressure*: the site was already down, and the script raced to restore the previous jar. Here, an unhealthy new build means *nothing happened*: the old instance never stopped serving, the script stops the broken newcomer and exits non-zero, and the failed deploy is a log line instead of an outage. Rollback after a *healthy-but-wrong* deploy is equally calm: the old jar is still sitting at the other port's path, one `systemctl start` away. The health poll also gates the other direction -- the old instance is not stopped until the new one has *proven* it serves, so there is no instant with zero live instances.
+
+Two hardenings the [resilience audit](46-watching-the-watchers.md) added to both deploy scripts, single and pair. First, the gate is now a *smoke*, not just `/health`: it also fetches the home page (a jar that boots and reads the database but 500s on a real render passes `/health` and fails here) and checks that every content-hashed asset the manifest names is present on disk. Second -- and this is the one that made a rollback dangerous -- the jar and its asset-manifest are treated as **one release**. They used to ship separately, the manifest overwritten in place before the jar swapped, so rolling the jar back left old code pointing at a newer manifest that 404'd its own CSS: the rollback made it worse. Now the script snapshots jar and manifest together and restores them together, so old code always meets the manifest it was built with. The two instances still share one static tree, but each reads the manifest into memory at its own boot, so the newcomer boots against the new manifest while the old instance keeps serving the one it started with -- coherent on both sides of the window.
 
 ## One build, one validator
 
@@ -151,7 +154,8 @@ Two hundred eighty requests spanning the entire switchover -- instance starting,
 The demo is unambiguous; here is the fine print, which is the half of the chapter you were promised.
 
 - **The overlap window is a compatibility contract, and you sign it on every deploy.** For a few seconds, the old and new build serve simultaneously against one database. That is only safe while: the schema change is *additive* ([the going-live migration story](35-going-live.md) gains its constraint -- attributes are added, never repurposed, and the old build must tolerate the new attribute's presence, which Datomic's accretive schema culture makes the default rather than the discipline); the *session shape* is stable, because a cookie sealed by the old build will be opened by the new one seconds later (renaming a session key is a breaking deploy -- ship it as read-both, then retire); and [island endpoints](22-live-preview.md) tolerate one version of skew, since a page rendered by the old build may POST to the new. None of this machinery enforces the contract. It is a *review discipline*, and the honest name for the cost is: every deploy now has a compatibility dimension that stop-the-world deploys never had.
-- **Static assets must accumulate, not replace.** A page rendered by the old build references old content-hashed URLs; ship the new static tree *additively* (no `--delete`) or the overlap serves pages whose assets 404. Hashed filenames make coexistence free; garbage-collecting last month's hashes becomes a small chore [the backup chapter's timers](39-backup-restore.md) sweep up.
+- **Static assets must accumulate, not replace.** A page rendered by the old build references old content-hashed URLs; the deploy script installs the new static tree *additively* (`cp -a`, never a delete) or the overlap serves pages whose assets 404. Hashed filenames make coexistence free; garbage-collecting last month's hashes becomes a small chore [the backup chapter's timers](39-backup-restore.md) sweep up. The manifest that *names* the current hashes is the one exception -- it is overwritten, but snapshotted first and rolled back with the jar, so a rollback never strands old code on a manifest it did not ship with ([ch.46](46-watching-the-watchers.md)).
+- **Rollback is exactly one build deep.** The script keeps `myapp.jar.prev` and `asset-manifest.edn.prev` -- the immediately previous release, no more. Going further back is not a stored artifact; it is a *rebuild from the git sha*, which [the reproducible build](04-build-hardening.md) makes exact rather than approximate (`/health` reports the running `build_id`, so you always know which sha you are on). If your incident cadence needs instant N-deep rollback, retain the last N sha-named jars+manifests and activate by id; this book keeps one, because a second bad deploy on top of a bad one is the rare case, and the rebuild is minutes.
 - **Two peers cost two heaps.** Each instance carries its own object cache ([sized by `-Xmx`](35-going-live.md), [valued by measurement](32-server-path-measured.md)) -- during every deploy the box must afford both, and the new instance boots with its cache cold, so the first requests it serves are its slowest. Budget memory for two, or accept that deploys briefly double the box's footprint.
 - **This is not high availability.** Same box, same transactor, same PostgreSQL: the pair removes the *deploy* window and nothing else. A transactor restart still pauses writes ([the peer rides it out](08-datomic.md)); a box failure still takes everything. If this chapter's machinery has taught the deploy to be invisible, the visible outages that remain are precisely what [the operating chapters](37-runtime-legibility.md) exist to catch.
 - **You may not need it.** The honest baseline is [chapter 34's softened window](34-ci-cd.md): a few seconds of branded, self-healing maintenance page, at zero additional moving parts. The pair adds a template unit, a port scheme, idle-detection, and the compatibility contract above -- machinery that must be owned by whoever deploys. Adopt it when deploy frequency times audience makes seconds-per-deploy a real cost; before that, the simpler script is the better engineering.
