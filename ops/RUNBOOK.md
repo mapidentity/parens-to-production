@@ -114,6 +114,22 @@ Rolling back the restore is editing that one line back. If the backup target is
 off-box (`BACKUP_URI=s3://…`, as production should be — the local disk shares
 the failure domain you are recovering from), the same command reads from there.
 
+## Roll back a bad deploy
+
+A deploy that passed its smoke but is wrong in production rolls back as one unit
+— jar *and* asset-manifest together, so old code never meets a newer manifest:
+
+```
+/etc/scripts/deploy-myapp.sh --rollback     # single-instance; restores .prev + re-smokes
+# pair topology: the previous jar is still at the other port's path —
+#   systemctl start myapp@<old-port> ; systemctl stop myapp@<new-port>
+```
+
+Rollback is **one build deep** (`myapp.jar.prev` + `asset-manifest.edn.prev`).
+To go further back, rebuild from the git sha — `/health` reports the running
+`build_id`, so you know exactly which sha you are on — and deploy that. The
+[reproducible build](../chapters/04-build-hardening.md) makes the rebuild exact.
+
 ## Repair a bad write (surgical, in place)
 
 A logic bug can write *valid-but-wrong* data — every availability signal green,
@@ -160,7 +176,13 @@ leaked key is worthless immediately.
 2. If a fix version exists: bump it in `deps.edn`, run the gates
    (`clojure -X:test`, `./lint`, `clojure -T:build uber`), deploy via the
    pipeline. The [minimal-downtime pair](../chapters/36-minimal-downtime.md)
-   means no user-visible window.
+   means no user-visible window. **One exception:** if the bumped dependency
+   is `com.datomic/peer`, this is NOT an ordinary deploy — the peer and the
+   running transactor must be version-compatible, and CI (which tests on
+   `datomic:mem`) cannot catch a mismatch. The new jar would fail to connect,
+   fail its smoke, and roll back — a stuck deploy, not a broken box. Upgrade
+   the transactor distribution first (match `deps.edn`'s peer version), then
+   ship the jar.
 3. If no fix yet and the CVE does not apply to how the dependency is used,
    add a scoped, dated, justified entry to `.nvd-suppressions.xml` so the
    gate stays green *honestly* — never suppress blind.

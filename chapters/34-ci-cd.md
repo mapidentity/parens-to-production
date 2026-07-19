@@ -129,6 +129,16 @@ on:
       - 'myapp/**'
       - '.forgejo/**'
 
+# Single-flight the deploy. Two quick pushes to main would otherwise run two
+# pipelines that race on the box's jar/manifest/.prev snapshot — an in-flight
+# bad build can overwrite the "last good" one, so a rollback restores the wrong
+# artifact. `cancel-in-progress: false` lets the first finish (a half-applied
+# deploy is worse than a queued one); the box's own `flock` (ops/deploy-myapp.sh)
+# is the belt to this suspenders, for the manual-run-plus-CI overlap CI can't see.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
 env:
   CI_IMAGE: myapp-ci:latest
   APP_HOST: ${{ vars.APP_HOST }}
@@ -229,23 +239,21 @@ jobs:
 
 > **A note on the `myapp/` path prefix.** This workflow assumes a *monorepo* layout where the application lives in a `myapp/` subdirectory -- hence `-w /workspace/myapp`, `myapp/target/myapp.jar`, and the `myapp/**` path filters, which usefully scope CI to the app and ignore changes elsewhere in the repo. The book's companion repository is flat, though -- the app *is* the repo root -- so there the working directory is `/workspace`, the jar is `target/myapp.jar`, and the path filters name the app's own globs (`src/**`, `test/**`, `deps.edn`, `input.css`, `static/**`) rather than one directory. One path is *not* a plain prefix swap: the asset pipeline's output directory is itself named `myapp/static/` (see [the asset-pipeline chapter](29-asset-pipeline.md)), so under `-w /workspace/myapp` the built tree lands at `myapp/myapp/static/` and the static `scp` must point there -- whereas in the flat repo it is simply `myapp/static/` at the root, exactly as the deploy steps below write it. Match the paths to your own layout rather than copying the prefixes blindly.
 
-The deploy steps continue in the same job:
+The deploy steps continue in the same job. The jar and the static tree ship to a *staging* directory and are handed to the deploy script **together** -- because they are one release. An earlier version scp'd the static tree straight into `/mnt/data/static` first, overwriting the asset-manifest in place, and only then swapped the jar; a rollback restored the jar but not the manifest, so old code met a newer manifest and 404'd its own CSS. The script now owns both halves (see `ops/deploy-myapp.sh`), so they install, gate, and roll back as a unit:
 
 ```yaml
-      - name: Deploy static files
+      - name: Deploy release (jar + assets, one coherent unit)
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         env:
           SSH_OPTS: -o StrictHostKeyChecking=no -i /root/.ssh/deploy_ed25519
         run: |
-          scp -r $SSH_OPTS myapp/static/* deploy@$APP_HOST:/mnt/data/static/
-
-      - name: Deploy app
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        env:
-          SSH_OPTS: -o StrictHostKeyChecking=no -i /root/.ssh/deploy_ed25519
-        run: |
-          scp $SSH_OPTS myapp/target/myapp.jar deploy@$APP_HOST:/tmp/myapp.jar
-          ssh $SSH_OPTS deploy@$APP_HOST '/etc/scripts/deploy-myapp.sh /tmp/myapp.jar'
+          ssh $SSH_OPTS deploy@$APP_HOST 'rm -rf /tmp/release && mkdir -p /tmp/release'
+          scp -r $SSH_OPTS myapp/static     deploy@$APP_HOST:/tmp/release/static
+          scp    $SSH_OPTS myapp/target/myapp.jar deploy@$APP_HOST:/tmp/release/myapp.jar
+          # The script snapshots jar+manifest, installs assets additively, swaps
+          # the jar, and gates on a real smoke (home render + every manifest
+          # asset present), rolling BOTH back together on any failure.
+          ssh $SSH_OPTS deploy@$APP_HOST '/etc/scripts/deploy-myapp.sh /tmp/release/myapp.jar /tmp/release/static'
 ```
 
 > **One insecure default to close before production.** `StrictHostKeyChecking=no` disables SSH host-key verification on the deploy connection, which leaves it open to a man-in-the-middle on the runner-to-host path. It is the convenient choice for a first green pipeline, but it is the one place this otherwise-hardened workflow trusts the network. The fix is to pin the host's key: capture it once with `ssh-keyscan $APP_HOST` (verified out-of-band), store it as a secret, write it to `~/.ssh/known_hosts` in the job, and drop the flag (or use `StrictHostKeyChecking=yes` with that `known_hosts` in place). Treat the `no` above as a placeholder, not the recommendation.
