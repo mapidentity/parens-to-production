@@ -63,6 +63,13 @@
   (let [{:keys [width height]} (vips/probe f)]
     [width height]))
 
+(deftest image-processor-check-fails-fast
+  (testing "with libvips present, the startup check returns its version"
+    (is (re-find #"vips" (upload/check-image-processor!)) "reports a libvips version"))
+  (testing "a missing libvips throws at the check, so the boot fails loudly"
+    (with-redefs [vips/vipsthumbnail-bin "definitely-not-a-real-vips-binary-xyz"]
+      (is (thrown? clojure.lang.ExceptionInfo (upload/check-image-processor!))))))
+
 (deftest store-normalizes-into-a-content-addressed-webp-source
   (with-uploads-root
     (fn [_dir]

@@ -100,6 +100,14 @@
   ^File []
   (io/file (config/get-config :uploads-root)))
 
+(defn check-image-processor!
+  "Prove the libvips image processor is present at startup, or throw.
+  Wired into the server boot (see `myapp.core`) so a host missing libvips fails
+  the deploy loudly, rather than serving until a user's first upload 500s.
+  Returns the libvips version string."
+  []
+  (vips/check!))
+
 (defn- sha256
   "Lowercase-hex SHA-256 of a byte array — the content address."
   [^bytes b]

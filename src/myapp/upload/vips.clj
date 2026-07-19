@@ -27,9 +27,12 @@
 
 (set! *warn-on-reflection* true)
 
-(def ^:private vipsheader-bin
+(def vipsheader-bin
+  "The vipsheader executable, a bare name resolved on PATH.
+  Overridable for a box that installs libvips somewhere non-standard."
   "vipsheader")
-(def ^:private vipsthumbnail-bin
+(def vipsthumbnail-bin
+  "The vipsthumbnail executable (see `vipsheader-bin`)."
   "vipsthumbnail")
 
 (def ^:private timeout-ms
@@ -113,3 +116,24 @@
            :exit exit
            :err err})))
     out))
+
+(defn check!
+  "Verify libvips is installed and runnable, returning its version, or throw.
+  Meant to run at STARTUP so a missing image processor fails the boot — loud, and
+  at deploy time — instead of surfacing as a 500 on a user's first upload. A
+  missing binary makes `ProcessBuilder` throw, which is caught and reported as the
+  actionable message rather than a raw stack trace."
+  []
+  (let [{:keys [exit out err]}
+        (try
+          (run [vipsthumbnail-bin "--version"])
+          (catch Exception e
+            {:exit -1
+             :err (.getMessage e)}))]
+    (when-not (zero? (long exit))
+      (throw
+        (ex-info
+          "libvips (libvips-tools) is not available on this host — the image processor is required"
+          {:exit exit
+           :err err})))
+    (str/trim (if (str/blank? out) (str err) out))))

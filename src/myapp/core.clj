@@ -63,6 +63,11 @@
     (db/create-database!)
     (println "Initializing analytics database...")
     (analytics/create-database!)
+    ;; Prove the native image processor (libvips) before accepting traffic: a
+    ;; host missing libvips-tools must fail the boot here — loud, at deploy time,
+    ;; with the pair deploy (ch.36) keeping the old instances serving — not a 500
+    ;; on some user's first photo upload days later.
+    (println (str "Image processor: libvips " (upload/check-image-processor!)))
     ;; Start HTTP server
     (println (str "Starting server on " host ":" port "..."))
     (reset! server
