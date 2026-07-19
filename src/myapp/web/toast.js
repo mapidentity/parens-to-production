@@ -56,7 +56,8 @@
     'recipe-published': 'New version published ✓',
     'fork-created': 'Fork created ✓',
     'recipe-deleted': 'Recipe deleted',
-    'version-restored': 'Version restored ✓'
+    'version-restored': 'Version restored ✓',
+    'proposal-merged': 'Proposed change merged ✓'
   };
 
   function processToastParam() {

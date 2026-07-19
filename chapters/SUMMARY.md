@@ -73,4 +73,9 @@
 - [Detect and Respond: Security Events, fail2ban, and the Levers](42-detect-respond.md)
 - [Harden and Patch: The Firewall, the CVE Gate, and the Morning After](43-harden-patch.md)
 
+# Collaboration
+
+- [Proposing Changes Back: The Three-Way Merge](44-three-way-merge.md)
+- [N People Are Looking: Real-Time Presence Without Leaving SSR](45-live-presence.md)
+
 [Afterword: What You Built, and Where It Goes](afterword.md)

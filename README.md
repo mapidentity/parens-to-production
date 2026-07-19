@@ -4,7 +4,7 @@
 
 This repository is **two things at once**:
 
-1. **An online book** — 43 chapters (in [`chapters/`](chapters/)) that walk through
+1. **An online book** — 45 chapters (in [`chapters/`](chapters/)) that walk through
    building a production-grade SaaS in Clojure and Datomic, from a reproducible
    dev environment to automated CI/CD. Built with [mdBook](https://rust-lang.github.io/mdBook/)
    and published to GitHub Pages.
@@ -123,6 +123,8 @@ src/myapp/           the application
   config.clj           Aero config + key management
   db/                  Datomic access + java.time bridge + tenant isolation
   recipe/core.clj      the recipe-versioning domain (forks, history, diff, search, preview)
+  recipe/proposal.clj  pull-request-style proposals + the three-way merge (ch.44)
+  web/presence.clj     live viewer presence over Server-Sent Events (ch.45)
   auth/                passwordless magic-link auth
   web/                 routes, handlers, Hiccup views, the dev source inspector
   admin/, analytics/   admin dashboard + the signup funnel

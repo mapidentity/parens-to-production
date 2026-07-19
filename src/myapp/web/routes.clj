@@ -353,6 +353,13 @@
         :post #'handler/recipe-update}]
       ["/recipes/:id/fork" {:post #'handler/recipe-fork}]
       ["/recipes/:id/delete" {:post #'handler/recipe-delete}]
+      ;; Proposals — a fork's changes offered back to its parent (a pull
+      ;; request), merged three-way. All authed: propose (fork owner),
+      ;; view/accept/decline (the two parties; accept gated to the target owner).
+      ["/recipes/:id/propose" {:post #'handler/proposal-propose}]
+      ["/proposals/:id" {:get #'handler/proposal-show}]
+      ["/proposals/:id/accept" {:post #'handler/proposal-accept}]
+      ["/proposals/:id/decline" {:post #'handler/proposal-decline}]
       ["/admin" {:middleware [wrap-admin]}
        ["" {:get #'handler/admin-dashboard}]
        ["/stats"
@@ -363,6 +370,8 @@
     ;; Declared last so the static mutation paths above win over `:id`.
     ["/recipes/:id" {:get #'handler/recipe-show}]
     ["/recipes/:id/history" {:get #'handler/recipe-history}]
+    ;; Live viewer presence (SSE) — public, stateful, real-time.
+    ["/recipes/:id/viewers" {:get #'handler/viewers-stream}]
     ["/recipes/:id/at/:t" {:get #'handler/recipe-version}]
     ["/recipes/:id/diff" {:get #'handler/recipe-diff}]]
    ["/dev/ws"
