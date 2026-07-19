@@ -134,6 +134,7 @@ src/myapp/           the application
   i18n*                en/nl translations
 dev/                 REPL helpers, live/hot reload, the inspector loader, demo seed data
 ops/                 the production box, its operation, AND its defense: units, timers, Caddyfile, deploy/backup/watchdog scripts, fail2ban, nftables, the runbook (ch.35-43)
+ops/lab/             the transactor-failover drill: two-transactor pair + probe harness + runbook (ch.41)
 test/myapp/          tests
 e2e/                 Playwright specs
 .devcontainer/, caddy/, certificates/, compose.yml   the dev environment (ch.3)
