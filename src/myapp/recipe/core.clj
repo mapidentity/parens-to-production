@@ -68,12 +68,47 @@
       (db/pull* db pull-pattern eid))))
 
 (defn all-recipes
-  "All recipes, most-recently-updated first. Public browse list."
+  "All recipes, most-recently-updated first.
+  Used where the whole set is genuinely needed (the sitemap); the public browse
+  is keyset-paginated (`browse-page`) instead of loading everything."
   [db]
   (->> (d/q '[:find [?e ...] :where [?e :recipe/id]] db)
        (map #(db/pull* db pull-pattern %))
        (sort-by :recipe/updated-at #(compare %2 %1))
        vec))
+
+(def catalog-page-size
+  "Recipes per public catalog page."
+  12)
+
+(defn browse-page
+  "One page of the public catalog, alphabetical by title, keyset-paginated.
+
+  `after` is nil (first page) or {:recipe/title <str> :eid <long>} — the keyset
+  of the previous page's last row. Returns {:recipes [..] :next <cursor|nil>}.
+
+  O(page): `d/index-range` seeks the `:recipe/title` AVET index straight to the
+  cursor and reads only one page forward, so the browse read does not grow with
+  the catalog — the fix for a list that loaded every recipe on every request.
+  Datomic's covering indexes are ascending, so the order is A→Z; a descending
+  'newest first' is not an index primitive here and is the dashboard's job.
+
+  The keyset is `(title, eid)` — and it MUST be `eid`, not the recipe's uuid,
+  because that is exactly the order the AVET index yields datoms in. Tie-breaking
+  on the uuid would disagree with the index and skip a row whose uuid happened to
+  sort before its same-title predecessor's. `eid` is the datom's own entity id,
+  so it never disagrees. Callers keep the cursor opaque (see the handler)."
+  [db after limit]
+  (let [cursor [(:recipe/title after) (:eid after)]
+        datoms (->> (d/index-range db :recipe/title (:recipe/title after) nil)
+                    (drop-while (fn [d] (and after (<= (compare [(:v d) (:e d)] cursor) 0))))
+                    (take (inc limit)))
+        page (vec (take limit datoms))]
+    {:recipes (mapv #(db/pull* db pull-pattern (:e %)) page)
+     :next (when (> (count datoms) limit)
+             (let [d (peek page)]
+               {:recipe/title (:v d)
+                :eid (:e d)}))}))
 
 (defn- fulltext-escape
   "Neutralize Lucene query syntax in user input.

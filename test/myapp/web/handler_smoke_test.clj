@@ -45,6 +45,29 @@
   (testing "landing page (no session)" (is (ok? (handler/home (h/request :get "/")))))
   (testing "browse list when empty" (is (ok? (handler/recipes-index (h/request :get "/recipes"))))))
 
+(deftest browse-is-keyset-paginated
+  (let [u (mk-user! "cook@x.lan")]
+    (dotimes [i 13] ; one more than a page (12)
+      (recipe/create!
+        h/*conn*
+        u
+        {:title (format "recipe-%02d" (inc i))
+         :servings 1}))
+    (let [p1 (handler/recipes-index (h/request :get "/recipes"))
+          token (second (re-find #"[?&]after=([A-Za-z0-9_-]+)" (:body p1)))]
+      (testing "page one shows a full page + a Next link, and holds back the overflow"
+        (is (ok? p1))
+        (is (str/includes? (:body p1) "recipe-01"))
+        (is (str/includes? (:body p1) "recipe-12"))
+        (is (not (str/includes? (:body p1) "recipe-13")) "the 13th spills to page two")
+        (is (some? token) "the Next link carries an opaque cursor"))
+      (testing "following that cursor (the real link) renders page two"
+        (let [p2 (handler/recipes-index
+                   (assoc (h/request :get "/recipes")
+                     :params {:after token}))]
+          (is (str/includes? (:body p2) "recipe-13") "page two shows what page one held back")
+          (is (not (str/includes? (:body p2) "recipe-01")) "and not page one's items"))))))
+
 (deftest recipe-pages-render
   (let [u (mk-user! "cook@x.lan")
         id (recipe/create!

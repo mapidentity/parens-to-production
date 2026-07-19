@@ -77,6 +77,8 @@
    :recipe/forked-from "Forked from"
    :recipe/original "Original recipe"
    :recipe/no-recipes "No recipes yet."
+   :recipe/next-page "Next"
+   :recipe/pagination "Pagination"
    :recipe/note-label "What changed? (optional)"
    :recipe/note-placeholder "e.g. Halved the salt — it was too much"
    :recipe/preview-title "Preview"

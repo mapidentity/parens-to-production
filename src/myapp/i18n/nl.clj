@@ -79,6 +79,8 @@
    :recipe/forked-from "Geforkt van"
    :recipe/original "Origineel recept"
    :recipe/no-recipes "Nog geen recepten."
+   :recipe/next-page "Volgende"
+   :recipe/pagination "Paginering"
    :recipe/note-label "Wat is er veranderd? (optioneel)"
    :recipe/note-placeholder "bijv. Zout gehalveerd — het was te veel"
    :recipe/preview-title "Voorvertoning"

@@ -69,6 +69,10 @@
     :db/valueType :db.type/string
     :db/cardinality :db.cardinality/one
     :db/fulltext true
+    ;; :db/index true adds the AVET btree (distinct from the fulltext Lucene
+    ;; index) so the catalog can KEYSET-paginate: seek the title index to the
+    ;; cursor and take one page, O(page), instead of loading every recipe.
+    :db/index true
     :db/doc "Recipe title"}
    {:db/ident :recipe/description
     :db/valueType :db.type/string

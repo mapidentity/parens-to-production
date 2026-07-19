@@ -86,4 +86,8 @@
 
 - [The Queue the Database Already Is: Durable Jobs Without a Broker](47-job-queue.md)
 
+# Scale
+
+- [Paging the Catalog: Keyset Pagination on an Ascending Index](48-pagination.md)
+
 [Afterword: What You Built, and Where It Goes](afterword.md)
