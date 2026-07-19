@@ -44,6 +44,9 @@ the magnifier to search the full text.
   containment levers (ban an IP/user, rotate a key with a grace window), a
   default-deny **nftables** firewall, a real **CVE gate**, and a 3am
   **runbook**
+- **Collaboration**: a fork's changes **proposed back** and resolved by a
+  **three-way merge** (the common ancestor is a read), and **real-time
+  viewer presence** over Server-Sent Events — SSR is not the opposite of live
 
 Start with [the primer](01-primer.md) for what we are building and why, or jump
 to any topic from the table of contents.

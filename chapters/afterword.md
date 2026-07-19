@@ -1,6 +1,6 @@
 # Afterword: What You Built, and Where It Goes
 
-The book opened with a wager: that an application built for correctness, security, and the daily experience of working on it -- with no chapter ever trading the quality of the thing for the ease of explaining it -- would end up not harder to own but simpler. Forty-three chapters later, that is the claim to settle. So it is worth saying plainly what now exists, because the proof is the whole of it standing together.
+The book opened with a wager: that an application built for correctness, security, and the daily experience of working on it -- with no chapter ever trading the quality of the thing for the ease of explaining it -- would end up not harder to own but simpler. Forty-five chapters later, that is the claim to settle. So it is worth saying plainly what now exists, because the proof is the whole of it standing together.
 
 ## What you built
 
@@ -12,7 +12,9 @@ On that foundation you added the features a real SaaS needs: forms whose validat
 
 Then you learned to operate it, with the same rule -- drilled, or not claimed. The process became legible (a metrics endpoint fed by the JVM, the request path, and the peer's own telemetry; an access log; browser errors beaconed home) and then loud: a watchdog that knows the one outage that keeps every page green, crash loops that converge to an email with the stack trace attached, and an external probe for the failure the box cannot report. Backups run nightly and -- the part that matters -- were restored and verified, history intact. The right to be forgotten went from IOU to runbook, excision run for real, its silent no-op on dev storage pinned as the trap it is. The road beyond one box was audited with prices, not promised. And then you taught the box to defend itself: a client-IP fix that turned out to be a live auth-DoS, a security-event trail feeding a fail2ban that bans the brute-force shape at the packet level, live containment levers -- ban an IP, ban a user, rotate a key through a grace window -- that need no redeploy, and a default-deny firewall, a real CVE gate, and unattended OS patching keeping the surface small and current. Every security control drilled, or honestly named as reasoned.
 
-That is the arc -- environment, data, rendering, tooling, features, hardening, going live, operating -- and the point of walking it in order was never the order. It was that each layer was built well enough that the next could stand on it without apology.
+And then, with the whole system in view, you returned to the application for two features the single-page world treats as its own — and found both reachable from here. Asynchronous collaboration: a fork's changes proposed back to the original and resolved by a three-way merge, whose hard input (the common ancestor) turned out to be a *read* because immutable history had been holding it all along, and whose accept inherited the recipe editor's conflict safety for free. And real-time collaboration: a live viewer count pushed over Server-Sent Events, ephemeral state in an atom, an island obeying the same enhancement rule as every other, sliding in under a Content-Security-Policy that had already, correctly, allowed the app to talk to itself. Server-rendering was never the opposite of live.
+
+That is the arc -- environment, data, rendering, tooling, features, hardening, going live, operating, defending, collaborating -- and the point of walking it in order was never the order. It was that each layer was built well enough that the next could stand on it without apology.
 
 ## What this book deliberately left out
 
