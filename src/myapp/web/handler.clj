@@ -476,18 +476,35 @@
           (invalid-form request r raw errors)
           (do (tenancy-check! request id) (not-found request))))
       (let [{:keys [title description servings ingredients steps note]} values
-            ok? (recipe/update!
-                  (db/get-connection)
-                  (:user-eid request)
-                  id
-                  {:recipe/title title
-                   :recipe/description description
-                   :recipe/servings servings
-                   :recipe/ingredients ingredients
-                   :recipe/steps steps}
-                  note)]
-        (if ok?
-          (response/redirect (str "/recipes/" id))
+            ;; The optimistic-concurrency token the form carried: the
+            ;; content clock the editor loaded, as epoch millis.
+            expected (some-> (get-in request [:params :expected-version])
+                             parse-long
+                             java.time.Instant/ofEpochMilli)
+            result (recipe/update!
+                     (db/get-connection)
+                     (:user-eid request)
+                     id
+                     {:recipe/title title
+                      :recipe/description description
+                      :recipe/servings servings
+                      :recipe/ingredients ingredients
+                      :recipe/steps steps}
+                     note
+                     expected)]
+        (case result
+          true (response/redirect (str "/recipes/" id))
+          ;; Stale edit: re-render at 409 against the CURRENT recipe (so the
+          ;; hidden token refreshes and a resubmit overwrites deliberately),
+          ;; with the user's edits preserved on top.
+          :conflict (let [current (recipe/recipe-by-id (d/db (db/get-connection)) id)]
+                      (-> (html (views/recipe-form (:locale request)
+                                                   (:user-email request)
+                                                   (:admin? request)
+                                                   current
+                                                   {:submitted raw
+                                                    :conflict? true}))
+                          (assoc :status 409)))
           (do (tenancy-check! request id) (not-found request)))))))
 
 (defn recipe-preview

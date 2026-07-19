@@ -87,6 +87,10 @@
    :recipe/ingredients-label "Ingrediënten (één per regel)"
    :recipe/steps-label "Bereiding (één stap per regel)"
    :recipe/save "Recept opslaan"
+   :recipe/conflict-title "Iemand anders heeft dit recept bewerkt terwijl jij het openstond."
+   :recipe/conflict-body
+   "Je wijzigingen hieronder blijven behouden. Nogmaals opslaan overschrijft de huidige versie —"
+   :recipe/conflict-review "bekijk wat er is veranderd"
    :recipe/create "Recept aanmaken"
    :recipe/forks "Forks"
    :recipe/no-forks "Nog geen forks — wees de eerste."

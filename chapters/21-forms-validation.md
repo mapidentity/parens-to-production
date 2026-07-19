@@ -274,6 +274,31 @@ The unit tests read like the specification the chapter has been arguing for, whi
   "create! throws instead of coining a title — no more \"Untitled recipe\"")
 ```
 
+## A second reason the write refuses: someone else got there first
+
+Everything above is about the write refusing *your* input. There is a second reason a save can fail that has nothing to do with what you typed: someone else edited the same recipe while your form was open. [The load-test measurement](41-beyond-one-box.md) surfaced this as a silent property -- two saves to one recipe were last-write-wins, and the loser's edit vanished without a word. For a single-owner-per-recipe model the collision is rare (one person, two tabs), but "rare and silent" is exactly the combination worth closing, and it turns out to be *the same re-render this chapter already built*, with a different cause.
+
+The mechanism is optimistic concurrency: the form remembers the version it was rendered from, and the save applies only if that version is still current. The whole design lives in choosing what "version" means, and the obvious answer is wrong in an instructive way.
+
+**The wrong token: the global basis-t.** Datomic hands every database value a `basis-t` -- the monotonic count of transactions in the *whole* database. It is tempting to use it as the version: capture it when the form loads, reject the save if it moved. But it moves on *every* transaction anywhere -- another user editing a different recipe, the analytics database recording a magic-link, an activity cursor advancing on some unrelated dashboard. Between loading a form and saving it, the global basis-t has almost certainly advanced for reasons that have nothing to do with your recipe, so this check would reject nearly every save as a false conflict. The token has to be **scoped to the entity** -- and, more precisely, to the entity's *content*.
+
+**The right token: the recipe's own content clock.** The app already maintains exactly that marker, and [chapter 9 built it for a different reason](09-recipe-domain.md): `:recipe/updated-at` is bumped by `update!` on a content edit and *not* by a reorder, because a dashboard drag is bookkeeping, not a new version. That same content-versus-bookkeeping line -- the one that decides what counts as a version -- now decides what counts as a conflict. A reorder in another tab must not block your edit, and because it never touches `:recipe/updated-at`, it doesn't. The token is the recipe's last-content-change timestamp, carried through the form as a hidden field.
+
+**The check runs inside the transaction, or it is a lie.** The naive shape -- read the current `updated-at` in the handler, compare, then transact if it matches -- has a race in the gap between the read and the write: two savers both read the old value, both pass the check, both write, and you are back to last-write-wins with extra steps. The check must be *atomic* with the write, which means it belongs on the transactor. Datomic's `:db.fn/cas` (compare-and-swap) is precisely that -- it asserts the new value only if the current one still equals the expected one, evaluated on the transactor against the live database:
+
+```clojure
+tx-forms (if expected
+           [[:db.fn/cas eid :recipe/updated-at expected (time/now)]
+            (merge {:db/id eid} content)]
+           [(merge {:db/id eid :recipe/updated-at (time/now)} content)])
+```
+
+If the recipe moved underneath the edit, the CAS fails, the transaction touches nothing, and `update!` catches the failure and returns `:conflict` instead of `true`. (Without a token -- the seed, a programmatic caller -- it is the plain bump, unchanged: optimistic concurrency is opt-in, engaged only when a form supplies the version it saw.)
+
+**And then it is just a re-render.** The handler's three-way branch reuses everything this chapter built: `true` redirects, `nil` is the [tenancy 404](42-detect-respond.md), and `:conflict` re-renders the form at **409** -- the user's edits preserved on top exactly as an invalid submission preserves them, a banner explaining what happened, and the hidden token refreshed to the *current* version so that saving again is a deliberate overwrite. "Someone else changed this" is not a special error path; it is the ordinary "the form comes back holding your work," pointed at a different failure.
+
+The proof is a set of small drills, and the interesting ones are the *negative* cases -- the false conflicts that the scoping must not produce. A reorder between load and save does not conflict. An *unrelated recipe's* edit -- which advances the global basis-t -- does not conflict, which is the wrong-token trap, failing safely because the token never depended on the global counter. And the atomicity holds under a real race: twelve concurrent saves holding the same token resolve to exactly one winner and eleven conflicts, never two winners, never a lost update -- because the decision was made once, on the transactor, not eleven times in eleven handlers.
+
 ## Trade-offs & limitations, in one place
 
 - **One error per field, first-wins.** `conform` can carry multiple codes per field; the UI shows the head of the vector. For five fields this is guidance; for a forty-field enterprise form you would want error summaries at the top (with anchor links) *in addition* -- the data shape already supports it, the view just does not render it.
@@ -281,6 +306,7 @@ The unit tests read like the specification the chapter has been arguing for, whi
 - **The ceilings are policy, stated in one place.** 200 and 20,000 are judgment calls, and the honest defense of a judgment call is legibility, not correctness: `limits` is a namespaced map you will change, not archaeology you will fear. (Transport-level request-size limits -- http-kit's `:max-body` -- are the web server's separate job, and one this build has not yet tightened; `conform`'s ceilings bound what we *store*, not what we *read*.)
 - **The auth flow deliberately breaks this chapter's rules.** [The magic-link form](25-auth-email-flow.md) validates its email and then tells the user *nothing specific* -- same confirmation page for known addresses, unknown addresses, and rate-limited requests. That is not an inconsistency; it is the same boundary applying a different policy, because there the "user" being informed might be an attacker enumerating accounts. Field-level candor is for authenticated users editing their own data. When the reader meets a form that seems to violate this chapter, the first question is *who is allowed to learn from this error?*
 - **`update!` trusts its callers slightly more than `create!` does.** The subset guard checks the keys present; a caller passing a partial map is asserting the rest is unchanged truth. That is the correct contract for the seed and the handler both -- and it means a *new* caller of `update!` must conform first, which the guard will teach them the first time they forget.
+- **Conflict detection is last-writer-*acknowledged*, not a merge.** The 409 preserves the loser's work and lets them overwrite after seeing the conflict; it does not merge the two edits. Merging concurrent changes to one document is the [genuinely hard end of collaborative editing](02-positioning.md) (operational transforms, CRDTs) that this stack deliberately islands. What optimistic concurrency buys is the difference between a *silent* lost update and an *announced* one -- and for a single-owner editor that is the whole win. A nicer 409 could reconstruct the sibling edit with `d/as-of` at the token's instant and show the [diff](09-recipe-domain.md) inline; the pieces exist, and it is a seam, not a wall.
 
 ## Where this leaves the write path
 

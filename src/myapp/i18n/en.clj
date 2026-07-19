@@ -84,6 +84,10 @@
    :recipe/ingredients-label "Ingredients (one per line)"
    :recipe/steps-label "Method (one step per line)"
    :recipe/save "Save recipe"
+   :recipe/conflict-title "Someone else edited this recipe while you had it open."
+   :recipe/conflict-body
+   "Your changes below are kept. Saving again will overwrite the current version —"
+   :recipe/conflict-review "review what changed"
    :recipe/create "Create recipe"
    :recipe/forks "Forks"
    :recipe/no-forks "No forks yet — be the first."

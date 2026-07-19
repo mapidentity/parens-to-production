@@ -464,3 +464,47 @@
             {:title "t"
              :servings "1"
              :note (apply str (repeat 501 "x"))}))))))
+
+(deftest optimistic-concurrency-on-update
+  (let [u (mk-user! "occ@x.lan")
+        id (recipe/create!
+             h/*conn*
+             u
+             {:title "Shared"
+              :servings 2
+              :ingredients "a"
+              :steps "b"})]
+    (testing "a save WITHOUT a token still works (backward compatible)"
+      (is (true? (recipe/update! h/*conn* u id {:recipe/title "No token"} nil nil))))
+    ;; re-read the token after that untracked save
+    (let [tok (:recipe/updated-at (recipe/recipe-by-id (d/db h/*conn*) id))]
+      (testing "concurrent edit: editor A saves with the current token -> wins"
+        (is (true? (recipe/update! h/*conn* u id {:recipe/title "A wins"} "a" tok))))
+      (testing "editor B saves with the NOW-STALE token -> :conflict, nothing changes"
+        (is (= :conflict (recipe/update! h/*conn* u id {:recipe/title "B stale"} "b" tok)))
+        (is
+          (= "A wins" (:recipe/title (recipe/recipe-by-id (d/db h/*conn*) id)))
+          "B's stale write touched nothing"))
+      (testing "B reloads the fresh token and retries -> overwrite succeeds"
+        (let [fresh (:recipe/updated-at (recipe/recipe-by-id (d/db h/*conn*) id))]
+          (is (true? (recipe/update! h/*conn* u id {:recipe/title "B retried"} "b" fresh)))
+          (is (= "B retried" (:recipe/title (recipe/recipe-by-id (d/db h/*conn*) id)))))))
+    (testing "a REORDER between load and save does NOT false-conflict (scoped to content)"
+      (let [tok (:recipe/updated-at (recipe/recipe-by-id (d/db h/*conn*) id))]
+        (recipe/reorder! h/*conn* u [id]) ; bumps :recipe/position, NOT :recipe/updated-at
+        (is
+          (true? (recipe/update! h/*conn* u id {:recipe/title "After reorder"} "c" tok))
+          "the content-scoped token survived a bookkeeping reorder")))
+    (testing "an unrelated recipe's edit does not conflict either (per-entity scope)"
+      (let [id2 (recipe/create!
+                  h/*conn*
+                  u
+                  {:title "Other"
+                   :servings 1
+                   :ingredients "x"
+                   :steps "y"})
+            tok (:recipe/updated-at (recipe/recipe-by-id (d/db h/*conn*) id))]
+        (recipe/update! h/*conn* u id2 {:recipe/title "Other edited"} "d" nil) ; advances GLOBAL basis-t
+        (is
+          (true? (recipe/update! h/*conn* u id {:recipe/title "Unaffected"} "e" tok))
+          "the global basis-t moved, but this recipe's content clock did not")))))

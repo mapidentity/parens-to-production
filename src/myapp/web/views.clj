@@ -690,7 +690,7 @@
   renders directly under it; the input keeps `aria-invalid` +
   `aria-describedby` so the failure is announced, not just painted."
   ([locale user-email admin? recipe] (recipe-form locale user-email admin? recipe nil))
-  ([locale user-email admin? recipe {:keys [errors submitted]}]
+  ([locale user-email admin? recipe {:keys [errors submitted conflict?]}]
    (let [editing? (some? recipe)
          action (if editing? (str "/recipes/" (:recipe/id recipe) "/edit") "/recipes/new")
          active (if editing? :browse :new)
@@ -706,9 +706,32 @@
         [:div
          [:h1.text-2xl.font-bold.text-text-primary.mb-6
           (if editing? (t locale :recipe/edit) (t locale :recipe/new))]
+         ;; The conflict banner: someone else saved this recipe between the
+         ;; time the form was loaded and this submission. The edits below are
+         ;; preserved; the hidden token now carries the CURRENT version, so a
+         ;; second save is a deliberate overwrite.
+         (when conflict?
+           [:div
+            {:class "mb-5 rounded-md border border-negative bg-negative/10 p-4"}
+            [:p.text-sm.font-medium.text-negative (t locale :recipe/conflict-title)]
+            [:p.mt-1.text-sm.text-text-secondary
+             (t locale :recipe/conflict-body) " "
+             [:a.underline {:href (str "/recipes/" (:recipe/id recipe) "/history")}
+              (t locale :recipe/conflict-review)]]])
          [:form#recipe-form.space-y-5
           {:method "POST"
            :action action}
+          ;; The optimistic-concurrency token: the recipe's content clock
+          ;; (`:recipe/updated-at`) at the moment this form was rendered.
+          ;; Scoped to THIS recipe on purpose — the global basis-t would
+          ;; advance on every unrelated write and conflict on every save.
+          (when editing?
+            [:input
+             {:type "hidden"
+              :name "expected-version"
+              :value (some-> (:recipe/updated-at recipe)
+                             inst-ms
+                             str)}])
           [:div
            [:label.block.text-sm.font-medium.text-text-primary {:for "title"}
             (t locale :recipe/title-label)]

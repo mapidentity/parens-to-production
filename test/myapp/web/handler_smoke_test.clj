@@ -423,3 +423,38 @@
         (is
           (not (myapp.web.ratelimit/allow? "ml-ip:203.0.113.1" 10 (* 15 60 1000)))
           "client 1 is (correctly) capped")))))
+
+(deftest stale-edit-gets-409-conflict-page
+  (let [u (mk-user! "editor@x.lan")
+        id (recipe/create!
+             h/*conn*
+             u
+             {:title "Orig"
+              :servings 2
+              :ingredients "a"
+              :steps "b"})
+        tok (str (inst-ms (:recipe/updated-at (recipe/recipe-by-id (d/db h/*conn*) id))))
+        edit-req (fn [expected title]
+                   (assoc (h/auth-request :post
+                                          (str "/recipes/" id "/edit")
+                                          "editor@x.lan"
+                                          :locale :en
+                                          :params {:title title
+                                                   :servings "2"
+                                                   :ingredients "a"
+                                                   :steps "b"
+                                                   :expected-version expected})
+                     :user-eid u
+                     :path-params {:id (str id)}))]
+    (testing "first save with the current token succeeds (redirect)"
+      (is (= 302 (:status (handler/recipe-update (edit-req tok "First"))))))
+    (testing "a second save with the now-stale token → 409 conflict page, edits preserved"
+      (let [resp (handler/recipe-update (edit-req tok "My unsaved edit"))]
+        (is (= 409 (:status resp)))
+        (is (str/includes? (:body resp) "Someone else edited this recipe") "the conflict banner")
+        (is
+          (str/includes? (:body resp) "My unsaved edit")
+          "the user's work is preserved in the form")
+        (is
+          (= "First" (:recipe/title (recipe/recipe-by-id (d/db h/*conn*) id)))
+          "the stale save changed nothing in the database")))))

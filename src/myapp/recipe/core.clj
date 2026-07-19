@@ -612,28 +612,59 @@
         "unconformed recipe changes — call conform first"
         {:changes (select-keys changes [:recipe/title :recipe/servings])}))))
 
+(defn- cas-failed?
+  "True if `e` (or a cause) is Datomic's compare-and-swap conflict."
+  [e]
+  (boolean
+    (some
+      (fn [t] (= :db.error/cas-failed (:db/error (ex-data t))))
+      (take-while
+        some?
+        (iterate
+          #(some-> ^Throwable %
+                   (.getCause))
+          e)))))
+
 (defn update!
   "Apply `changes` (a subset of the `:recipe/*` content keys) to recipe `id`, if owned by `user-eid`.
   Content must be conformed (see `conform`); the keys present are checked.
-  Bumps `:recipe/updated-at`. Returns true on success,
-  nil if the recipe is missing or not owned by the user."
-  ([conn user-eid id changes] (update! conn user-eid id changes nil))
-  ([conn user-eid id changes note]
+  Bumps `:recipe/updated-at`. Returns true on success, nil if the recipe
+  is missing or not owned by the user.
+
+  Optional `expected` is the `:recipe/updated-at` the editor loaded — an
+  optimistic-concurrency token. When supplied, the write is a
+  compare-and-swap on THAT per-recipe attribute: it applies only if the
+  recipe's content has not changed underneath the edit, and returns
+  `:conflict` (touching nothing) if it has. The token is scoped to this
+  recipe's content clock, not the global basis-t, precisely because a
+  reorder or an unrelated recipe's edit must not read as a conflict —
+  which is why `:recipe/updated-at` (bumped by content edits only, never
+  by a reorder) is the right thing to compare."
+  ([conn user-eid id changes] (update! conn user-eid id changes nil nil))
+  ([conn user-eid id changes note] (update! conn user-eid id changes note nil))
+  ([conn user-eid id changes note expected]
    (assert-changes! changes)
    (let [db (d/db conn)]
      (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
-       @(db/transact* conn
-          (annotate
-            [(merge
-               {:db/id eid
-                :recipe/updated-at (time/now)}
-               (select-keys
-                 changes
-                 [:recipe/title :recipe/description :recipe/servings
-                  :recipe/ingredients :recipe/steps]))]
-            user-eid
-            note))
-       true))))
+       (let [content (select-keys
+                       changes
+                       [:recipe/title :recipe/description :recipe/servings
+                        :recipe/ingredients :recipe/steps])
+             ;; With a token: CAS asserts the new updated-at only if the
+             ;; current one still equals `expected` — atomic on the
+             ;; transactor, no read-then-write race in the handler.
+             ;; Without one: the plain bump, as before.
+             tx-forms (if expected
+                        [[:db.fn/cas eid :recipe/updated-at expected (time/now)]
+                         (merge {:db/id eid} content)]
+                        [(merge
+                           {:db/id eid
+                            :recipe/updated-at (time/now)}
+                           content)])]
+         (try
+           @(db/transact* conn (annotate tx-forms user-eid note))
+           true
+           (catch Throwable e (if (cas-failed? e) :conflict (throw e)))))))))
 
 (defn delete!
   "Retract recipe `id` if owned by `user-eid`.
