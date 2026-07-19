@@ -1,6 +1,6 @@
-# Building a Clojure/Datomic SaaS from Scratch
+# Parens to Production
 
-**Server-rendered, framework-free, and hardened from the first commit.**
+**A server-rendered, framework-free Clojure/Datomic SaaS — built, operated, and defended on one box you own.**
 
 This repository is **two things at once**:
 

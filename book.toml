@@ -1,5 +1,6 @@
 [book]
-title = "Building a Clojure/Datomic SaaS from Scratch — Server-rendered, framework-free, and hardened from the first commit"
+title = "Parens to Production"
+description = "A server-rendered, framework-free Clojure/Datomic SaaS — built, operated, and defended on one box you own."
 authors = ["P. de Kruif"]
 language = "en"
 src = "chapters"
