@@ -13,6 +13,13 @@ This repository is **two things at once**:
 
 📖 **Read the book online:** _https://mapidentity.github.io/parens-to-production/_
 
+**Building your own on this bedrock?** Every directory carries an `AGENTS.md` (with a
+`CLAUDE.md` symlinked to it) that hands an AI coding agent the right context — the
+architecture, the conventions, and the hard-won landmines — right where it is working.
+Start at the [root `AGENTS.md`](AGENTS.md); the nested ones cover each subsystem. It is
+the reader's pit of success: the knowledge from writing the book, encoded where the tools
+will actually read it.
+
 ---
 
 ## Demo
