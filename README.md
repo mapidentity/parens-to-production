@@ -4,7 +4,7 @@
 
 This repository is **two things at once**:
 
-1. **An online book** — 47 chapters (in [`chapters/`](chapters/)) that walk through
+1. **An online book** — 48 chapters (in [`chapters/`](chapters/)) that walk through
    building a production-grade SaaS in Clojure and Datomic, from a reproducible
    dev environment to automated CI/CD. Built with [mdBook](https://rust-lang.github.io/mdBook/)
    and published to GitHub Pages.

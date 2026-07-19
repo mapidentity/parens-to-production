@@ -514,8 +514,11 @@
        :else [:p.text-text-secondary (t locale :search/no-results)])]))
 
 (defn recipes-index
-  "Public browse list of all recipes."
-  [locale user-email admin? recipes]
+  "Public browse list of recipes, keyset-paginated alphabetically.
+  `next-token` is the opaque cursor for the following page, or nil on the last
+  page — it drives the plain 'Next' link (a progressive-enhancement island
+  morphs it in place; without JS it is an ordinary navigation)."
+  [locale user-email admin? recipes next-token]
   (app-layout
     locale
     user-email
@@ -528,9 +531,15 @@
         {:href "/recipes/new"} "+ " (t locale :recipe/new)])]
     (search-form locale nil)
     (if (seq recipes)
-      [:div.grid.gap-4.sm:grid-cols-2
-       (for [r recipes]
-         (recipe-card locale r))]
+      (list
+        [:div.grid.gap-4.sm:grid-cols-2
+         (for [r recipes]
+           (recipe-card locale r))]
+        (when next-token
+          [:nav.mt-8.flex.justify-center {:aria-label (t locale :recipe/pagination)}
+           [:a.inline-flex.items-center.gap-1.text-sm.font-semibold.text-primary-vivid.hover:text-primary.border.border-border.rounded-md.px-4.py-2
+            {:href (str "/recipes?after=" next-token)}
+            (t locale :recipe/next-page) " →"]]))
       [:p.text-text-secondary (t locale :recipe/no-recipes)])))
 
 (defn- recipe-body

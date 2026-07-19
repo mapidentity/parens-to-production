@@ -84,6 +84,64 @@
     (testing "it does not build the quadratic table (stays fast, not seconds)"
       (is (< elapsed-ms 1000) "6000x6000 lines complete well under a second"))))
 
+;; --- catalog pagination (keyset) ---
+
+(deftest browse-page-keyset-pagination
+  (let [u (mk-user! "cook@x.lan")
+        titles ["Apple" "Bread" "Cake" "Dahl" "Eggs"]]
+    (doseq [tt (shuffle titles)] ; insert order must not matter
+      (recipe/create!
+        h/*conn*
+        u
+        {:title tt
+         :servings 1}))
+    (let [db (d/db h/*conn*)]
+      (testing "the first page is alphabetical, capped at the limit, with a next cursor"
+        (let [{:keys [recipes]
+               nxt :next}
+              (recipe/browse-page db nil 2)]
+          (is (= ["Apple" "Bread"] (mapv :recipe/title recipes)))
+          (is (= "Bread" (:recipe/title nxt)) "the cursor is the last item shown")))
+      (testing "walking the cursor yields every recipe exactly once, A→Z, then stops"
+        (loop [after nil
+               acc []]
+          (let [{:keys [recipes]
+                 nxt :next}
+                (recipe/browse-page db after 2)
+                acc (into acc (map :recipe/title recipes))]
+            (if nxt (recur nxt acc) (is (= titles acc) "full A→Z sweep, no dupes, no gaps"))))))))
+
+(deftest browse-page-tiebreaks-equal-titles
+  ;; Two recipes with the SAME title must not collide at a page boundary — the
+  ;; (title, id) keyset is what keeps one from being shown twice or skipped.
+  (let [u (mk-user! "cook@x.lan")]
+    (recipe/create!
+      h/*conn*
+      u
+      {:title "Same"
+       :servings 1})
+    (recipe/create!
+      h/*conn*
+      u
+      {:title "Same"
+       :servings 2})
+    (recipe/create!
+      h/*conn*
+      u
+      {:title "Zzz"
+       :servings 1})
+    (let [db (d/db h/*conn*)
+          all (loop [after nil
+                     acc []] ; page size 1 forces the boundary
+                (let [{:keys [recipes]
+                       nxt :next}
+                      (recipe/browse-page db after 1)
+                      acc (into acc recipes)]
+                  (if nxt (recur nxt acc) acc)))]
+      (is (= 3 (count all)) "all three surface across the equal-title boundary")
+      (is (= 2 (count (filter #(= "Same" (:recipe/title %)) all))) "both Sames present")
+      (is (apply distinct? (map :recipe/id all)) "no recipe repeated"))))
+
 ;; --- create / read ---
 
 (deftest create-and-read

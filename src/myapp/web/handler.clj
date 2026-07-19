@@ -368,16 +368,50 @@
 ;; Recipes
 ;; ---------------------------------------------------------------------------
 
+(def ^:private cursor-encoder
+  (.withoutPadding (java.util.Base64/getUrlEncoder)))
+(def ^:private cursor-decoder
+  (java.util.Base64/getUrlDecoder))
+
+(defn- encode-cursor
+  "An opaque page cursor from a keyset.
+  The client treats it as a token, not an API: `eid\\ttitle`, base64url-encoded
+  (eid first, since it is delimiter-free)."
+  [{title :recipe/title
+    eid :eid}]
+  (.encodeToString cursor-encoder (.getBytes (str eid "\t" title) "UTF-8")))
+
+(defn- decode-cursor
+  "Parse an opaque page cursor back to {:recipe/title :eid}, or nil.
+  A malformed cursor just starts from the first page — it never throws."
+  [s]
+  (try
+    (let [[e title] (str/split (String. (.decode cursor-decoder ^String s) "UTF-8") #"\t" 2)]
+      (when-let [eid (some-> e
+                             parse-long)]
+        {:recipe/title (or title "")
+         :eid eid}))
+    (catch Exception _ nil)))
+
 (defn recipes-index
-  "GET /recipes — public browse list."
+  "GET /recipes — public browse list, keyset-paginated (alphabetical by title).
+  `?after=<opaque cursor>` carries the previous page's last row; absent for the
+  first page. The cursor is opaque so pagination is never a promised URL shape."
   [request]
-  (let [db (d/db (db/get-connection))]
+  (let [db (d/db (db/get-connection))
+        after (some-> (get-in request [:params :after])
+                      decode-cursor)
+        {:keys [recipes]
+         next-cursor :next}
+        (recipe/browse-page db after recipe/catalog-page-size)]
     (html
       (views/recipes-index
         (:locale request)
         (:user-email request)
         (:admin? request)
-        (recipe/all-recipes db)))))
+        recipes
+        (some-> next-cursor
+                encode-cursor)))))
 
 (defn search-page
   "GET /search?q= — public fulltext search over recipe titles.
