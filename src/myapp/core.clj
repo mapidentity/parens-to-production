@@ -7,6 +7,7 @@
     [myapp.config :as config]
     [myapp.db.core :as db]
     [myapp.web.assets :as assets]
+    [myapp.web.presence :as presence]
     [myapp.web.routes :as routes]
     [org.httpkit.server :as http-kit])
   (:gen-class))
@@ -34,6 +35,10 @@
         #'routes/app
         {:port port
          :ip host}))
+    ;; The live-presence heartbeat: a background sweep that reaps SSE viewers
+    ;; whose clients vanished without a clean close. Tied to the server so a
+    ;; dev restart can't stack a second one (see presence/start-reaper!).
+    (presence/start-reaper!)
     (println (str "Server running at http://" host ":" port))
     @server))
 
@@ -47,6 +52,9 @@
   ([drain-ms]
    (when-let [stop-fn @server]
      (println "Stopping server...")
+     ;; Stop the heartbeat first and clear the (defonce) presence registry, so
+     ;; a restart in this same JVM doesn't inherit the dead instance's viewers.
+     (presence/stop-reaper!)
      (stop-fn :timeout drain-ms)
      (reset! server nil)
      (println "Server stopped"))))

@@ -686,10 +686,15 @@
 
 (defn viewers-stream
   "GET /recipes/:id/viewers — the live viewer-count SSE stream (public).
-  Held open by http-kit; each connect/disconnect rebroadcasts the count."
+  Held open by http-kit; each connect/disconnect rebroadcasts the count.
+  Streams only for a recipe that EXISTS: without this a made-up UUID would
+  mint a permanent registry key, an attacker-controlled leak of map cardinality
+  orthogonal to the connection count."
   [request]
   (if-let [id (path-uuid request)]
-    (presence/stream id request)
+    (if (recipe/recipe-by-id (d/db (db/get-connection)) id)
+      (presence/stream id request)
+      (not-found request))
     (not-found request)))
 
 (defn recipe-history

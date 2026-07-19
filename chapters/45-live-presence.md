@@ -27,19 +27,19 @@ The server side is [the same `http-kit` async channel the dev-reload loop has us
   [recipe-id request]
   (hk/as-channel request
     {:on-open (fn [ch]
-                (hk/send! ch {:status 200
-                              :headers {"Content-Type" "text/event-stream" ,,,}}
-                          false)
-                (swap! viewers update recipe-id (fnil conj #{}) ch)
-                (broadcast! recipe-id))
+                ;; The header send's return value is the earliest signal the
+                ;; peer is already gone — only enrol a channel that took it.
+                (when (hk/send! ch {:status 200
+                                    :headers {"Content-Type" "text/event-stream" ,,,}}
+                                false)
+                  (swap! viewers update recipe-id (fnil conj #{}) ch)
+                  (broadcast! recipe-id)))
      :on-close (fn [ch _status]
-                 (swap! viewers update recipe-id disj ch)
-                 (when (empty? (get @viewers recipe-id))
-                   (swap! viewers dissoc recipe-id))
+                 (drop-channels recipe-id [ch])   ; remove + clean the key in ONE swap
                  (broadcast! recipe-id))}))
 ```
 
-The whole feature is in the two callbacks. On open: send the `text/event-stream` headers (the `false` on `send!` means *keep the channel open*), add this connection to the recipe's set, and broadcast the new count to everyone watching. On close: remove it, clean up an emptied entry, and broadcast the lower count. `broadcast!` walks the set and pushes one `data: {"count": N}` frame to each — and prunes any channel whose `send!` returns false, because http-kit reports a closed-but-not-yet-noticed connection that way, so a lagging disconnect self-heals on the next broadcast rather than inflating the count. That prune is [the same belt the dev-reload channel uses](06-live-reload.md); the pattern was already in the codebase, waiting.
+The whole feature is in the two callbacks. On open: send the `text/event-stream` headers (the `false` on `send!` means *keep the channel open*), and — only if that send took, so a dead-on-arrival connection is never enrolled — add this channel to the recipe's set and broadcast the new count. On close: remove it and, in the *same* swap, drop the entry if it was the last one out (two swaps with a gap between them could discard a viewer who arrived in that gap), then broadcast the lower count. `broadcast!` walks the set and pushes one `data: {"count": N}` frame to each — and prunes any channel whose `send!` returns false, because http-kit reports a closed-but-not-yet-noticed connection that way, so a lagging disconnect self-heals on the next broadcast. That prune is [the same belt the dev-reload channel uses](06-live-reload.md); the pattern was already in the codebase, waiting. What it does *not* cover — a viewer that dies with no close event at all — is [its own section below](#state-handling-and-the-leaks-you-design-against).
 
 ## The island: enhancement, never dependency
 
@@ -64,12 +64,47 @@ And the piece that ties it back to the book's spine: this needed **no change to 
 
 ## Proof
 
-Driven against the running server, two `EventSource` clients on one recipe: the first sees the count, and when the second connects, the first's stream immediately pushes the higher number — the real-time path works end to end, through the whole middleware stack, `text/event-stream` and all. The registry's arithmetic — increment on arrival, decrement on departure, clean up the last one out, prune a stale channel — is pinned by a unit test driving the open/close callbacks with fake channels, because that logic is where a leak or a wrong count would hide, and it should not depend on a live socket to catch.
+Driven against the running server, two `EventSource` clients on one recipe: the first sees the count, and when the second connects, the first's stream immediately pushes the higher number — the real-time path works end to end, through the whole middleware stack, `text/event-stream` and all. The registry's arithmetic — increment on arrival, decrement on departure, clean up the last one out, prune a stale channel — is pinned by a unit test driving the open/close callbacks with fake channels, because that logic is where a leak or a wrong count would hide, and it should not depend on a live socket to catch. The reaper gets the same treatment: a test starts a real scheduler against a recipe holding one channel whose `send!` always fails, and asserts the heartbeat reaps the ghost and empties the key — the leak fix, proven to actually fire.
+
+## State handling, and the leaks you design against
+
+Every other feature in this book hands its state to Datomic, which is *built* to hold it. Presence keeps its own state in a bare atom — and the moment you own a mutable registry of live connections, you have signed up for a discipline that is easy to get wrong in ways that stay invisible until they are fatal. Three pitfalls, each one this feature actually hit and had to answer, and each one general to any in-memory registry you will ever keep.
+
+**A registry that grows on one event and shrinks on another will leak — unless the shrink is a signal you control.** The set grows when a browser *connects*, an event the server always sees. Naively it would shrink only when the browser *cleanly closes* — but that is an event the peer might never send. A laptop lid closes, a phone leaves Wi-Fi, a NAT silently forgets the flow: no `FIN` reaches the server, http-kit's selector never gets a read-ready event, and `on-close` never fires. The channel — and its socket file descriptor — would sit in the atom forever, because nothing ever writes to it to discover it is dead. On a recipe nobody else visits, no arrival or departure fires a `broadcast!` either, so even the reactive `send!`-returns-false prune never runs. The *count* self-heals on the next visitor; the *memory* does not.
+
+The answer is to stop waiting on the client's good manners and put eviction on a clock you own — a heartbeat:
+
+```clojure
+(defn sweep! []
+  (doseq [recipe-id (keys @viewers)]
+    (broadcast! recipe-id)))          ; a write to every channel, everywhere
+```
+
+Every twenty seconds the reaper writes a fresh count frame to every open channel. The write *is* the point: it forces http-kit to try the dead socket, fail, and run the `on-close` that reclaims the slot and the FD. It also refreshes any count that drifted and keeps idle streams warm through proxies that would otherwise time them out. But be honest about what it buys — with `SO_KEEPALIVE` off (http-kit's `run-server` never sets it), a write to a black-holed socket does not fail *instantly*; it lands in the kernel send buffer and succeeds until TCP exhausts its retransmissions, on the order of minutes. The heartbeat turns *leaks forever* into *leaks for a few minutes*. That is the honest ceiling of a userspace fix, and here it is enough.
+
+**`send!` returning true means "enqueued," not "delivered" — it is neither backpressure nor a health check.** The self-heal rests on `send!` returning *false* for a dead channel, but false appears only once http-kit already knows the socket is closed. For a reader that is merely *slow* — a throttled tab, or an attacker who opens a stream to a busy recipe and then stops reading — `send!` returns *true* while http-kit buffers the undrained frames in memory without bound. Nothing looks dead, so nothing prunes. A heartbeat cannot fix this (writing *more* only buffers *more*); its correct home is a write-timeout and a per-IP connection cap at the reverse proxy, [where connection limits belong](35-going-live.md) — the proxy closes a consumer that will not drain. Two disciplines follow for the code itself: treat every async `send!` as fire-and-forget, and derive one broadcast from *one* `@viewers` snapshot — reading the count from one deref and the recipient set from another announces a number to a set it was never measured against.
+
+**The cure is itself stateful — so lifecycle-manage it, or it out-leaks the disease.** A background reaper is a thread, a schedule, and a `defonce` atom, and each is its own way to leak:
+
+```clojure
+(defn start-reaper! [period-ms]
+  (swap! reaper
+    (fn [ex]
+      (or ex                                   ; idempotent — never a second one
+        (doto (Executors/newSingleThreadScheduledExecutor (daemon-factory))
+          (.scheduleWithFixedDelay
+            (fn [] (try (sweep!) (catch Throwable _ nil)))   ; a throw must not escape
+            period-ms period-ms TimeUnit/MILLISECONDS))))))
+```
+
+Four things that code is quietly load-bearing about. It is **idempotent** (`or ex`), so a dev reload that re-evaluates the namespace cannot spawn a second scheduler racing the first against the same atom. Its thread is a **daemon**, so a background heartbeat never keeps the JVM alive at shutdown. Every tick is **wrapped in `try`**, because a `ScheduledExecutorService` *silently cancels a repeating task that throws* — one pathological channel would otherwise disable the whole safety net with no log line. And it is **tied to the server lifecycle**, started in `start-server!` and stopped in `stop-server!` — where `stop` also does `(reset! viewers {})`, because the registry is `defonce` and would otherwise carry a dead instance's ghost channels into the next server in the same JVM. The operator's instinct that "restarting clears presence" is only true if `stop` actually clears it.
+
+Getting this wrong fails in a nastier way than a slow memory climb. Leaked sockets exhaust the process's file-descriptor limit while the heap stays healthy and the liveness probe stays green — so the orchestrator never restarts the box, and a leak in one public SSE endpoint quietly starves every *other* feature that needs to open a file or a socket. That is also why the endpoint refuses to stream for a recipe that does not exist: without that check a made-up UUID would mint a permanent registry key, an attacker-controlled leak of map cardinality orthogonal to the connection count. Owning your state means owning its failure modes too.
 
 ## Trade-offs & limitations, in one place
 
 - **Single-process, like the rate limiter.** The atom counts one box's viewers. [The scaling audit](41-beyond-one-box.md) already priced the shared-state fix; on one box there is nothing to fix. A pair deploy briefly shows two independent counts, which for a viewer garnish is beneath notice.
-- **A held connection per viewer.** SSE keeps a socket open per watcher; http-kit carries many cheaply, but an unbounded public endpoint that holds connections is a denial-of-service surface, and [connection limits belong at the proxy](35-going-live.md), not in this handler. Named, not defended.
+- **A held connection per viewer.** SSE keeps a socket open per watcher; http-kit carries many cheaply, and the [heartbeat above](#state-handling-and-the-leaks-you-design-against) reaps the ones whose clients vanished — but an unbounded public endpoint that holds connections is still a denial-of-service surface, and [connection limits belong at the proxy](35-going-live.md), not in this handler. Named, not defended.
 - **Counts, not identities.** It says *how many*, never *who* — deliberately, because "who is reading this recipe" is a privacy question a public counter must not answer. Presence-with-identity (for the *editor*, say) would be a different feature with a consent story attached.
 - **Restart zeroes it.** Argued above as correct: ephemeral state should not survive the process, and the truth re-forms on reconnect. It is the one place in this book where losing state on restart is the feature.
 - **No history, by construction.** There is no record that three people looked at a recipe on Tuesday — presence leaves no trace, because it is not data. The day you *want* that trace, it becomes an [analytics event](28-admin-dashboard.md), which is a different thing living in a different place.

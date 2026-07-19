@@ -92,3 +92,70 @@
           (is (= 2 (presence/count-for rid)) "B and C remain; A is dropped")
           (is (not (contains? (get @presence/viewers rid) chA)) "A is gone from the set")
           (is (contains? (get @presence/viewers rid) chC) "C is present"))))))
+
+(deftest sweep-reaps-quiet-recipe-ghosts
+  ;; The reactive prune only runs on a connect/disconnect. A client that
+  ;; vanishes with no TCP FIN leaves a ghost on a recipe nobody else touches,
+  ;; so no broadcast — and therefore no prune — ever fires for it. The
+  ;; heartbeat sweep is the only thing that reaps it.
+  (reset! presence/viewers {})
+  (let [r1 (random-uuid)
+        r2 (random-uuid)
+        dead (atom #{})
+        open-cbs (atom [])]
+    (with-redefs [hk/as-channel (fn [_req {:keys [on-open]}]
+                                  (swap! open-cbs conj on-open)
+                                  {:mock-channel true})
+                  hk/send! (fn [ch _data _close?] (not (contains? @dead ch)))]
+      (let [ghost (Object.)
+            live (Object.)
+            connect (fn [rid ch]
+                      (presence/stream rid {})
+                      ((last @open-cbs) ch))]
+        (connect r1 ghost)
+        (connect r2 live)
+        (is (= 1 (presence/count-for r1)) "r1 has its lone viewer")
+        (is (= 1 (presence/count-for r2)) "r2 has its viewer")
+        ;; r1's client vanishes with no FIN — its on-close never fires, and
+        ;; nobody else ever touches r1 to trigger a reactive prune.
+        (swap! dead conj ghost)
+        (presence/sweep!)
+        (testing "the sweep reaps the ghost and drops its emptied recipe key"
+          (is (zero? (presence/count-for r1)))
+          (is (not (contains? @presence/viewers r1))))
+        (testing "a live viewer on an untouched recipe survives the sweep"
+          (is (= 1 (presence/count-for r2))))))))
+
+(deftest dead-on-arrival-channel-is-not-registered
+  ;; If the peer is already gone by on-open, the header send! fails; enrolling
+  ;; that channel would mint an entry that never gets an on-close.
+  (reset! presence/viewers {})
+  (let [rid (random-uuid)
+        open-cbs (atom [])]
+    (with-redefs [hk/as-channel (fn [_req {:keys [on-open]}]
+                                  (swap! open-cbs conj on-open)
+                                  {:mock-channel true})
+                  hk/send! (fn [_ch _data _close?] false)]
+      (presence/stream rid {})
+      ((last @open-cbs) (Object.))
+      (testing "a channel whose first send fails is never enrolled"
+        (is (zero? (presence/count-for rid)))
+        (is (not (contains? @presence/viewers rid)))))))
+
+(deftest reaper-lifecycle-is-idempotent-and-clears-registry
+  ;; The cure is itself stateful: start/stop must pair with the server,
+  ;; starting twice must not stack a second scheduler, and stopping must reset
+  ;; the defonce registry so a restart in the same JVM starts clean.
+  (let [ratom @#'presence/reaper] ; the private atom holding the scheduler
+    (presence/stop-reaper!)
+    (is (nil? @ratom) "baseline: stopped, no scheduler")
+    ;; A 1-hour period so the task never actually fires mid-test.
+    (presence/start-reaper! 3600000)
+    (let [ex1 @ratom]
+      (is (some? ex1) "started: a scheduler exists")
+      (presence/start-reaper! 3600000)
+      (is (identical? ex1 @ratom) "starting again is a no-op, not a second scheduler"))
+    (reset! presence/viewers {:leftover #{(Object.)}})
+    (presence/stop-reaper!)
+    (is (nil? @ratom) "stopped: scheduler shut down and cleared")
+    (is (empty? @presence/viewers) "stop resets the defonce registry")))
