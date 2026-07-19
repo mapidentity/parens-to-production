@@ -152,8 +152,57 @@
     :db/cardinality :db.cardinality/one
     :db/doc "When the proposal was opened."}])
 
+(def job-schema
+  "A durable background job — the queue is Datomic, not a broker.
+
+  A job is an ordinary entity, so enqueuing it is a transaction (often the SAME
+  transaction as the domain event that spawned it, so a crash cannot commit the
+  event without its job). A worker polls for due `:pending` jobs and CLAIMS each
+  with a compare-and-swap on `:job/status` — the same primitive the recipe
+  editor uses — so two workers (a pair deploy runs two) can never double-run
+  one, and the coordination is durable, not a per-process atom. `:job/attempts`
+  and `:job/run-after` carry retry-with-backoff; `:job/claimed-at` lets a stuck
+  `:running` job (its worker died) be reclaimed after a visibility timeout."
+  [{:db/ident :job/id
+    :db/valueType :db.type/uuid
+    :db/unique :db.unique/identity
+    :db/cardinality :db.cardinality/one
+    :db/doc "Unique job ID."}
+   {:db/ident :job/kind
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/doc "What the job does — dispatches myapp.jobs.core/run-job."}
+   {:db/ident :job/status
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/doc "One of :pending, :running, :done, :failed."}
+   {:db/ident :job/payload
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/doc "The job's arguments, pr-str'd EDN."}
+   {:db/ident :job/attempts
+    :db/valueType :db.type/long
+    :db/cardinality :db.cardinality/one
+    :db/doc "How many times this job has been attempted."}
+   {:db/ident :job/run-after
+    :db/valueType :db.type/instant
+    :db/cardinality :db.cardinality/one
+    :db/doc "The earliest time the job may run — moved forward on each retry (backoff)."}
+   {:db/ident :job/created-at
+    :db/valueType :db.type/instant
+    :db/cardinality :db.cardinality/one
+    :db/doc "When the job was enqueued."}
+   {:db/ident :job/claimed-at
+    :db/valueType :db.type/instant
+    :db/cardinality :db.cardinality/one
+    :db/doc "When a worker last claimed it (:running) — for stuck-job reclaim."}
+   {:db/ident :job/last-error
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/doc "The message from the most recent failed attempt."}])
+
 (def schema
   "The full schema, transacted on database creation.
   Order matters only in that referenced idents must exist; these are all
   independent attribute installs, so a single concatenated vector is fine."
-  (vec (concat user-schema recipe-schema tx-schema proposal-schema)))
+  (vec (concat user-schema recipe-schema tx-schema proposal-schema job-schema)))
