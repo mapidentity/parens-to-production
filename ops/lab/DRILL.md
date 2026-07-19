@@ -96,6 +96,23 @@ Killing A mid-write (peer on the same `conn` throughout):
   cache without talking to the transactor; only the *write* path gaps. The probe
   exercises writes because they are the half that fails.
 
+## A simpler case: the restart blip
+
+The same harness drills the everyday case a peer is claimed to "ride out on its
+own" -- a transactor *restart* (a deploy, an OOM-and-Restart, a `systemctl
+restart`), where there is no standby, just the one transactor coming back:
+
+```bash
+clojure -M -e '(load-file "ops/lab/failover-probe.clj")'   # peer writing
+pkill -9 -f txor-b.properties && ./bin/transactor .../txor-b.properties  # kill + restart the SAME node
+```
+
+Captured: writes paused for **~20 s**, then resumed on the same `conn`, `basis-t`
+continuous (7418 -> 7420), no committed transaction lost. Worth noting it is
+*slower* than the standby failover above (~12.5 s): a restart-blip has no warm
+standby waiting, so the peer must wait out the whole transactor JVM rebooting and
+reacquiring the storage lease. A warm standby exists precisely to shorten this.
+
 ## What this does not prove
 
 - **Production topology.** Two transactors on one host is not two machines with a
