@@ -42,7 +42,7 @@ The heart of the setup is a dedicated server entry point. It looks like your pro
     [ring.middleware.session.cookie :as cookie]))
 ```
 
-One require points forward. `myapp.analytics.db` is defined in [the admin dashboard chapter](28-admin-dashboard.md), not here; if you are building strictly in order, create it now from there (or take it from the repo), because the e2e server boots the full stack -- analytics database included -- and will not start without it.
+One require points forward. `myapp.analytics.db` is defined in [the admin dashboard chapter](28-admin-dashboard.md), not here; if you are building strictly in order, create it now from there (or take it from the repo), because the e2e server boots the full stack (analytics database included) and will not start without it.
 
 ### Capturing emails instead of sending them
 
@@ -54,7 +54,7 @@ The first problem is email. Your auth flow sends magic links via SMTP. In tests,
   (atom []))
 ```
 
-The stub replaces the real `send-magic-link!` function at server startup (more on that below). Each call appends a map with the recipient and the magic link URL to the atom. From Playwright's perspective, the auth flow works identically -- the user enters their email, the server "sends" a magic link -- except the link ends up in memory instead of an inbox.
+The stub replaces the real `send-magic-link!` function at server startup (more on that below). Each call appends a map with the recipient and the magic link URL to the atom. From Playwright's perspective, the auth flow works identically (the user enters their email, the server "sends" a magic link), except the link ends up in memory instead of an inbox.
 
 ### Test-only endpoints
 
@@ -100,7 +100,7 @@ These get mounted alongside the app's real routes:
 
 The `/test/emails` endpoint supports a `?to=` query parameter for filtering by recipient. This matters when you have tests running concurrently or multiple emails being sent in a single test. The `DELETE` method can clear the atom -- but the specs never call it, for reasons the isolation section below makes concrete.
 
-This pattern generalizes. Any external service your app depends on -- payment processing, SMS, webhooks -- can be stubbed the same way: replace the side-effecting function, capture the calls in an atom, expose them via a test endpoint.
+This pattern generalizes. Any external service your app depends on (payment processing, SMS, webhooks) can be stubbed the same way: replace the side-effecting function, capture the calls in an atom, expose them via a test endpoint.
 
 ### Deterministic configuration
 
@@ -128,7 +128,7 @@ Four choices in that block are worth spelling out:
 
 - **Port 9876** is fixed. The Playwright config needs to know where to find the server.
 - **In-memory Datomic** (`datomic:mem://`) means every test run starts fresh. No leftover data from previous runs, no database cleanup scripts.
-- **Deterministic keys** for session signing and token verification. These come from your test helpers module and are fixed byte arrays, not random. This means sessions and tokens behave identically across test runs.
+- **Deterministic keys** for session signing and token verification. These come from your test helpers module and are fixed byte arrays rather than random. This means sessions and tokens behave identically across test runs.
 - **SMTP config points nowhere real.** The email function is stubbed, so these values are never used, but they are present to keep the config shape consistent.
 
 ### Building the Ring handler
@@ -168,7 +168,7 @@ The app handler is assembled the same way as production, but using the extended 
 
 The middleware stack is real. The session handling is real. The cookie store is real (just with a deterministic key). This is important: the E2E server must exercise essentially the same middleware chain as production, or you are not testing what you think you are testing. The differences are external integrations (email, databases) and the test-control endpoints -- plus one middleware layer: production's innermost `wrap-errors` is absent, so these tests cover every layer except the styled-500 path (a raw exception in a failing test is what you want anyway).
 
-We keep `:same-site :lax` to match production -- the magic-link flow is a cross-context GET, and `:strict` would block the cookie on that navigation (more on this in [the email login-flow chapter](25-auth-email-flow.md)). Note too that `:secure` is *absent* from those attrs -- a simplification, not the necessity it looks like. Chromium runs these tests over `http://localhost`, and [the web-server chapter](05-web-server.md) is careful that it *would* send a `:secure` cookie there, treating `http://localhost` as a potentially-trustworthy origin; dropping `:secure` just keeps the test cookie from leaning on that browser-specific carve-out. That, plus the omitted explicit `:cookie-name` and 30-day `:max-age`, is where the e2e cookie departs from production.
+We keep `:same-site :lax` to match production. The magic-link flow is a cross-context GET, and `:strict` would block the cookie on that navigation (more on this in [the email login-flow chapter](25-auth-email-flow.md)). Note too that `:secure` is *absent* from those attrs -- a simplification, not the necessity it looks like. Chromium runs these tests over `http://localhost`, and [the web-server chapter](05-web-server.md) is careful that it *would* send a `:secure` cookie there, treating `http://localhost` as a potentially-trustworthy origin; dropping `:secure` just keeps the test cookie from leaning on that browser-specific carve-out. That, plus the omitted explicit `:cookie-name` and 30-day `:max-age`, is where the e2e cookie departs from production.
 
 ### The start function
 
@@ -218,7 +218,7 @@ The sequence matters:
 4. **Start the HTTP server.** http-kit listens on the configured port.
 5. **Block forever.** `@(promise)` keeps the process alive. Playwright manages the lifecycle -- it starts this process before tests and kills it after.
 
-The `alter-var-root` approach deserves a note. It is a blunt instrument -- it globally replaces the function. For E2E testing, this is exactly what you want. The test server is a separate process. There is no risk of affecting production code. And it means the stubbing works everywhere the function is called, without needing to thread a mock through the call stack.
+The `alter-var-root` approach deserves a note. It is a blunt instrument -- it globally replaces the function. For E2E testing, this is what you want. The test server is a separate process. There is no risk of affecting production code. And it means the stubbing works everywhere the function is called, without needing to thread a mock through the call stack.
 
 ## Playwright configuration
 
@@ -262,7 +262,7 @@ module.exports = {
 };
 ```
 
-The `webServer` block is the key piece: Playwright owns the server's whole lifecycle. It runs `command` to start the Clojure server, polls `url` -- the `/health` endpoint -- until it answers 200, runs the tests, and kills the process when they finish. The generous `timeout` (300 seconds) is deliberate: JVM startup, which loads the Datomic peer and compiles every required namespace from source, can be slow on a cold, CPU-constrained CI runner, so a high ceiling keeps a legitimately slow boot from being read as a failure. The `stdout`/`stderr: 'pipe'` settings are separate insurance: when the server does fail to start, they surface its error in the logs instead of leaving you only the timeout.
+The `webServer` block is the key piece: Playwright owns the server's whole lifecycle. It runs `command` to start the Clojure server, polls `url` (the `/health` endpoint) until it answers 200, runs the tests, and kills the process when they finish. The generous `timeout` (300 seconds) is deliberate: JVM startup, which loads the Datomic peer and compiles every required namespace from source, can be slow on a cold, CPU-constrained CI runner, so a high ceiling keeps a legitimately slow boot from being read as a failure. The `stdout`/`stderr: 'pipe'` settings are separate insurance: when the server does fail to start, they surface its error in the logs instead of leaving you only the timeout.
 
 The `reuseExistingServer` flag is useful during development. When not in CI, if a server is already running on port 9876, Playwright will use it instead of starting a new one. This lets you start the E2E server manually in a terminal, make changes, and re-run tests without the JVM startup penalty each time.
 
@@ -297,7 +297,7 @@ function uniqueEmail() {
 
 Two helper functions set the stage. `getMagicLink` calls our test-only `/test/emails` endpoint to retrieve the magic link that was "sent" to a given address. `uniqueEmail` generates a fresh address per test -- a timestamp plus a random suffix, so two tests that begin in the same millisecond still get distinct users when the suite runs in parallel.
 
-Notice what `getMagicLink` does *not* do: it fires a single `request.get` with no retry loop, yet it never races the server. Two things make that safe. First, Playwright's assertions auto-wait. `expect(...).toBeVisible()` polls the live page until the element appears or the timeout fires, so the preceding assertion that "Check your email" is visible has already blocked until the server finished handling the sign-in POST. That is why the specs carry no manual `sleep`s or polling anywhere. Second, that POST captures the email synchronously: the `request-magic-link` handler calls `send-magic-link!` inline, before it issues its redirect (see [the auth chapter](25-auth-email-flow.md)), so the stub has appended to the atom by the time the confirmation page renders. The email is guaranteed present the moment the browser sees the heading. That second guarantee is a real coupling worth naming: move sending onto a background thread or a queue and the ordering breaks, at which point `getMagicLink` would need a retry of its own.
+Notice what `getMagicLink` does *not* do: it fires a single `request.get` with no retry loop, yet it never races the server. Two things make that safe. First, Playwright's assertions auto-wait. `expect(...).toBeVisible()` polls the live page until the element appears or the timeout fires, so the preceding assertion that "Check your email" is visible has already blocked until the server finished handling the sign-in POST. That is why the specs carry no manual `sleep`s or polling anywhere. Second, that POST captures the email synchronously: the `request-magic-link` handler calls `send-magic-link!` inline, before it issues its redirect (see [the auth chapter](25-auth-email-flow.md)), so the stub has appended to the atom by the time the confirmation page renders. The email is guaranteed present the moment the browser sees the heading. That second guarantee is a real coupling: move sending onto a background thread or a queue and the ordering breaks, at which point `getMagicLink` would need a retry of its own.
 
 ### Shared registration flow
 
@@ -326,13 +326,13 @@ This walks through the entire registration: enter email, get the magic link from
 
 ### Test isolation
 
-The tempting move is a `beforeEach` that wipes the inbox with an unscoped `DELETE /test/emails` before every test. The handler's own docstring warns you off: without `?to=`, a clear is only safe in serial runs -- and this suite is not serial. The config sets neither `workers` nor `fullyParallel`, so Playwright's defaults apply: tests within a file run in order, but separate spec files land in separate workers and run concurrently. One worker's blanket clear can land between another worker's form submission and its `getMagicLink` call, wiping the email it was about to read -- the kind of race that fails one run in twenty and never on your machine.
+The tempting move is a `beforeEach` that wipes the inbox with an unscoped `DELETE /test/emails` before every test. The handler's own docstring warns you off: without `?to=`, a clear is only safe in serial runs, and this suite is not serial. The config sets neither `workers` nor `fullyParallel`, so Playwright's defaults apply: tests within a file run in order, but separate spec files land in separate workers and run concurrently. One worker's blanket clear can land between another worker's form submission and its `getMagicLink` call, wiping the email it was about to read -- the kind of race that fails one run in twenty and never on your machine.
 
-So the specs clear nothing. Isolation comes from never sharing state in the first place: every test generates a unique address, reads back only that address through the `?to=` filter, and takes the most recent match. The atom only ever grows, and that is fine -- entries from other tests, other workers, or (under `reuseExistingServer`) earlier runs are invisible behind the filter. No test can read *mail* another test wrote, so interleaved workers never cross wires in the inbox. (One caveat keeps this honest: it is not literally shared-nothing. The per-IP magic-link rate limiter -- ten sends per IP per fifteen minutes -- is a single process-global bucket every worker shares, since they all sign in from the same loopback address (the e2e server runs the app directly, with no proxy to recover a real client IP -- the very collapse [the detection chapter](42-detect-respond.md) fixes in production); and under `reuseExistingServer` its sliding window even spans consecutive local runs. The suite did eventually cross it -- a starved send still renders the confirmation page, by the endpoint's own don't-reveal-anything design, so the first symptom is a test finding an empty inbox. The e2e server therefore raises the per-IP budget at boot, with the same `alter-var-root` mechanism that stubs the mailer; the per-email limit stays, still ample when every test owns a unique address.) The `DELETE` endpoint stays available for a suite that does accumulate enough state to care, and its `?to=` scoping keeps even that operation parallel-safe.
+So the specs clear nothing. Isolation comes from never sharing state in the first place: every test generates a unique address, reads back only that address through the `?to=` filter, and takes the most recent match. The atom only ever grows, and that is fine: entries from other tests, other workers, or (under `reuseExistingServer`) earlier runs are invisible behind the filter. No test can read *mail* another test wrote, so interleaved workers never cross wires in the inbox. (One caveat: it is not literally shared-nothing. The per-IP magic-link rate limiter (ten sends per IP per fifteen minutes) is a single process-global bucket every worker shares, since they all sign in from the same loopback address (the e2e server runs the app directly, with no proxy to recover a real client IP -- the very collapse [the detection chapter](42-detect-respond.md) fixes in production); and under `reuseExistingServer` its sliding window even spans consecutive local runs. The suite did eventually cross it: a starved send still renders the confirmation page, by the endpoint's own don't-reveal-anything design, so the first symptom is a test finding an empty inbox. The e2e server therefore raises the per-IP budget at boot, with the same `alter-var-root` mechanism that stubs the mailer; the per-email limit stays, still ample when every test owns a unique address.) The `DELETE` endpoint stays available for a suite that does accumulate enough state to care, and its `?to=` scoping keeps even that operation parallel-safe.
 
 ### Test: new user registration
 
-The first test spells the whole path out inline rather than calling the helper. That is deliberate: it is the one place the entire flow is visible end to end as executable documentation -- enter email, retrieve the magic link, visit it, get redirected to `/terms/welcome` as a new account, accept, and land on `/dashboard` -- with a closing assertion that the dashboard's own heading actually rendered, not just that the URL changed:
+The first test spells the whole path out inline rather than calling the helper. That is deliberate: it is the one place the entire flow is visible end to end as executable documentation (enter email, retrieve the magic link, visit it, get redirected to `/terms/welcome` as a new account, accept, and land on `/dashboard`), closing with an assertion that the dashboard's own heading actually rendered, not just that the URL changed:
 
 ```javascript
 test('new user registration', async ({ page, request }) => {
@@ -410,7 +410,7 @@ test('logout prevents dashboard access', async ({ page, request }) => {
 });
 ```
 
-A security test: after logout, navigating directly to `/dashboard` should redirect to the home page (the login form). This verifies that session destruction actually works, not just that the UI hides the button.
+A security test: after logout, navigating directly to `/dashboard` should redirect to the home page (the login form). This verifies that session destruction actually works at the server, beyond the UI merely hiding the button.
 
 ## Running the suite
 
@@ -424,7 +424,7 @@ Playwright reads the config, starts the Clojure server (via the `webServer` bloc
 
 The companion repo ships two spec files: `e2e/auth.spec.js` (the magic-link login, logout, and route-protection flows built above) and `e2e/recipes.spec.js` (recipe creation, edit history, diffs, and fork lineage). `npx playwright test` runs both.
 
-The recipe specs are where E2E earns the most in this application, because they check UI derived from Datomic's history -- the book's central subject -- through a real browser. One excerpt, from the edit test, after the recipe has been changed and saved:
+The recipe specs are where E2E earns the most in this application, because they check UI derived from Datomic's history (the book's central subject) through a real browser. One excerpt, from the edit test, after the recipe has been changed and saved:
 
 ```javascript
 // History shows two versions
@@ -450,13 +450,13 @@ To reproduce a failure interactively, three flags open the run up. `--headed` ru
 
 What the config does not set is retries.
 
-> **Decision -- why retries stay at 0.** Playwright can re-run a failed test several times and pass the suite if any attempt succeeds. We leave that off. A flaky E2E test is a defect, not weather: a bug in the test or in the app, of exactly the kind the isolation section dissected, a cross-worker race, an ordering assumption, a missing wait. Retrying does not fix the defect; it hides it, letting a real bug reach users because the build stayed green. The cost of refusing retries is honest and worth stating: a genuinely environmental flake, a CI runner that stalls or a port slow to free, fails the whole build instead of passing on the second try. We take that cost, because a suite that retries its way to green is a suite that lies about how reliable the application is. When a test does flake, the trace tells you which kind you are looking at.
+> **Decision -- why retries stay at 0.** Playwright can re-run a failed test several times and pass the suite if any attempt succeeds. We leave that off. A flaky E2E test is a defect, not weather: a bug in the test or in the app, of the kind the isolation section dissected, a cross-worker race, an ordering assumption, a missing wait. Retrying does not fix the defect; it hides it, letting a real bug reach users because the build stayed green. The cost of refusing retries is real: an environmental flake, a CI runner that stalls or a port slow to free, fails the whole build instead of passing on the second try. We take that cost, because a suite that retries its way to green is a suite that lies about how reliable the application is. When a test does flake, the trace tells you which kind you are looking at.
 
 None of this makes E2E free to keep. A browser test breaks when the interface it drives changes: a renamed button, a moved heading, a new redirect on a path it walks. It breaks in ways a unit test never would, because it is coupled to rendered text and roles rather than to a function signature. That coupling is the price of testing the thing users actually touch, and there is no version of E2E that avoids it. The harness holds the cost down, since isolation is structural, failures leave traces, and one command runs everything, but each spec is a maintained asset, not a write-once one.
 
 ## Why the harness is shaped this way
 
-Five choices in the setup are worth defending directly, because for each the tempting alternative deserves a named answer.
+Five choices in the setup call for a direct defense, because for each the tempting alternative deserves a named answer.
 
 **Why Playwright at all, in a Clojure codebase?** It brings a second language and runtime into the repo, which is a real cost to weigh. Three things pay for it. Its assertions are web-first: `expect(...).toBeVisible()` retries against the live page until it passes or times out, so the specs need no manual waits and do not flake on timing. Its `webServer` block owns the server lifecycle, the spine of this whole harness, so nothing has to hand-roll start, health-poll, and teardown. And when a test fails, its trace viewer replays the run step by step, tooling the WebDriver protocol behind Selenium and Etaoin does not match. Etaoin, the Clojure-native option, would keep the tests in one language but hands back the auto-waiting and the lifecycle management this design leans on. Node, meanwhile, is not a new dependency here: Tailwind and Lighthouse CI already run through it, so Playwright is one more use of a runtime the project already carries.
 
@@ -466,10 +466,10 @@ Five choices in the setup are worth defending directly, because for each the tem
 
 **Why in-memory Datomic instead of a test database?** Speed and isolation. In-memory databases are created in milliseconds, start empty, and disappear when the process exits. No cleanup, no port conflicts, no leftover state between test runs.
 
-**Why capture emails in an atom behind a test-only endpoint, rather than a real mail-catcher?** The honest alternatives are a Mailpit or MailHog container the stub delivers to and the tests poll, or letting the test side query Datomic directly. Both add a moving part this design does not need. A mail-catcher is a second service to start, health-check, and tear down, the very lifecycle weight in-memory Datomic was chosen to avoid, and it puts real SMTP I/O back in the loop the stub exists to remove. Querying the JVM's state from Node is not really on offer: the atom lives in one process and the tests in another. An HTTP endpoint the e2e server already serves is the smallest bridge across that boundary, and it reads captured state the same way the browser reads everything else, over HTTP against the running server.
+**Why capture emails in an atom behind a test-only endpoint, rather than a real mail-catcher?** The real alternatives are a Mailpit or MailHog container the stub delivers to and the tests poll, or letting the test side query Datomic directly. Both add a moving part this design does not need. A mail-catcher is a second service to start, health-check, and tear down, the very lifecycle weight in-memory Datomic was chosen to avoid, and it puts real SMTP I/O back in the loop the stub exists to remove. Querying the JVM's state from Node is not really on offer: the atom lives in one process and the tests in another. An HTTP endpoint the e2e server already serves is the smallest bridge across that boundary, and it reads captured state the same way the browser reads everything else, over HTTP against the running server.
 
 ## Where this leaves us
 
-The harness, not the specs, is the deliverable. A dedicated E2E server boots the full stack against in-memory databases with its external services stubbed; test-only endpoints let the browser inspect server-side state without a line of that machinery reaching production; a single `webServer` block hands Playwright the whole lifecycle; and one command runs it all. The specs that ride on top -- registration, login, logout, route protection -- are the cheap part once that scaffolding exists.
+The harness, not the specs, is the deliverable. A dedicated E2E server boots the full stack against in-memory databases with its external services stubbed; test-only endpoints let the browser inspect server-side state without a line of that machinery reaching production; a single `webServer` block hands Playwright the whole lifecycle; and one command runs it all. The specs that ride on top (registration, login, logout, route protection) are the easy part once that scaffolding exists.
 
 And it extends cheaply, if never quite for free. A new feature needing coverage gets a new spec file; a new external dependency gets stubbed, and if a test needs to observe its effects, a test endpoint. The infrastructure is the one-time investment, already paid for; the specs riding on it are the standing cost, the same bargain unit testing offers one layer down, which is why a serious application wants both rather than choosing between them.

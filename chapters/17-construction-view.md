@@ -2,11 +2,11 @@
 
 [The inspector chapter](16-inspector.md) answered one question precisely: *where did this element come from?* Hold a key, hover a badge, and your editor opens the exact `.clj` line that produced it. That is a map from a pixel to a **source location**: a static fact, welded onto the Hiccup at read time.
 
-This chapter and the next answer a different question, the one you actually ask when something looks wrong: *how was this whole page built, and where did this value come from?* Not "what line is this `<td>`," but "which functions ran, which Datomic queries fired, at what basis-t, and which of them produced the stale title I'm staring at." That is not a static fact. It is a recording of one request's execution, tied back to the DOM the request produced.
+This chapter and the next answer a different question, the one you actually ask when something looks wrong: *how was this whole page built, and where did this value come from?* Not "what line is this `<td>`," but "which functions ran, which Datomic queries fired, at what basis-t, and which of them produced the stale title I'm staring at." It is a recording of one request's execution, tied back to the DOM the request produced.
 
 The inspector is the *spatial* half: element to code. This is the *temporal* half: element to the code-and-data that ran. The two share exactly one thing, and it is the thing that makes the second half cheap: the welded coordinate. The inspector stamps `data-myapp-name="myapp.web.views/recipe-card"` on every component root. If our execution trace records frames keyed by the same `"ns/fn"` string, then a clicked element and the function call that rendered it are joined by a plain attribute selector: no new index, no fuzzy matching. We reuse the *format*, not the mechanism.
 
-It is worth being concrete about the payoff before the machinery, because the machinery is the bulk of this chapter. Picture the bug these two chapters exist to kill: a recipe card on the index shows a title you are sure is wrong. The browser shows you the wrong pixels and nothing else. With the construction view, you Alt+click that card and the tool answers in layers. *This is the third `recipe-card` call. Here is the exact `pull` that fed it, the `d/q` that listed it, and the basis-t they read at. And here is the entity id to hand to `d/history` when the read trace comes back green and the real culprit was a write three days ago.* That is the end state. Everything below is how a recording becomes able to answer that, and it is genuinely involved, so keep that one gesture in mind as the thing all of it is for.
+It is worth being concrete about the payoff before the machinery, because the machinery is the bulk of this chapter. Picture the bug these two chapters exist to kill: a recipe card on the index shows a title you are sure is wrong. The browser shows you the wrong pixels and nothing else. With the construction view, you Alt+click that card and the tool answers in layers. *This is the third `recipe-card` call. Here is the exact `pull` that fed it, the `d/q` that listed it, and the basis-t they read at. And here is the entity id to hand to `d/history` when the read trace comes back green and the real culprit was a write three days ago.* That is the end state. Everything below is how a recording becomes able to answer that, and it is involved, so keep that one gesture in mind as the thing all of it is for.
 
 ![The construction-view overlay docked beside the recipe index: a proportional overview strip at the top, then the recorded call tree (middleware narrowing to `recipes-index`, then `all-recipes`, its `d/q` and `pull*`, and the eight `recipe-card` frames), with a header warning that one query form ran once per card.](images/construction-view-overlay.png)
 
@@ -24,15 +24,15 @@ The obvious move is to generalize what we already have. The inspector auto-instr
   (with-meta (fn [& args] (tag-hiccup (apply orig args) src nm)) {::orig orig})))
 ```
 
-Replace `tag-hiccup` with "open a span / run / close a span," thread a dynamic `*current-span*`, and you have a hand-rolled tracer. It works -- for a while. Then you notice what it *can't* see. `alter-var-root` wraps **vars**. Anonymous functions, the bodies of `map`/`reduce`/`for`, a tight numeric loop -- none of those are vars, so none of them are spans. You get an accurate tree of *named-function edges* and nothing inside them. For "which queries built this page," that happens to be enough, because the load-bearing edges are all named domain functions. For "trace this value back through the code," it is not: the value was shaped by a `(:user/display-name (:recipe/user recipe))` buried in a view, and a var-wrapper never sees that expression at all.
+Replace `tag-hiccup` with "open a span / run / close a span," thread a dynamic `*current-span*`, and you have a hand-rolled tracer. It works. For a while. Then you notice what it *can't* see. `alter-var-root` wraps **vars**. Anonymous functions, the bodies of `map`/`reduce`/`for`, a tight numeric loop -- none of those are vars, so none of them are spans. You get an accurate tree of *named-function edges* and nothing inside them. For "which queries built this page," that happens to be enough, because the edges that do the work are all named domain functions. For "trace this value back through the code," it is not: the value was shaped by a `(:user/display-name (:recipe/user recipe))` buried in a view, and a var-wrapper never sees that expression at all.
 
 You could push harder -- instrument more, propagate context across threads, capture argument values without pinning them -- but at that point you are rebuilding an omniscient debugger by hand. Someone already built one, at the compiler level, and it sees *every* sub-expression.
 
-> **Decision -- adopt the recording, build the correlation.** The right division of labor is: let **ClojureStorm** record the execution (it is unbeatable at that, and goes deeper than any var-wrapping we'd write); keep the *correlation to the rendered DOM* ours, because nobody else has our welded coordinate. We adopt the engine and build the part that is genuinely new. The seam between the two is a string, `"ns/fn"`, not a shared mechanism.
+> **Decision -- adopt the recording, build the correlation.** The right division of labor is: let **ClojureStorm** record the execution (it is unbeatable at that, and goes deeper than any var-wrapping we'd write); keep the *correlation to the rendered DOM* ours, because nobody else has our welded coordinate. We adopt the engine and build the part that is genuinely new. The seam between the two is one string: `"ns/fn"`.
 
 ## ClojureStorm as a dev-only compiler
 
-[FlowStorm](https://www.flow-storm.org/) is a time-travel debugger for Clojure. Its companion, **ClojureStorm**, is a drop-in build of the Clojure compiler that emits instrumentation into every namespace it compiles, recording each sub-expression's value as your program runs. You opt in by *swapping the compiler*, which sounds drastic until you realize it is exactly the dev/prod split we already use everywhere else: a `:dev`-only dependency. Here is the whole alias in `deps.edn`:
+[FlowStorm](https://www.flow-storm.org/) is a time-travel debugger for Clojure. Its companion, **ClojureStorm**, is a drop-in build of the Clojure compiler that emits instrumentation into every namespace it compiles, recording each sub-expression's value as your program runs. You opt in by *swapping the compiler*, which sounds drastic until you realize it is the dev/prod split we already use everywhere else: a `:dev`-only dependency. Here is the whole alias in `deps.edn`:
 
 ```clojure
 ;; ClojureStorm: a DEV-ONLY compiler swap that records execution for the
@@ -51,7 +51,7 @@ You could push harder -- instrument more, propagate context across threads, capt
                    "-Dmyapp.dev=true"]}
 ```
 
-`:classpath-overrides {org.clojure/clojure nil}` drops the normal Clojure jar so ClojureStorm's build provides `clojure.core`; `instrumentOnlyPrefixes=myapp.` keeps the recording to *our* functions (instrumenting `clojure.core` would bury the signal under millions of frames). Production never sees any of this: it resolves `org.clojure/clojure`, sets no storm properties, records nothing. The compiler swap is the heaviest dev affordance in the book (it slows startup and makes the first hit to a page noticeably slower), which is precisely why it lives behind an alias you choose to type.
+`:classpath-overrides {org.clojure/clojure nil}` drops the normal Clojure jar so ClojureStorm's build provides `clojure.core`; `instrumentOnlyPrefixes=myapp.` keeps the recording to *our* functions (instrumenting `clojure.core` would bury the signal under millions of frames). Production never sees any of this: it resolves `org.clojure/clojure`, sets no storm properties, records nothing. The compiler swap is the heaviest dev affordance in the book (it slows startup and makes the first hit to a page noticeably slower), which is why it lives behind an alias you choose to type.
 
 Notice what is *not* in that list: `flowstorm.startRecording=true`. The obvious move is to record from boot and read whatever's there, and it is the move we made first. It is also the move we backed out of, because it is a memory leak. ClojureStorm's per-thread timelines are append-only; with recording left on, every view-namespace load, every REPL eval, every background tick accretes entries that are never reclaimed, and over a days-long `:storm` session the recording grew to roughly **30 GB**. So recording is **off at boot**, and the tracer turns it on for exactly the span of one page render and off again; the recorder only ever holds the page currently on screen. The `-Xmx2g` cap is the backstop: if that leak ever creeps back, it surfaces as a fast, loud `OutOfMemoryError` instead of silently eating host RAM for a day. (The per-render gating and the evict-on-navigation rule are both part of the middleware below; how the overlay reads a visit's accumulated recordings, the page plus the morphs since, is [chapter 18](18-construction-view-overlay.md)'s business.)
 
@@ -208,7 +208,7 @@ This is the same `Accept: text/html` distinction the dispatcher already trades o
 
 One caveat is owed here. [The dispatcher chapter](15-morph-dispatcher.md) called this header vestigial and warned against building server logic on it; `page-request?` is the deliberate exception, and it does not break the rule's reason. The warning protects the application's responses: a handler that branches on `Accept` couples what it renders to how it was called, and the no-JavaScript path stays correct only while the server stays oblivious. `page-request?` renders nothing. It toggles a dev-only recorder in a namespace production never loads, and a wrong guess costs a recording, not a response.
 
-The second decides when a recording's lease is up. A *full* navigation (address bar, hard refresh, back/forward, a plain form submit) replaces everything on screen, so the previous visit and all the morphs layered onto it go stale together, and `record-page` evicts them before recording the new page. An in-page morph swaps only a region; the rest of the page and its trace ids are still on screen and must stay readable, so a morph records but never clears. The browser has already made exactly this distinction for us:
+The second decides when a recording's lease is up. A *full* navigation (address bar, hard refresh, back/forward, a plain form submit) replaces everything on screen, so the previous visit and all the morphs layered onto it go stale together, and `record-page` evicts them before recording the new page. An in-page morph swaps only a region; the rest of the page and its trace ids are still on screen and must stay readable, so a morph records but never clears. The browser has already made this distinction for us:
 
 ```clojure
 (defn- full-navigation? [req]
@@ -269,7 +269,7 @@ This is sound for one reason, and it is the same reason the inspector's `for`-ro
 
 *A request is a slice: `record-page` flips recording on, notes the timeline length before and after the handler, and stores a small descriptor. Everything heavy stays where it already lives.*
 
-We also stamp `X-Myapp-Trace` on *every* HTML response, not just the full-page load. That header is what lets the overlay re-attach a trace to a region the dispatcher morphs in later; the next chapter's cross-region traces collect on it.
+We also stamp `X-Myapp-Trace` on *every* HTML response, morph replies included. That header is what lets the overlay re-attach a trace to a region the dispatcher morphs in later; the next chapter's cross-region traces collect on it.
 
 > **Decision -- project lazily, off the hot path.** An early version built the whole tree inside `wrap-trace`, which taxed every page and, worse, copied recorded values into our own store (pinning large pulled maps and skewing the very memory numbers the admin dashboard reports). Storing a `{:tid :start :end}` descriptor and projecting on fetch fixes both: the request pays almost nothing, the heavy values stay in FlowStorm's recorder where they belong, and the expensive form-level analysis below becomes affordable, because it only runs for traces a human actually opens.
 
@@ -398,7 +398,7 @@ ClojureStorm records *everything* under `myapp.*`, including the inspector's own
 
 Here is the part where reading *expressions*, not just function calls, pays off, and where the naive design fails in an instructive way.
 
-The tempting way to surface "what did this page query" is to flag the database wrapper functions: `pull*`, `q*`, `transact*` in `myapp.db.core`. List their names, badge any frame whose name is on the list. It is a five-line predicate, and it is wrong, because **half our reads never go through the wrappers.** `recipe/core` calls `d/q`, `d/history`, `d/as-of`, and `d/entid` directly, and those are not even functions *we* compiled, so ClojureStorm records no `:fn-call` for them at all. A name-allowlist is structurally blind to exactly the time-travel reads a recipe-versioning app is built around.
+The tempting way to surface "what did this page query" is to flag the database wrapper functions: `pull*`, `q*`, `transact*` in `myapp.db.core`. List their names, badge any frame whose name is on the list. It is a five-line predicate, and it is wrong, because **half our reads never go through the wrappers.** `recipe/core` calls `d/q`, `d/history`, `d/as-of`, and `d/entid` directly, and those are not even functions *we* compiled, so ClojureStorm records no `:fn-call` for them at all. A name-allowlist is structurally blind to the time-travel reads a recipe-versioning app is built around.
 
 But a raw `(d/q '[...] db)` is still an **expression** inside an instrumented function, and ClojureStorm recorded it. Its `:coord` and the enclosing function's `:form-id` hand us the sub-form as data. So we detect a Datomic call by *shape*, scan the recorded expressions in db-relevant namespaces, and resolve each back to its source sub-form:
 
@@ -429,7 +429,7 @@ But a raw `(d/q '[...] db)` is still an **expression** inside an instrumented fu
        (sort-by :call-idx)))
 ```
 
-This *unifies* the two cases instead of special-casing them. The `d/pull` inside `pull*` and the raw `d/q` in `all-recipes` are both just `d/*` expressions; each becomes a `db-op` attached to the function it ran in. And because we have the sub-form, we have **the real Datalog as data**: not "a query happened" but the query itself.
+This *unifies* the two cases instead of special-casing them. The `d/pull` inside `pull*` and the raw `d/q` in `all-recipes` are both just `d/*` expressions; each becomes a `db-op` attached to the function it ran in. And because we have the sub-form, we have **the real Datalog as data**: the query itself.
 
 The basis-t is the other half of a useful db-op. We want the t the read actually saw, and for a time-travel read that is *not* the live basis-t. `db-t` extracts the meaningful point of a db value, and `nearest-db-basis` walks up the call tree to find the db a frame was handed:
 
@@ -576,7 +576,7 @@ The three tricks:
 
 The exception case rides along: the innermost `:fn-unwind` is the throw origin, and its `:coord` pins the throwing expression onto the nearest kept frame, surfaced as `:threw`. The body of the `let` then runs `->span` over every kept index, attaching args, return, source coordinates, instance rank, db-ops, a `value-morph` (a from→to summary of the primary data arg, with a key-diff when both ends are maps), and the lazy/throw flags, and assembles the two child maps and two root lists into the final `{:roots :roots-rt :spans}`.
 
-It is worth seeing the output shape concretely, because the next chapter's overlay keys off these field names directly. The top level is two root lists and a span map; one span (say, the second rendered `recipe-card`) looks like this:
+The output shape is worth seeing concretely, because the next chapter's overlay keys off these field names directly. The top level is two root lists and a span map; one span (say, the second rendered `recipe-card`) looks like this:
 
 ```clojure
 {:roots    ["3"]   ; root ids in the lexical (re-parented) tree
@@ -657,7 +657,7 @@ We already have every db-op keyed to its form. A query form that ran two or more
        vec))
 ```
 
-`:where` lists the spans that ran the query, so the overlay can turn each into a clickable chip. The recipe index in the screenshot wears one such flag honestly: `all-recipes` maps `pull*` over the ids its `d/q` returned, so the same pull form runs once per card, the classic read shape of a Datomic peer, where each "query" is a local index walk and the chip is information, not an indictment. The detector caught a real one, though. `/admin` and `/dashboard` used to run `find-user-by-email` twice per request, because each auth gate in the middleware chain looked the user up for itself. The repeated-query chip is what made that visible, and the fix is the shape `wrap-current-user` has today: resolve the user once, put `:user-eid` and `:admin?` on the request, and let the later gates read the request instead of the database. Run the detector now and that chip is gone, which is the correct output: its job is to make every repeated read a decision instead of an accident.
+`:where` lists the spans that ran the query, so the overlay can turn each into a clickable chip. The recipe index in the screenshot wears one such flag: `all-recipes` maps `pull*` over the ids its `d/q` returned, so the same pull form runs once per card, the classic read shape of a Datomic peer, where each "query" is a local index walk and the chip is information, not an indictment. The detector caught a real one, though. `/admin` and `/dashboard` used to run `find-user-by-email` twice per request, because each auth gate in the middleware chain looked the user up for itself. The repeated-query chip is what made that visible, and the fix is the shape `wrap-current-user` has today: resolve the user once, put `:user-eid` and `:admin?` on the request, and let the later gates read the request instead of the database. Run the detector now and that chip is gone, which is the correct output: its job is to make every repeated read a decision instead of an accident.
 
 ## `project`: the whole trace
 
@@ -678,7 +678,7 @@ We already have every db-op keyed to its form. A query form that ran two or more
 
 ## Serving it, and the middleware gate
 
-The trace is reached through a dev-gated route in `routes.clj`. The plumbing lives in a helper, `dev-json-handler`, because this endpoint is the first of eight: the next chapter's projections all need exactly the same guard, and each route should contribute only how to pull its arguments out of the request. The helper's shape is the whole production-safety story for the server: **resolve the trace fn through a guarded `requiring-resolve`; in production the `:dev` `trace` namespace is absent, so the resolve throws, the catch turns that throw into nil, and the route 404s.**
+The trace is reached through a dev-gated route in `routes.clj`. The plumbing lives in a helper, `dev-json-handler`, because this endpoint is the first of eight: the next chapter's projections all need the same guard, and each route should contribute only how to pull its arguments out of the request. The helper's shape is the whole production-safety story for the server: **resolve the trace fn through a guarded `requiring-resolve`; in production the `:dev` `trace` namespace is absent, so the resolve throws, the catch turns that throw into nil, and the route 404s.**
 
 ```clojure
 (defn- dev-json-handler

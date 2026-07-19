@@ -6,7 +6,7 @@ There is a better approach. Wire Lighthouse into your CI pipeline with threshold
 
 The challenge for a SaaS app is that most pages live behind authentication. Lighthouse cannot log in. You need a test server that automatically authenticates every request, seeds realistic data, and serves the same pages your real users see. This chapter shows how to build that in Clojure, configure Lighthouse CI, and hit perfect scores across the board.
 
-There is one idea under everything that follows: a 100 is not an achievement, it is a *contract*. The point of the threshold is not the round number -- it is that the number turns every quality property Lighthouse can measure (a `lang` attribute, a meta description, sufficient contrast, a fast first paint) into a regression-guarded invariant instead of a thing someone has to remember. The individual fixes below each look small; what makes them matter is that, once passing, the gate keeps them passing. So read the list not as tips but as the set of audits we are choosing to pin, and the test server as the apparatus that lets us pin the authenticated ones too.
+There is one idea under everything that follows: a 100 is not an achievement, it is a *contract*. The threshold matters because the number turns every quality property Lighthouse can measure (a `lang` attribute, a meta description, sufficient contrast, a fast first paint) into a regression-guarded invariant, rather than a thing someone has to remember. The individual fixes below each look small; what makes them matter is that, once passing, the gate keeps them passing. So read the list not as tips but as the set of audits we are choosing to pin, and the test server as the apparatus that lets us pin the authenticated ones too.
 
 ![Lighthouse's four category gauges for the recipes page: Performance 98, Accessibility 100, Best Practices 100, SEO 100.](images/lighthouse-scores.png)
 
@@ -41,7 +41,7 @@ The Lighthouse test server lives on the test classpath -- it is never compiled i
 (set! *warn-on-reflection* true)
 ```
 
-The namespace requires the same modules as the real app: routes, database, assets, Ring middleware. It is the full application stack, not a mock.
+The namespace requires the same modules as the real app: routes, database, assets, Ring middleware. It is the full application stack.
 
 ### The auto-auth test user
 
@@ -64,7 +64,7 @@ Lighthouse needs to see authenticated pages, but it has no way to perform a logi
 
 The test email comes from the admin email in config, resolved at request time: a function, not a top-level `def`, so it tracks whatever profile the server starts under rather than freezing the value when the namespace loads (the same runtime-config discipline as [the web-server chapter](05-web-server.md)'s `delay` and [the email login-flow chapter](25-auth-email-flow.md)'s SMTP config). It also means the auto-authenticated user has admin privileges, so Lighthouse can audit admin pages too. `wrap-auto-auth` itself is trivial: one line of middleware that sets `:user-email` in the session map. The rest of the application sees a normal authenticated request.
 
-This is convenient and dangerous in equal measure, so state the boundary plainly: **this server is an unauthenticated admin bypass by construction.** Anyone who can reach it is the admin -- no token, no login. That is fine for what it is (a throwaway instance the CI job starts, audits, and kills on loopback), but it must *never* bind a non-loopback interface or outlive the audit. It lives on the test classpath precisely so it cannot be reached from the production jar; keep it that way -- do not add it to a deployable alias, and bind it to `127.0.0.1`, never `0.0.0.0`.
+This is convenient and dangerous in equal measure, so state the boundary plainly: **this server is an unauthenticated admin bypass by construction.** Anyone who can reach it is the admin: no token, no login. That is fine for what it is (a throwaway instance the CI job starts, audits, and kills on loopback), but it must *never* bind a non-loopback interface or outlive the audit. It lives on the test classpath so it cannot be reached from the production jar; keep it that way -- do not add it to a deployable alias, and bind it to `127.0.0.1`, never `0.0.0.0`.
 
 ### Seeding test data
 
@@ -85,7 +85,7 @@ An empty database produces empty pages. Empty pages get perfect performance scor
 
 The `:user/terms-accepted-at` field is important. Without it, the app redirects to the terms acceptance page. With it, the dashboard renders normally. Seed the minimum data needed for pages to render their real content.
 
-One honest limit of seeding the *minimum*: it proves the rendering path scores well, not that it stays fast at production data sizes. The dashboard here lists one user and a handful of links; in production those tables can run to the page's full limit. So the gate catches a regression in the markup, the critical CSS, or the font loading -- the things that are wrong at any size -- but it would not catch a layout that only janks once a table is long. If a page's cost scales with its rows, seed it near the realistic ceiling, not at one row, or the 100 is measuring the wrong page.
+One honest limit of seeding the *minimum*: it proves the rendering path scores well; it does not prove it stays fast at production data sizes. The dashboard here lists one user and a handful of links; in production those tables can run to the page's full limit. So the gate catches a regression in the markup, the critical CSS, or the font loading -- the things that are wrong at any size -- but it would not catch a layout that only janks once a table is long. If a page's cost scales with its rows, seed it near the realistic ceiling rather than at one row, or the 100 is measuring the wrong page.
 
 ### Building the app
 
@@ -148,7 +148,7 @@ The `start!` function ties everything together. It creates fresh databases, load
     @(promise)))
 ```
 
-The final line -- `@(promise)` -- blocks the main thread indefinitely. Without it, the JVM would exit after starting the server. The `println` message is not decorative; Lighthouse CI uses it to know when the server is ready to accept requests, as we will see in the configuration below.
+The final line, `@(promise)`, blocks the main thread indefinitely. Without it, the JVM would exit after starting the server. The `println` message is not decorative; Lighthouse CI uses it to know when the server is ready to accept requests, as we will see in the configuration below.
 
 ## Lighthouse CI configuration
 
@@ -206,7 +206,7 @@ The work happens in two blocks: `collect` starts the server and produces the aud
 The assertion block is where you set your standards. Each category maps to an assertion level and a minimum score:
 
 - **Accessibility and Best Practices** are set to `error` with `minScore: 1` (100%). Any score below 100 fails the build. For a server-rendered app these are genuinely achievable, so we hold the line at perfect.
-- **Performance** is set to `error` with `minScore: 0.95`. Performance is the one category Lighthouse scores from continuous metrics -- largest contentful paint, total blocking time, layout shift -- measured under simulated CPU and network throttling, so its score carries genuine run-to-run variance: CI CPU contention and lab-throttling jitter move it by a few points on an unchanged page. That makes a *repeatable* 100 unrealistic. A 100 is achievable and is the ceiling we engineer toward, but it is not a number we can guarantee on every run -- so the contract is the floor, not the round number. A 0.95 floor fails a genuine regression while absorbing the jitter, and a representative run landing at 98 is exactly that jitter, not a defect. The deterministic categories above have no such noise, which is why we can pin *them* at a hard 100 and only give performance a floor.
+- **Performance** is set to `error` with `minScore: 0.95`. Performance is the one category Lighthouse scores from continuous metrics -- largest contentful paint, total blocking time, layout shift -- measured under simulated CPU and network throttling, so its score carries real run-to-run variance: CI CPU contention and lab-throttling jitter move it by a few points on an unchanged page. That makes a *repeatable* 100 unrealistic. A 100 is achievable and is the ceiling we engineer toward, but we cannot guarantee it on every run, so the contract is the floor, not the round number. A 0.95 floor fails a genuine regression while absorbing the jitter, and a representative run landing at 98 is that jitter, not a defect. The deterministic categories above have no such noise, which is why we can pin *them* at a hard 100 and only give performance a floor.
 - **SEO** is set to `warn` with `minScore: 1`. It warns rather than errors because some SEO checks cannot apply to authenticated pages -- concretely: [the machine-legibility chapter](30-machine-legibility.md) fences `/dashboard` and `/admin` in `robots.txt`, so Lighthouse's is-crawlable audit flags exactly those two pages as "blocked from indexing." It is right, and the blocking is on purpose; an error-level assertion would turn a correct decision into a red build. The warning keeps it visible without blocking deploys, and the public pages hold SEO at 100.
 
 ## Running it
@@ -217,7 +217,7 @@ There is no wrapper script to write -- the whole audit is one command, run from 
 lhci autorun
 ```
 
-`lhci autorun` handles everything: it starts your server (using `startServerCommand`), waits for the ready pattern, runs Lighthouse against each URL, collects the reports, and checks the assertions. If any assertion fails, it exits non-zero, which fails your CI step. This is exactly the command [the CI/CD chapter](34-ci-cd.md) wires into the pipeline -- no bespoke script in between. (If you prefer a short alias, a one-line `lhci autorun` wrapper is fine, but the companion repo deliberately keeps the canonical command in the workflow rather than hiding it behind a script.)
+`lhci autorun` handles everything: it starts your server (using `startServerCommand`), waits for the ready pattern, runs Lighthouse against each URL, collects the reports, and checks the assertions. If any assertion fails, it exits non-zero, which fails your CI step. This is the command [the CI/CD chapter](34-ci-cd.md) wires into the pipeline -- no bespoke script in between. (If you prefer a short alias, a one-line `lhci autorun` wrapper is fine, but the companion repo deliberately keeps the canonical command in the workflow rather than hiding it behind a script.)
 
 ## Hitting 100%
 
@@ -225,7 +225,7 @@ Setting the thresholds is easy. The first time you point `lhci autorun` at an un
 
 ### The missing `lang`, viewport, and description
 
-Run the audit cold and the first things to fall are accessibility, SEO, and best practices, all on small omissions in the document head -- but on *different* omissions, which is worth keeping straight. Accessibility and SEO fall on a missing `lang` on `<html>`, viewport meta, and description; best practices falls separately on a missing doctype and charset. Lighthouse checks these because they are not cosmetic -- `lang` is what tells a screen reader which language to pronounce and a search engine which language to index, the viewport tag is what makes the page render at device width instead of zoomed-out desktop, the description is what a result snippet is built from, and the doctype plus `<meta charset>` are what keep the browser out of quirks mode and its byte-level encoding unambiguous. In Hiccup, the base layout fixes all of them in one place:
+Run the audit cold and the first things to fall are accessibility, SEO, and best practices, all on small omissions in the document head, but on *different* omissions, which is worth keeping straight. Accessibility and SEO fall on a missing `lang` on `<html>`, viewport meta, and description; best practices falls separately on a missing doctype and charset. Lighthouse checks these because they are not cosmetic -- `lang` is what tells a screen reader which language to pronounce and a search engine which language to index, the viewport tag is what makes the page render at device width instead of zoomed-out desktop, the description is what a result snippet is built from, and the doctype plus `<meta charset>` are what keep the browser out of quirks mode and its byte-level encoding unambiguous. In Hiccup, the base layout fixes all of them in one place:
 
 ```clojure
 (defn- base-layout
@@ -245,7 +245,7 @@ Run the audit cold and the first things to fall are accessibility, SEO, and best
       ]]))
 ```
 
-This is the same escaping `h/html` layout from [the Hiccup views chapter](14-hiccup-views.md) -- not `hiccup.page/html5`, which we dropped there because it does not escape string content. Because these live in the shared base layout, every page gets them automatically, and a new page can never ship missing them. Re-run, and accessibility, SEO, and best practices all jump -- which surfaces the next failure, this one on performance.
+This is the same escaping `h/html` layout from [the Hiccup views chapter](14-hiccup-views.md) -- not `hiccup.page/html5`, which we dropped there because it does not escape string content. Because these live in the shared base layout, every page gets them automatically, and a new page can never ship missing them. Re-run, and accessibility, SEO, and best practices all jump, surfacing the next failure, this one on performance.
 
 ### Font display
 
@@ -263,7 +263,7 @@ The performance audit docks you on "Ensure text remains visible during webfont l
 
 With `swap`, the browser immediately renders text in a fallback font, then swaps in the custom font when it finishes loading. Users see content instantly. Lighthouse gives you full marks on the "Ensure text remains visible during webfont load" audit.
 
-`swap` is the right default here, but it is a choice with a cost worth naming. Its swap period is unlimited, so a slow font load shows the fallback for a while and then *swaps* -- and if the fallback and the final font have different metrics, that swap is a late layout shift that can *hurt* the CLS score this same performance audit rewards. The stricter alternative, `font-display: optional`, gives the font one brief window to arrive and otherwise keeps the fallback for the life of the page: zero layout shift, at the price of sometimes not showing your font at all on a slow connection. We take `swap` because the fallback stack is metric-close and the brand font is worth showing; a page whose score lives or dies on CLS would reasonably choose `optional`. That is the actual decision behind the one-line fix.
+`swap` is the right default here, but it is a choice with a cost. Its swap period is unlimited, so a slow font load shows the fallback for a while and then *swaps* -- and if the fallback and the final font have different metrics, that swap is a late layout shift that can *hurt* the CLS score this same performance audit rewards. The stricter alternative, `font-display: optional`, gives the font one brief window to arrive and otherwise keeps the fallback for the life of the page: zero layout shift, at the price of sometimes not showing your font at all on a slow connection. We take `swap` because the fallback stack is metric-close and the brand font is worth showing; a page whose score lives or dies on CLS would reasonably choose `optional`. That is the actual decision behind the one-line fix.
 
 Using a variable font (the `VF` in `GeistVF.woff2`) also helps performance. Instead of loading separate files for each weight (regular, bold, semibold), a single variable font file covers the entire `100 900` weight range. Fewer network requests, smaller total download.
 
@@ -275,9 +275,9 @@ With the head and the font handled, the accessibility audit's remaining deductio
 - `<label>` elements associated with form inputs via the `for` attribute -- the `label` audit.
 - An accessible name on every link and button, even when the visible text is gone -- the `link-name` and `button-name` audits. The nav tabs hide their text below the `sm` breakpoint, leaving icon-only links, so each carries an `aria-label`.
 
-And one caveat, stated honestly: use `<main>` for the primary content area and `<nav>` for navigation, but know that the gate does not hold you to it. In the Lighthouse this repo runs (12.x, bundled with `@lhci/cli`), the `<main>`-landmark audit (`landmark-one-main`) carries weight 0 and is hidden from the report, the general landmarks check is a weight-0 manual audit, and no scored audit looks for `<nav>` at all -- a page missing both still scores a clean 1.0, and the `minScore: 1` gate passes it untouched. We keep the landmarks anyway, partly because assistive technology navigates by them whether or not Lighthouse grades them, and partly because in this app `<main>` is enforced by something stricter than any audit: it is the morph target the dispatcher extracts on every navigation ([the morph-dispatcher chapter](15-morph-dispatcher.md)). Drop it and every page breaks, not just a score.
+And one caveat: use `<main>` for the primary content area and `<nav>` for navigation, but know that the gate does not hold you to it. In the Lighthouse this repo runs (12.x, bundled with `@lhci/cli`), the `<main>`-landmark audit (`landmark-one-main`) carries weight 0 and is hidden from the report, the general landmarks check is a weight-0 manual audit, and no scored audit looks for `<nav>` at all -- a page missing both still scores a clean 1.0, and the `minScore: 1` gate passes it untouched. We keep the landmarks anyway, partly because assistive technology navigates by them whether or not Lighthouse grades them, and partly because in this app `<main>` is enforced by something stricter than any audit: it is the morph target the dispatcher extracts on every navigation ([the morph-dispatcher chapter](15-morph-dispatcher.md)). Drop it and every page breaks, not just a score.
 
-> **An accessibility 100 is a floor, not a certificate.** The weight-0 landmark audit is one case of a general limit worth stating plainly: an automated audit reaches only a fraction of the WCAG criteria -- common estimates put it between a third and half -- because a machine can confirm that a label or an `alt` is *present* but not that it is *meaningful*, and it cannot judge reading order, keyboard traps, focus management, or whether the page makes sense to someone who cannot see it. So the 100 we pin is the necessary, regression-proof baseline, every mechanical miss caught the moment it ships -- not a claim that the app is accessible, which only a person with a screen reader and a keyboard can tell you.
+> **An accessibility 100 is a floor, not a certificate.** The weight-0 landmark audit is one case of a general limit: an automated audit reaches only a fraction of the WCAG criteria -- common estimates put it between a third and half -- because a machine can confirm that a label or an `alt` is *present* but not that it is *meaningful*, and it cannot judge reading order, keyboard traps, focus management, or whether the page makes sense to someone who cannot see it. So the 100 we pin is the necessary, regression-proof baseline, every mechanical miss caught the moment it ships -- not a claim that the app is accessible, which only a person with a screen reader and a keyboard can tell you.
 
 In the app layout, this looks like:
 
@@ -328,7 +328,7 @@ The minimum ratio for normal text is 4.5:1 (the AA standard); for large text it 
 
 The lesson: pick your grays carefully, and let Lighthouse verify the math. Eyeballing contrast is unreliable.
 
-With those four classes of failure closed -- the head, the font, the markup structure, the palette -- the cold run that started red comes back green across all five URLs. The point of walking them in order is not the list itself but the loop: every score Lighthouse reports traces to a specific audit with a specific reason, and the way you get to 100 is to read the deduction, not to memorize a checklist. Which is exactly why the next step is to make that loop run on every push.
+With those four classes of failure closed (the head, the font, the markup structure, the palette), the cold run that started red comes back green across all five URLs. Walking them in order is about the loop, not the list: every score Lighthouse reports traces to a specific audit with a specific reason, and the way you get to 100 is by reading the deduction rather than memorizing a checklist. Which is why the next step is to make that loop run on every push.
 
 ## How it fits in CI
 
@@ -346,6 +346,6 @@ The Lighthouse audit runs alongside the other verification scripts:
 
 ## Where this leaves us
 
-The apparatus is two files. One Clojure namespace on the test classpath boots the real application behind `wrap-auto-auth` and seeds just enough data for pages to render their true content rather than empty shells; one `lighthouserc.js` audits five real URLs and holds accessibility and best-practices at 100, with a 0.95 performance floor for measurement noise. The fixes that get there -- the head metadata, `font-display: swap`, the heading and labeling structure, the contrast-checked palette -- live in the shared layout and the theme, so they apply to every page at once and a new page cannot quietly drop one.
+The apparatus is two files. One Clojure namespace on the test classpath boots the real application behind `wrap-auto-auth` and seeds just enough data for pages to render their true content rather than empty shells; one `lighthouserc.js` audits five real URLs and holds accessibility and best-practices at 100, with a 0.95 performance floor for measurement noise. The fixes that get there (the head metadata, `font-display: swap`, the heading and labeling structure, the contrast-checked palette) live in the shared layout and the theme, so they apply to every page at once and a new page cannot drop one.
 
-The total cost is those two files; there is no wrapper script, because `lhci autorun` is the whole command. The ongoing cost is zero -- Lighthouse runs on every commit -- and the value is that performance, accessibility, and SEO regressions are caught the moment they are introduced, not weeks later when someone happens to run an audit by hand. That is the contract the chapter opened with: the 100 is not a trophy you won once, it is an invariant the gate keeps true on every push.
+The total cost is those two files; there is no wrapper script, because `lhci autorun` is the whole command. The ongoing cost is zero (Lighthouse runs on every commit), and the value is that performance, accessibility, and SEO regressions are caught the moment they are introduced, not weeks later when someone happens to run an audit by hand. That is the contract the chapter opened with: the 100 is not a trophy you won once, it is an invariant the gate keeps true on every push.
