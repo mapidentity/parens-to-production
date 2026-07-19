@@ -12,8 +12,17 @@ improvisation. Read it before you need it.
 2. **What does the box say about itself?** `systemctl status myapp` and
    `journalctl -u myapp -S -30min`. A crash loop has already emailed
    (`OnFailure=`); a wedged-but-alive JVM has not — check `/metrics` for a
-   4xx/5xx spike.
-3. **Is this an attack?** `tail -n 200 /var/log/myapp/security.log` and
+   4xx/5xx spike, a climbing `presence_channels`/`process_open_fds` (an FD
+   leak), or a stalled `email_send_total{outcome="fail"}`. Before restarting a
+   wedge, [capture a thread dump](#a-wedged-but-alive-jvm) — the restart
+   destroys the only evidence of *why*.
+3. **Is the data layer intact?** If pages 500 but the process is up, suspect
+   Datomic. `systemctl status myapp-transactor` (the peer rides out a blip for
+   reads but not writes); `df -h` for the storage/data mount; check the
+   [backup is fresh](#restore-from-backup) if you may need it. A dead disk or a
+   wrong `rm` on the data directory is a [restore](#restore-from-backup), not a
+   restart.
+4. **Is this an attack?** `tail -n 200 /var/log/myapp/security.log` and
    `systemctl status fail2ban`. Bursts of `auth.failure`/`auth.replay`,
    `tenancy.refused`, or `admin.denied` are the tells.
 
@@ -23,7 +32,7 @@ improvisation. Read it before you need it.
   `fail2ban-client set myapp banip <ip>` — or let the jail do it
   automatically at 5 failures / 10 min. Unban: `... unbanip <ip>`.
 - **Ban a user** (their session dies on its next request, reversible):
-  from a REPL on the box,
+  over the [loopback REPL](#the-production-repl) —
   `(myapp.auth.core/set-active! (myapp.db.core/get-connection) "<email>" false)`.
   Re-enable with `true`.
 - **Revoke ALL sessions** (the blunt instrument, for a suspected session
@@ -32,6 +41,100 @@ improvisation. Read it before you need it.
   disruptive; that is the containment.
 - **Take the app offline** but keep the branded page: `systemctl stop
   myapp` — Caddy serves the [maintenance 503](../static/error/503.html).
+- **Disable ONE broken feature?** There is no per-feature kill-switch — the
+  levers are whole-app. If a single feature is actively *corrupting data* (a
+  bad write path), the correct move is the whole-app 503 above: integrity over
+  availability. If it is only *melting the box* (a runaway query), ban the
+  actor (IP/user) and, if that fails, 503. Naming this gap is the honest
+  single-box answer; see [ch.46](../chapters/46-watching-the-watchers.md).
+
+## The production REPL
+
+The live levers above (ban a user, inspect the presence registry or config,
+apply a surgical fix) run in a **loopback-only socket REPL** the app starts
+when `MYAPP_REPL_PORT` is set (5555 in `myapp.service`). It binds `127.0.0.1`
+only — a connection is unauthenticated code execution, so it must never be
+reachable from the network. Reach it by tunnelling over SSH, which is the
+authentication:
+
+```
+ssh -L 5555:127.0.0.1:5555 box     # then, locally:
+rlwrap nc 127.0.0.1 5555           # a bare prompt into the running process
+```
+
+Rules of the road, because this is total power over the live process:
+
+- **It is not a redeploy.** That is the point — you can read and repair the
+  running state that a restart would erase. But every action is real and
+  immediate; there is no dry-run and no undo.
+- **Read before you write.** Confirm the entity you are about to change
+  (`(d/pull (d/db conn) '[*] eid)`) before you transact against it.
+- **Irreversible actions get a second person.** A retraction, an
+  [excision](../chapters/40-excision.md), a `restore` — pair on it. The
+  3am-typo-against-the-wrong-datom is its own incident.
+- **It is audited.** The REPL runs as the app user; `journalctl` and shell
+  history are the trail. Write down what you ran in the incident notes.
+
+## A wedged-but-alive JVM
+
+The one failure that trips neither `Restart=` nor `OnFailure=`: the process
+answers `/health` but serves nothing well — every worker blocked on a slow
+query, or an SMTP stall (now bounded, but a dependency can still be slow).
+`/metrics` shows *that* (a 5xx/latency climb) but not *why*. Get the why
+**before** you restart, because the restart destroys it:
+
+```
+pid=$(systemctl show -p MainPID --value myapp)
+jcmd "$pid" Thread.print > /var/log/myapp/threaddump-$(date -Is).txt
+```
+
+Read the dump for a pile-up of threads parked in the same place (a lock, a
+socket read, a Datomic call). If the JVM died of OutOfMemoryError, the unit
+already wrote `java_pid<pid>.hprof` to `/var/log/myapp/` before exiting —
+**that file contains secrets (SMTP creds, session tokens) in cleartext**;
+copy it off for analysis, then delete it from the box, and treat it as
+exactly as sensitive as `/etc/myapp/env`. Only then restart.
+
+## Restore from backup
+
+The [nightly backup](../chapters/39-backup-restore.md) is drilled weekly by
+`myapp-backup-verify.timer` (it restores into scratch storage and proves
+history survived — so the archive you reach for here has been *proven*
+restorable, not merely written). To restore for real, restore into a **fresh**
+database and repoint — never over the live one, which stays standing as
+evidence:
+
+```
+datomic restore-db "$BACKUP_URI/myapp" "$SCRATCH_OR_NEW_URI"
+# then edit DATABASE_URI in /etc/myapp/env to the restored DB, and:
+systemctl restart myapp
+```
+
+Rolling back the restore is editing that one line back. If the backup target is
+off-box (`BACKUP_URI=s3://…`, as production should be — the local disk shares
+the failure domain you are recovering from), the same command reads from there.
+
+## Repair a bad write (surgical, in place)
+
+A logic bug can write *valid-but-wrong* data — every availability signal green,
+the content quietly corrupt. A whole-DB restore would roll back *everyone's*
+work to fix *one* datom; excision only deletes. The middle path is a corrective
+transaction over the [REPL](#the-production-repl), which the immutable log makes
+safe: you can see exactly what was written, and when.
+
+```clojure
+;; Find the bad assertion in history (who/when), then correct it forward.
+(require '[datomic.api :as d])
+(let [conn (myapp.db.core/get-connection)]
+  ;; inspect first — never transact blind:
+  (d/pull (d/db conn) '[*] eid)
+  ;; then a normal assertion (a new version, not a rewrite of the past):
+  @(myapp.db.core/transact* conn [{:db/id eid :recipe/title "corrected"}]))
+```
+
+This adds a version; it does not erase the wrong one, so the mistake and its
+correction are both in the history — which is the audit trail you want. Reach
+for excision only when the wrong value must legally *not exist* (ch.40).
 
 ## Rotating a compromised SIGNING_KEY (no mass logout)
 

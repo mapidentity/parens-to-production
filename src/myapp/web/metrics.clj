@@ -10,11 +10,23 @@
   `-Ddatomic.metricsCallback=myapp.web.metrics/datomic-callback!` names
   it (see ops/myapp.service) — a plain dev REPL never wires it."
   (:require
-    [clojure.string :as str])
+    [clojure.java.io :as io]
+    [clojure.string :as str]
+    [myapp.web.presence :as presence])
   (:import
+    [com.sun.management UnixOperatingSystemMXBean]
     [java.lang.management GarbageCollectorMXBean ManagementFactory MemoryUsage]))
 
 (set! *warn-on-reflection* true)
+
+(def ^{:doc "Short git SHA of this build (from the build-id resource), or \"dev\"."} build-id
+  (delay
+    (or
+      (some-> (io/resource "build-id")
+              slurp
+              str/trim
+              not-empty)
+      "dev")))
 
 (defonce ^{:doc "Latest metrics map from the peer's ~1/min callback, or nil."} datomic-metrics
   (atom nil))
@@ -36,6 +48,30 @@
       (fn [m]
         {:count (inc (long (:count m 0)))
          :nanos (+ (long (:nanos m 0)) nanos)}))))
+
+(defonce ^{:doc "Magic-link send outcomes: {:success n :fail n}."} emails
+  (atom
+    {:success 0
+     :fail 0}))
+
+(defn record-email!
+  "Fold one magic-link send outcome (`:success` or `:fail`) into the counter.
+  Login is email, so a rising `email_send_total{outcome=\"fail\"}` is the
+  earliest signal of the invisible outage the alerting chapter is built around
+  — a relay that went bad while every other health signal stayed green."
+  [outcome]
+  (swap! emails update outcome (fnil inc 0)))
+
+(defn- open-fd-count
+  "Open file descriptors for this process, or nil off Unix.
+  The platform MXBean does not always expose it. Leaked sockets (the SSE
+  reaper's failure mode) climb here while the heap stays flat — the one gauge
+  that catches an FD leak before the process hits its limit and everything that
+  needs a socket fails at once."
+  []
+  (let [os (ManagementFactory/getOperatingSystemMXBean)]
+    (when (instance? UnixOperatingSystemMXBean os)
+      (.getOpenFileDescriptorCount ^UnixOperatingSystemMXBean os))))
 
 (defn- sanitize
   "Metric-name-safe form of a camelCased metric key."
@@ -73,6 +109,7 @@
   []
   (let [heap ^MemoryUsage (.getHeapMemoryUsage (ManagementFactory/getMemoryMXBean))
         sb (StringBuilder.)]
+    (emit sb (str "build_info{build_id=\"" @build-id "\"}") 1.0)
     (emit sb "jvm_memory_heap_used_bytes" (double (.getUsed heap)))
     (emit sb "jvm_memory_heap_max_bytes" (double (.getMax heap)))
     (emit sb "jvm_threads" (double (.getThreadCount (ManagementFactory/getThreadMXBean))))
@@ -94,6 +131,17 @@
       (let [status-label (str "{class=\"" status-class "\"}")]
         (emit sb (str "http_requests_total" status-label) (double n))
         (emit sb (str "http_request_duration_seconds_sum" status-label) (/ (double nanos) 1e9))))
+    (let [{:keys [success fail]} @emails]
+      (emit sb "email_send_total{outcome=\"success\"}" (double success))
+      (emit sb "email_send_total{outcome=\"fail\"}" (double fail)))
+    ;; Presence registry cardinality + open FDs: the SSE reaper's failure mode
+    ;; (leaked sockets) shows here — channels/FDs climbing while the heap is
+    ;; flat — long before it becomes an FD-exhaustion outage with a green probe.
+    (let [{:keys [channels recipes]} (presence/stats)]
+      (emit sb "presence_channels" (double channels))
+      (emit sb "presence_recipes" (double recipes)))
+    (when-let [fds (open-fd-count)]
+      (emit sb "process_open_fds" (double fds)))
     (when-let [dm @datomic-metrics]
       (emit-datomic sb dm))
     (str sb)))

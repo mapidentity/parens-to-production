@@ -3,6 +3,7 @@
   Cover line diff, edit history (Datomic time travel), forks/lineage, and
   owner-only mutations."
   (:require
+    [clojure.string :as str]
     [clojure.test :refer [deftest is testing use-fixtures]]
     [datomic.api :as d]
     [myapp.db.core :as db]
@@ -56,6 +57,32 @@
        {:op :add
         :text "two"}]
       (recipe/line-diff "" "one\ntwo"))))
+
+(deftest line-diff-caps-oversized-input-to-a-coarse-bounded-diff
+  ;; The LCS table is O(n*m) in memory; on a public, cacheable endpoint two
+  ;; large inputs would be a quadratic-blowup DoS. Past the ceiling the diff
+  ;; degrades to all-del/all-add — bounded, O(n+m), and quick to compute.
+  (let [big-a (str/join "\n" (map #(str "old-" %) (range 6000)))
+        big-b (str/join "\n" (map #(str "new-" %) (range 6000)))
+        started (System/nanoTime)
+        d (recipe/line-diff big-a big-b)
+        elapsed-ms (/ (- (System/nanoTime) started) 1e6)]
+    (testing "it returns a coarse diff: every old line deleted, every new added"
+      (is (= 12000 (count d)))
+      (is (= 6000 (count (filter #(= :del (:op %)) d))))
+      (is (= 6000 (count (filter #(= :add (:op %)) d))))
+      (is
+        (=
+          {:op :del
+           :text "old-0"}
+          (first d)))
+      (is
+        (=
+          {:op :add
+           :text "new-5999"}
+          (last d))))
+    (testing "it does not build the quadratic table (stays fast, not seconds)"
+      (is (< elapsed-ms 1000) "6000x6000 lines complete well under a second"))))
 
 ;; --- create / read ---
 

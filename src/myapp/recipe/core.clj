@@ -292,19 +292,54 @@
                     (inc (long (get dp [(inc i) (inc j)] 0)))
                     (max (long (get dp [(inc i) j] 0)) (long (get dp [i (inc j)] 0)))))))))))))
 
+(def ^:private max-diff-lines
+  "Above this many lines on either side, the LCS table is skipped.
+  `lcs-suffix-table` is O(n*m) in time AND memory (an entry per [i j] pair), so
+  on a public, cacheable endpoint two large inputs are a quadratic-blowup DoS
+  that OOMs the whole single box, not just the diff. The content caps in
+  `conform` (~20k chars) still permit thousands of lines; this ceiling turns a
+  pathological pair into a coarse-but-bounded diff instead of a heap bomb."
+  2000)
+
+(defn- coarse-diff
+  "A bounded O(n+m) fallback for oversized inputs.
+  Every old line as `:del`, every new line as `:add`. Not minimal, but honest
+  and safe to render — reached only past `max-diff-lines`, where a minimal diff
+  is not worth OOMing the box for."
+  [a b]
+  (into
+    (mapv
+      (fn [t]
+        {:op :del
+         :text t})
+      a)
+    (map
+      (fn [t]
+        {:op :add
+         :text t})
+      b)))
+
+(declare line-diff*)
+
 (defn line-diff
   "A git-style line diff of two newline-separated strings.
 
   Returns a vector of `{:op :ctx|:add|:del :text <line>}` in display order,
   computed from a longest-common-subsequence of the lines: shared lines are
   `:ctx`, lines only in `new-text` are `:add`, lines only in `old-text` are
-  `:del`. Pure data → data."
+  `:del`. Pure data → data. Past `max-diff-lines` on either side it degrades
+  to a coarse all-del/all-add diff rather than build the O(n*m) LCS table."
   [old-text new-text]
   (let [a (lines old-text)
         b (lines new-text)
         n (count a)
-        m (count b)
-        dp (lcs-suffix-table a b)]
+        m (count b)]
+    (if (or (> n max-diff-lines) (> m max-diff-lines)) (coarse-diff a b) (line-diff* a b n m))))
+
+(defn- line-diff*
+  "The LCS-based diff walk, given already-split line vectors and their counts."
+  [a b n m]
+  (let [dp (lcs-suffix-table a b)]
     (loop [i 0
            j 0
            acc (transient [])]

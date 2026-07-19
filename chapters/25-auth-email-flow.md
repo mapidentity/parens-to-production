@@ -105,6 +105,8 @@ Each of the choices folded into those few lines is a small refusal of a more ela
 
 **Return value, not exception.** The function returns `{:error :SUCCESS}` or `{:error :FAIL :message "..."}`. The caller can decide what to do. In our case, the handler always shows the "check your email" page regardless: we do not want to leak information about whether an email address is registered. The shape has a naming wart worth owning -- a key called `:error` whose value can be `:SUCCESS` reads backwards, and screaming keywords are unidiomatic Clojure. Read the pair as a status code (the map answers "what went wrong?", and `:SUCCESS` means "nothing"), or rename it `{:ok? true}` in your own code. The property that matters is that failure is a value the caller inspects, not an exception that unwinds the handler.
 
+**Bounded, and off the request thread.** Two later hardenings, both for the same reason -- login *is* this send, so it is the one dependency whose slowness is a total outage. First, `smtp-session` sets finite `connectiontimeout`/`timeout`/`writetimeout`: Jakarta defaults them to *infinite*, so a relay that completes the handshake and then stalls would hang the caller forever. Second, the handler calls `deliver-magic-link!`, not `send-magic-link!` directly -- the blocking SMTP work runs on a small bounded background mailer, so a slow relay backs up against a bounded queue instead of pinning the http-kit worker pool (and taking `/health`, which shares that pool, down with it). The [resilience capstone](46-watching-the-watchers.md) is where this stops being a local fix and becomes a rule.
+
 ## Deliverability: SPF, DKIM, and DMARC
 
 `send-magic-link!` ends at the relay's door; whether the message reaches the inbox is decided outside the application, by DNS you publish and the reputation of the IP that sends it. For most apps that is a marketing concern. Here it is a security one: the login *is* the email, so a magic link that lands in spam is not a cosmetic annoyance -- it is a failed authentication the user cannot retry their way out of. Three DNS records stand between a passwordless login and the junk folder.
@@ -170,7 +172,7 @@ With token creation (from the previous chapter) and email sending in place, the 
       (let [signing-key (config/get-config :signing-key)
             base-url (config/get-config :base-url)
             {:keys [token nonce]} (auth/create-magic-link-token signing-key email)]
-        (email/send-magic-link! locale email token base-url)
+        (email/deliver-magic-link! locale email token base-url)
         (analytics/record!
           [{:magic-link/email email
             :magic-link/nonce nonce

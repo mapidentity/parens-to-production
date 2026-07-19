@@ -30,9 +30,38 @@ done
 timeout 5 bash -c "exec 3<>/dev/tcp/$SMTP_HOST/$SMTP_PORT" 2>/dev/null \
   || fail "SMTP relay $SMTP_HOST:$SMTP_PORT does not accept connections"
 
-# 3. Disk headroom. The slowest outage on any single box is the full disk;
-#    it deserves two minutes' notice, not a crashed transactor's.
-usage=$(df --output=pcent / | tail -1 | tr -dc '0-9')
-[ "$usage" -lt 90 ] || fail "root filesystem at ${usage}% — reclaim space"
+# 3. Disk headroom on every filesystem that holds state — not just /. The
+#    data volume (/mnt/data), the backups, and the log dir can each fill
+#    independently; df resolves a path to its containing filesystem, so paths
+#    that share a mount are harmlessly redundant and separate mounts are all
+#    seen. The slowest outage on a single box is the disk that fills.
+BACKUP_DIR="${BACKUP_DIR:-/var/backups/myapp}"
+for path in / /mnt/data "$BACKUP_DIR" /var/log/myapp; do
+  [ -e "$path" ] || continue
+  usage=$(df --output=pcent "$path" 2>/dev/null | tail -1 | tr -dc '0-9')
+  { [ -n "$usage" ] && [ "$usage" -lt 90 ]; } || fail "filesystem for $path at ${usage:-?}% — reclaim space"
+done
+
+# 4. The backup actually ran recently. A backup that silently stopped
+#    advancing is Schrödinger's backup — green until the night you need it.
+#    The newest file under BACKUP_DIR must be younger than 25h (nightly +
+#    slack); an empty dir means no backup has ever completed.
+if [ -d "$BACKUP_DIR" ]; then
+  newest=$(find "$BACKUP_DIR" -type f -printf '%T@\n' 2>/dev/null | sort -n | tail -1)
+  if [ -n "$newest" ]; then
+    age=$(( $(date +%s) - ${newest%.*} ))
+    [ "$age" -lt 90000 ] || fail "newest backup is $((age / 3600))h old — the nightly backup has stopped"
+  else
+    fail "backup dir $BACKUP_DIR is empty — no backup has ever completed"
+  fi
+fi
+
+# All checks passed. Ping the external dead-man's-switch (healthchecks.io,
+# ntfy, any cron monitor) so that SILENCE — this box gone, this watchdog
+# broken, or any check above failing — becomes an alarm raised OFF the box,
+# on a path that does NOT depend on the box's own mail relay. This is the
+# signal that survives the very outage (a dead relay) the in-box alerter
+# cannot page about. Best-effort: a monitoring blip must not flip us to failed.
+[ -n "${HEARTBEAT_URL:-}" ] && curl -fsS -m 10 "$HEARTBEAT_URL" >/dev/null 2>&1 || true
 
 exit 0

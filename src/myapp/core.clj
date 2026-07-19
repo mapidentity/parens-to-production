@@ -3,7 +3,9 @@
   Manages the HTTP server lifecycle (start, stop, restart) and initializes
   the database on startup."
   (:require
+    [clojure.core.server :as repl-server]
     [myapp.analytics.db :as analytics]
+    [myapp.auth.email :as email]
     [myapp.config :as config]
     [myapp.db.core :as db]
     [myapp.web.assets :as assets]
@@ -15,6 +17,37 @@
 (set! *warn-on-reflection* true)
 
 (defonce ^{:doc "Atom holding the HTTP-Kit stop function, or nil when stopped."} server (atom nil))
+
+(def ^:private repl-server-name
+  "myapp-repl")
+
+(defn- start-repl-server!
+  "Start a loopback-only socket REPL when MYAPP_REPL_PORT is set.
+
+  This is the lever the runbook's live actions depend on — ban a user, inspect
+  the presence registry, read config — WITHOUT a redeploy that would destroy
+  the very incident state you are trying to see. The uberjar's entry point is
+  this gen-class `-main`, not `clojure.main`, so the `-Dclojure.server.repl`
+  property is never processed; the socket server has to be started here.
+
+  Bound to 127.0.0.1 ONLY: a connection is unauthenticated RCE, so it must be
+  unreachable from the network. An operator reaches it by SSH-tunnelling to the
+  box (`ssh -L 5555:127.0.0.1:5555 box`), which already gates on SSH auth. Off
+  entirely unless the port is set. See ops/RUNBOOK.md and ch.43."
+  []
+  (when-let [port (some-> (System/getenv "MYAPP_REPL_PORT")
+                          parse-long)]
+    (repl-server/start-server
+      {:name repl-server-name
+       :port port
+       :address "127.0.0.1"
+       :accept 'clojure.core.server/repl})
+    (println (str "Loopback socket REPL on 127.0.0.1:" port " (SSH-tunnel to reach it)"))))
+
+(defn- stop-repl-server!
+  "Stop the loopback socket REPL if it was started (a no-op otherwise)."
+  []
+  (repl-server/stop-server repl-server-name))
 
 (defn start-server!
   "Start the web server."
@@ -39,6 +72,12 @@
     ;; whose clients vanished without a clean close. Tied to the server so a
     ;; dev restart can't stack a second one (see presence/start-reaper!).
     (presence/start-reaper!)
+    ;; The bounded mailer: keeps the blocking SMTP send off the request thread
+    ;; so a slow relay can't starve the worker pool (see email/deliver-magic-link!).
+    (email/start-mailer!)
+    ;; The live-diagnosis lever: a loopback socket REPL, only if MYAPP_REPL_PORT
+    ;; is set. Started BEFORE announcing ready so it is up for the first incident.
+    (start-repl-server!)
     (println (str "Server running at http://" host ":" port))
     @server))
 
@@ -55,6 +94,8 @@
      ;; Stop the heartbeat first and clear the (defonce) presence registry, so
      ;; a restart in this same JVM doesn't inherit the dead instance's viewers.
      (presence/stop-reaper!)
+     (email/stop-mailer!)
+     (stop-repl-server!)
      (stop-fn :timeout drain-ms)
      (reset! server nil)
      (println "Server stopped"))))

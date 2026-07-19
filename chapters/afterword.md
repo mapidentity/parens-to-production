@@ -1,6 +1,6 @@
 # Afterword: What You Built, and Where It Goes
 
-The book opened with a wager: that an application built for correctness, security, and the daily experience of working on it -- with no chapter ever trading the quality of the thing for the ease of explaining it -- would end up not harder to own but simpler. Forty-five chapters later, that is the claim to settle. So it is worth saying plainly what now exists, because the proof is the whole of it standing together.
+The book opened with a wager: that an application built for correctness, security, and the daily experience of working on it -- with no chapter ever trading the quality of the thing for the ease of explaining it -- would end up not harder to own but simpler. Forty-six chapters later, that is the claim to settle. So it is worth saying plainly what now exists, because the proof is the whole of it standing together.
 
 ## What you built
 
@@ -14,7 +14,9 @@ Then you learned to operate it, with the same rule -- drilled, or not claimed. T
 
 And then, with the whole system in view, you returned to the application for two features the single-page world treats as its own — and found both reachable from here. Asynchronous collaboration: a fork's changes proposed back to the original and resolved by a three-way merge, whose hard input (the common ancestor) turned out to be a *read* because immutable history had been holding it all along, and whose accept inherited the recipe editor's conflict safety for free. And real-time collaboration: a live viewer count pushed over Server-Sent Events, ephemeral state in an atom, an island obeying the same enhancement rule as every other, sliding in under a Content-Security-Policy that had already, correctly, allowed the app to talk to itself. Server-rendering was never the opposite of live.
 
-That is the arc -- environment, data, rendering, tooling, features, hardening, going live, operating, defending, collaborating -- and the point of walking it in order was never the order. It was that each layer was built well enough that the next could stand on it without apology.
+And a closing turn inward, because a system is only as dependable as its own guards: the [safety machinery](46-watching-the-watchers.md) -- backups, alerts, health checks, the reaper, the runbook -- got the scrutiny the rest of the app had all along, on the discovery that it was the one system nothing watched. An alert that routed through the relay it was meant to page you about; a backup proven restorable exactly once; a leak-detecting gauge that lived only in a docstring. Each *worked*, and each was one bad day from worthless. Making them dependable was less new code than a new question asked of old code: not *does it work?* but *what proves it still works, and what happens when it fails?*
+
+That is the arc -- environment, data, rendering, tooling, features, hardening, going live, operating, defending, collaborating, and enduring -- and the point of walking it in order was never the order. It was that each layer was built well enough that the next could stand on it without apology.
 
 ## What this book deliberately left out
 

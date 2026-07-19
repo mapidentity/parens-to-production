@@ -119,8 +119,11 @@ EnvironmentFile=/etc/myapp/env
 # Half the heap becomes the peer's object cache unless object-cache-max
 # says otherwise — dev/bench.clj is where that cache's value was measured.
 # ExitOnOutOfMemoryError turns heap exhaustion into a death Restart= can
-# heal instead of a half-alive process nothing notices.
-ExecStart=/usr/bin/java -Xmx1g -XX:+ExitOnOutOfMemoryError -jar /opt/myapp/myapp.jar
+# heal instead of a half-alive process nothing notices; HeapDumpOnOutOfMemory
+# saves the one forensic artifact of a leak before that death (a heap dump
+# holds secrets — see the runbook). MYAPP_REPL_PORT (in the env file) starts a
+# loopback-only diagnosis REPL.
+ExecStart=/usr/bin/java -Xmx1g -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/log/myapp/ -jar /opt/myapp/myapp.jar
 Restart=on-failure
 RestartSec=2
 # stop delivers SIGTERM; the app drains in-flight requests for up to a
@@ -185,9 +188,10 @@ The whole box, assembled once:
 1. PostgreSQL, stock install. Run the three `bin/sql/postgres-*.sql` scripts; change the role password.
 2. Unpack the Datomic Pro distribution (version matching `deps.edn`'s peer) at `/opt/datomic`; install `/etc/myapp/transactor.properties`; enable `myapp-transactor.service` and wait for its log line, which is literally `System started`.
 3. Write `/etc/myapp/env` from `ops/env.example`, `chmod 0600`.
-4. Create `/opt/myapp`, install the unit, `systemctl enable --now myapp` -- first boot runs `create-database!` for both databases and transacts the schema.
-5. Caddy with `ops/Caddyfile`; DNS A record; ports 80/443 open. Certificates arrive on their own.
-6. Point [the pipeline's](34-ci-cd.md) deploy step at the box. From here on, every deploy is the script you have already read.
+4. Verify the clock is disciplined: `timedatectl` should report `System clock synchronized: yes` and an active NTP service. It is a box dependency, not an app one, but [magic-link expiry and the rate-limit window](07-time-clock.md) lean on wall-clock accuracy directly -- a drifting clock is a correctness bug, not a cosmetic one.
+5. Create `/opt/myapp`, install the unit, `systemctl enable --now myapp` -- first boot runs `create-database!` for both databases and transacts the schema.
+6. Caddy with `ops/Caddyfile`; DNS A record; ports 80/443 open. Certificates arrive on their own.
+7. Point [the pipeline's](34-ci-cd.md) deploy step at the box. From here on, every deploy is the script you have already read.
 
 Step 4 quietly settles a question the book has never had to answer on a durable database: migrations. Boot *always* transacts the schema, and [chapter 8 showed](08-datomic.md) that re-transacting installed attributes is an idempotent no-op -- so "the deploy carries the schema" is the entire migration mechanism, and its discipline is Datomic's own: schema grows by accretion, attributes are added and never repurposed. What is state on this box, for the day you back it up, is now a two-item list: the PostgreSQL data directory, and `/etc/myapp`. The jar and the static tree are pipeline output; the box holds nothing else worth keeping.
 

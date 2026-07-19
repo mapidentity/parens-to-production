@@ -20,6 +20,11 @@ Environment=MYAPP_PROFILE=prod
 # (ch.42) lands there — the one file fail2ban tails and forensics greps.
 LogsDirectory=myapp
 Environment=MYAPP_SECURITY_LOG=/var/log/myapp/security.log
+# The live-diagnosis lever (ch.43, RUNBOOK): a loopback-only socket REPL the
+# app starts when this is set. Reachable ONLY over an SSH tunnel to the box
+# (it binds 127.0.0.1) — a connection is unauthenticated RCE, so network
+# reachability would be catastrophic; SSH auth is the gate.
+Environment=MYAPP_REPL_PORT=5555
 # Everything the :prod profile requires, in one root-owned 0600 file
 # (see env.example). Boot refuses to start with any value missing.
 EnvironmentFile=/etc/myapp/env
@@ -30,7 +35,13 @@ EnvironmentFile=/etc/myapp/env
 # The -D flag hands the peer's periodic metrics report to the app's
 # /metrics endpoint (myapp.web.metrics) — object cache, memory, index
 # activity. Wired here, not in code: a dev REPL never loads it.
-ExecStart=/usr/bin/java -Xmx1g -XX:+ExitOnOutOfMemoryError -Ddatomic.metricsCallback=myapp.web.metrics/datomic-callback! -jar /opt/myapp/myapp.jar
+# HeapDumpOnOutOfMemoryError writes java_pid<pid>.hprof to the log dir
+# BEFORE ExitOnOutOfMemoryError kills the process — the one forensic
+# artifact of a leak or a pathological query, since the restart erases the
+# live heap. NOTE: a heap dump contains secrets (SMTP creds, live session
+# tokens) in cleartext — treat it as exactly as sensitive as the env file
+# (see RUNBOOK "A wedged-but-alive JVM").
+ExecStart=/usr/bin/java -Xmx1g -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/log/myapp/ -Ddatomic.metricsCallback=myapp.web.metrics/datomic-callback! -jar /opt/myapp/myapp.jar
 Restart=on-failure
 RestartSec=2
 # stop delivers SIGTERM; the app drains in-flight requests for up to a
