@@ -19,6 +19,7 @@
     [myapp.recipe.core :as recipe]
     [myapp.recipe.proposal :as proposal]
     [myapp.time :as time]
+    [myapp.upload.core :as upload]
     [myapp.web.presence :as presence]
     [myapp.web.ratelimit :as ratelimit]
     [myapp.web.security :as security]
@@ -208,6 +209,18 @@
 (def ^:private ml-per-ip
   10)
 
+;; Photo uploads write to the shared state volume (the same disk Datomic and the
+;; backups live on), and each replace orphans the previous master for a grace
+;; period before the daily sweep. So the write path is bounded like every other
+;; unbounded resource in the book: an authenticated flood of distinct images
+;; would otherwise fill /mnt/data and take the transactor down with it.
+(def ^:private upload-window-ms
+  (* 10 60 1000))
+(def ^:private upload-per-user
+  20)
+(def ^:private upload-per-ip
+  30)
+
 (defn request-magic-link
   "Handle a magic-link request — send the email + record the nonce, then redirect (PRG).
 
@@ -368,9 +381,9 @@
 ;; Recipes
 ;; ---------------------------------------------------------------------------
 
-(def ^:private cursor-encoder
+(def ^:private ^java.util.Base64$Encoder cursor-encoder
   (.withoutPadding (java.util.Base64/getUrlEncoder)))
-(def ^:private cursor-decoder
+(def ^:private ^java.util.Base64$Decoder cursor-decoder
   (java.util.Base64/getUrlDecoder))
 
 (defn- encode-cursor
@@ -443,7 +456,9 @@
            :base-url (config/get-config :base-url)
            ;; Pending suggestions, but only for the owner (who can act on them).
            :pending-proposals (when (recipe/owned-by? r (:user-eid request))
-                                (proposal/open-proposals-targeting db id))}))
+                                (proposal/open-proposals-targeting db id))
+           ;; A rejected photo upload redirects here with the reason.
+           :photo-error (get-in request [:params :photo-error])}))
       (not-found request))))
 
 (defn recipe-new-form
@@ -545,6 +560,90 @@
                                                     :conflict? true}))
                           (assoc :status 409)))
           (do (tenancy-check! request id) (not-found request)))))))
+
+(defn recipe-image-upload
+  "POST /recipes/:id/image — the recipe owner attaches a photo (multipart).
+  The blob is stored content-addressed and validated by decoding; the ref is
+  NOT a content edit, so it never touches the version timeline. A validation
+  failure redirects back with an error token the detail page renders."
+  [request]
+  (let [conn (db/get-connection)
+        id (path-uuid request)
+        ^java.io.File tmp (get-in request [:multipart-params "image" :tempfile])]
+    (try
+      (let [r (recipe/recipe-by-id (d/db conn) id)]
+        (if (and r (recipe/owned-by? r (:user-eid request)))
+          (let [ip (or (:client-ip request) "?")
+                user (:user-eid request)]
+            (cond
+              ;; Bound the write path per user AND per IP: an owner flooding
+              ;; distinct images would otherwise fill the shared state volume.
+              (not
+                (and
+                  (ratelimit/allow? (str "upload-user:" user) upload-per-user upload-window-ms)
+                  (ratelimit/allow? (str "upload-ip:" ip) upload-per-ip upload-window-ms)))
+              (response/redirect (str "/recipes/" id "?photo-error=rate-limited"))
+
+              (nil? tmp)
+              (response/redirect (str "/recipes/" id))
+
+              :else
+              (let [result (upload/store! conn tmp)]
+                (if-let [up (:upload result)]
+                  (do
+                    @(db/transact* conn
+                       [{:recipe/id id
+                         :recipe/image [:upload/hash (:upload/hash up)]}])
+                    (response/redirect (str "/recipes/" id "?toast=photo-added")))
+                  (response/redirect
+                    (str "/recipes/" id "?photo-error=" (name (:error result))))))))
+          (do (tenancy-check! request id) (not-found request))))
+      (finally
+        ;; Reclaim the multipart spool immediately; don't wait for Ring's reaper.
+        (when tmp (.delete tmp))))))
+
+(defn recipe-image-delete
+  "POST /recipes/:id/image/delete — the owner removes the recipe's photo.
+  Only the reference is retracted; the blob is left for the orphan sweep,
+  because content-addressing means another recipe may share the same bytes."
+  [request]
+  (let [conn (db/get-connection)
+        id (path-uuid request)
+        r (recipe/recipe-by-id (d/db conn) id)]
+    (if (and r (recipe/owned-by? r (:user-eid request)))
+      (do
+        (when-let [img-eid (get-in r [:recipe/image :db/id])]
+          @(db/transact* conn [[:db/retract [:recipe/id id] :recipe/image img-eid]]))
+        (response/redirect (str "/recipes/" id)))
+      (do (tenancy-check! request id) (not-found request)))))
+
+(defn recipe-image
+  "GET /img/:a/:b/:hash/:variant — serve (and, on a miss, generate) a derivative.
+
+  In production Caddy serves an existing variant straight from disk and only a
+  MISS reaches here; in dev there is no Caddy, so every request lands here. The
+  filename encodes the master hash and the named variant; the bytes are immutable
+  (content-derived), hence the forever-cache. An unknown variant, a bad
+  extension, or a hash with no master is a 404 — nothing here trusts the path,
+  and `a`/`b` must be the hash's own prefix (the URL cannot point off-tree)."
+  [request]
+  (let [{:keys [a b variant]
+         hex :hash}
+        (:path-params request)
+        [spec-name ext] (when variant (str/split variant #"\." 2))]
+    (if-let [result (and
+                      (string? hex)
+                      (re-matches #"[0-9a-f]{64}" hex)
+                      (= a (subs hex 0 2))
+                      (= b (subs hex 2 4))
+                      spec-name
+                      ext
+                      (upload/ensure-derivative! hex spec-name ext))]
+      {:status 200
+       :headers {"Content-Type" (:content-type result)
+                 "Cache-Control" "public, max-age=31536000, immutable"}
+       :body (:file result)}
+      (not-found request))))
 
 (defn recipe-preview
   "POST /recipes/new/preview and /recipes/:id/preview — the preview pane.

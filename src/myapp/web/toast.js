@@ -57,7 +57,8 @@
     'fork-created': 'Fork created ✓',
     'recipe-deleted': 'Recipe deleted',
     'version-restored': 'Version restored ✓',
-    'proposal-merged': 'Proposed change merged ✓'
+    'proposal-merged': 'Proposed change merged ✓',
+    'photo-added': 'Photo added ✓'
   };
 
   function processToastParam() {

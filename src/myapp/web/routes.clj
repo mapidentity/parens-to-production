@@ -19,6 +19,8 @@
     [myapp.web.views :as views]
     [reitit.ring :as ring]
     [ring.middleware.keyword-params :as keyword-params]
+    [ring.middleware.multipart-params :as multipart]
+    [ring.middleware.multipart-params.temp-file :as temp-file]
     [ring.middleware.params :as params]
     [ring.middleware.session :as session]
     [ring.middleware.session.cookie :as cookie]
@@ -271,6 +273,18 @@
        :headers {"Content-Type" "application/json"}
        :body "{}"})))
 
+(def ^:private multipart-store
+  "Ring's temp-file store: multipart uploads stream to a temp FILE, not the heap.
+  The default in-memory store would buffer a whole upload in memory; the upload
+  handler copies the temp file into content-addressed storage before it is swept."
+  (temp-file/temp-file-store))
+
+(defn- wrap-multipart
+  "Parse a multipart/form-data body into :multipart-params, files on disk.
+  Scoped to the one route that accepts uploads, not the whole stack."
+  [handler]
+  (multipart/wrap-multipart-params handler {:store multipart-store}))
+
 (def routes
   "Reitit route tree.
   Handler references use #' (vars) so hot-reload picks up
@@ -321,6 +335,11 @@
     ["/robots.txt" {:get #'handler/robots}]
     ["/search" {:get #'handler/search-page}]
     ["/recipes" {:get #'handler/recipes-index}]
+    ;; Image derivatives (content-addressed). Public — recipe photos are public
+    ;; reads. In prod Caddy serves an existing variant straight from disk and only
+    ;; a MISS falls through to this handler, which generates it, caches it to disk,
+    ;; and returns it; the next request for that URL never reaches the app.
+    ["/img/:a/:b/:hash/:variant" {:get #'handler/recipe-image}]
     ;; Random landing tagline, fetched by the `tagline` island so the landing
     ;; page itself stays deterministic/cacheable. See handler/tagline.
     ["/partials/tagline" {:get #'handler/tagline}]
@@ -354,6 +373,11 @@
         :post #'handler/recipe-update}]
       ["/recipes/:id/fork" {:post #'handler/recipe-fork}]
       ["/recipes/:id/delete" {:post #'handler/recipe-delete}]
+      ;; Photo upload (multipart, scoped to this route) + removal. Owner-only.
+      ["/recipes/:id/image"
+       {:middleware [wrap-multipart]
+        :post #'handler/recipe-image-upload}]
+      ["/recipes/:id/image/delete" {:post #'handler/recipe-image-delete}]
       ;; Proposals — a fork's changes offered back to its parent (a pull
       ;; request), merged three-way. All authed: propose (fork owner),
       ;; view/accept/decline (the two parties; accept gated to the target owner).
@@ -602,6 +626,13 @@
         ;; the middleware stack, so :locale is set and the page exits through
         ;; the CSP layer like any other.
         (ring/routes
+          ;; User uploads. In PROD Caddy serves /uploads straight from the state
+          ;; volume (ops/Caddyfile) and the app never sees these requests; this
+          ;; handler is the dev/e2e stand-in where there is no proxy. Declared
+          ;; before the "/" handler so /uploads/* resolves here first.
+          (ring/create-file-handler
+            {:path "/uploads"
+             :root (config/get-config :uploads-root)})
           (cond-> (ring/create-file-handler {:path "/"
                                              :root assets/static-root})
             assets/dev? wrap-dev-no-store)

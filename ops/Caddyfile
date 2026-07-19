@@ -4,6 +4,40 @@
 # there is NO tls line — a real domain with a public DNS record gets its
 # certificate from Let's Encrypt automatically, renewals included.
 # Production TLS is the absence of configuration.
+
+# The app upstream, factored out because two places proxy to it: the main
+# handler, and the /img cache-miss fallback (a variant not yet on disk). One
+# definition so the pool and its health/timeout policy can never drift apart.
+(app_upstream) {
+	# One pool serves both topologies: the single-instance unit
+	# (myapp.service) binds 3000; the update pair (myapp@.service)
+	# binds 3001/3002. Health checks steer traffic to whichever
+	# instances are alive — during a pair deploy, briefly both.
+	reverse_proxy 127.0.0.1:3000 127.0.0.1:3001 127.0.0.1:3002 {
+		health_uri /health
+		health_interval 2s
+		fail_duration 10s
+		lb_try_duration 4s
+		# Bound the app-facing hop. dial_timeout catches an instance that
+		# accepts TCP but never completes; response_header_timeout catches
+		# one that took the request but never started answering (the
+		# wedged-worker case). These time the HEADERS only — the SSE
+		# presence stream (headers now, body forever) is untouched, which
+		# is exactly why a full read-timeout is deliberately NOT set here.
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 15s
+		}
+		# The app binds loopback, so every request reaches it from
+		# 127.0.0.1 — its own :remote-addr is useless for per-IP
+		# controls. Hand it the real client, authoritatively:
+		# {remote_host} is the TCP peer Caddy saw (the client, since
+		# Caddy is the TLS edge), and header_up OVERWRITES any
+		# X-Client-IP the client tried to forge.
+		header_up X-Client-IP {remote_host}
+	}
+}
+
 myapp.example.com {
 	encode zstd gzip
 
@@ -58,34 +92,37 @@ myapp.example.com {
 		respond 404
 	}
 
-	handle {
-		# One pool serves both topologies: the single-instance unit
-		# (myapp.service) binds 3000; the update pair (myapp@.service)
-		# binds 3001/3002. Health checks steer traffic to whichever
-		# instances are alive — during a pair deploy, briefly both.
-		reverse_proxy 127.0.0.1:3000 127.0.0.1:3001 127.0.0.1:3002 {
-			health_uri /health
-			health_interval 2s
-			fail_duration 10s
-			lb_try_duration 4s
-			# Bound the app-facing hop. dial_timeout catches an instance that
-			# accepts TCP but never completes; response_header_timeout catches
-			# one that took the request but never started answering (the
-			# wedged-worker case). These time the HEADERS only — the SSE
-			# presence stream (headers now, body forever) is untouched, which
-			# is exactly why a full read-timeout is deliberately NOT set here.
-			transport http {
-				dial_timeout 5s
-				response_header_timeout 15s
-			}
-			# The app binds loopback, so every request reaches it from
-			# 127.0.0.1 — its own :remote-addr is useless for per-IP
-			# controls. Hand it the real client, authoritatively:
-			# {remote_host} is the TCP peer Caddy saw (the client, since
-			# Caddy is the TLS edge), and header_up OVERWRITES any
-			# X-Client-IP the client tried to forge.
-			header_up X-Client-IP {remote_host}
+	# User uploads: content-addressed blobs on the state volume, served
+	# straight from disk and NEVER proxied to the app. The filenames are
+	# hashes, so the bytes can never change — cache them forever, exactly
+	# like the content-hashed assets. (root is /mnt/data so /uploads/ab/cd/…
+	# maps to /mnt/data/uploads/ab/cd/… .)
+	handle /uploads/* {
+		root * /mnt/data
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	# Image derivatives: the on-the-fly cache. The variant filename is derived
+	# from the master hash, so an existing file is served straight from disk and
+	# cached forever; a MISS (a size we have not generated yet) falls through to
+	# the app, which renders it, writes it to /mnt/data/uploads/img/…, and
+	# returns it — so the next request for that URL is a disk hit and never
+	# reaches the app. A new display size later is a new URL, not a migration.
+	handle /img/* {
+		root * /mnt/data/uploads
+		@variant file
+		handle @variant {
+			header Cache-Control "public, max-age=31536000, immutable"
+			file_server
 		}
+		handle {
+			import app_upstream
+		}
+	}
+
+	handle {
+		import app_upstream
 	}
 
 	# The deploy window: while the app restarts, the proxy gets connection

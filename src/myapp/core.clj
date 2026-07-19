@@ -9,6 +9,7 @@
     [myapp.config :as config]
     [myapp.db.core :as db]
     [myapp.jobs.core :as jobs]
+    [myapp.upload.core :as upload]
     [myapp.web.assets :as assets]
     [myapp.web.presence :as presence]
     [myapp.web.routes :as routes]
@@ -82,6 +83,9 @@
     ;; The durable job worker: polls Datomic for due background jobs and runs
     ;; them, CAS-claimed so the pair deploy can't double-run one (see jobs.core).
     (jobs/start-worker!)
+    ;; The upload orphan sweep: content-addressed blobs no recipe references are
+    ;; collected on a daily clock (they can't be deleted on unlink — see upload.core).
+    (upload/start-gc!)
     (println (str "Server running at http://" host ":" port))
     @server))
 
@@ -100,6 +104,7 @@
      (presence/stop-reaper!)
      (email/stop-mailer!)
      (jobs/stop-worker!)
+     (upload/stop-gc!)
      (stop-repl-server!)
      (stop-fn :timeout drain-ms)
      (reset! server nil)

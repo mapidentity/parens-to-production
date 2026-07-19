@@ -8,6 +8,7 @@
     [hiccup2.core :as h]
     [myapp.i18n :refer [t]]
     [myapp.recipe.core :as recipe]
+    [myapp.upload.core :as upload]
     [myapp.web.assets :as assets :refer [defn-asset]]
     [myapp.web.inspector :refer [tag-root]]
     [myapp.web.markdown :as markdown])
@@ -589,7 +590,7 @@
   When `base-url` is present the page introduces itself to machines too:
   canonical URL, Open Graph pairs, and schema.org/Recipe JSON-LD."
   [locale user-email admin? recipe
-   {:keys [owner? lineage forks version-count base-url pending-proposals]}]
+   {:keys [owner? lineage forks version-count base-url pending-proposals photo-error]}]
   (app-layout
     locale
     user-email
@@ -640,6 +641,43 @@
           [:button.text-sm.font-medium.text-primary-vivid.hover:text-primary
            {:type "submit"} (t locale :proposal/propose)]])
        (when owner? (owner-actions-menu locale recipe))]]
+
+     ;; The recipe photo — a `hero` derivative of the content-addressed master,
+     ;; generated on first view and thereafter served straight from disk by Caddy.
+     ;; The <img> carries the variant's width/height so the layout never shifts.
+     (when-let [img (:recipe/image recipe)]
+       (let [[w h] (upload/variant-dimensions img "hero")]
+         [:img.mt-6.rounded-lg.w-full.max-w-lg.border.border-border
+          {:src (upload/derivative-url img "hero")
+           :width w
+           :height h
+           :alt (:recipe/title recipe)
+           :loading "lazy"}]))
+     ;; Owner-only upload/replace/remove. A plain file input + form POST: it
+     ;; works without JavaScript, one more progressive-enhancement layer.
+     (when owner?
+       [:div.mt-4.space-y-2
+        (when photo-error
+          [:p.text-sm.text-negative (t locale (keyword "upload" (str "error-" photo-error)))])
+        [:div.flex.flex-wrap.items-center.gap-3
+         [:form.flex.items-center.gap-2
+          {:method "POST"
+           :action (str "/recipes/" (:recipe/id recipe) "/image")
+           :enctype "multipart/form-data"}
+          [:input.text-sm.text-text-secondary
+           {:type "file"
+            :name "image"
+            :accept "image/png,image/jpeg,image/gif"
+            :required true}]
+          [:button.text-sm.font-medium.text-white.bg-primary.hover:bg-primary-vivid.px-3.py-1.5.rounded-md
+           {:type "submit"} (t locale (if (:recipe/image recipe) :upload/replace :upload/add))]]
+         [:p.w-full.text-xs.text-text-secondary (t locale :upload/hint)]
+         (when (:recipe/image recipe)
+           [:form
+            {:method "POST"
+             :action (str "/recipes/" (:recipe/id recipe) "/image/delete")}
+            [:button.text-sm.text-negative.hover:underline
+             {:type "submit"} (t locale :upload/remove)]])]])
 
      ;; Pending suggestions for the owner: forks proposing changes back.
      (when (and owner? (seq pending-proposals))

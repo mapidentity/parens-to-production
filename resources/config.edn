@@ -18,6 +18,12 @@
  :base-url #profile {:dev "https://myapp.lan"
                      :prod #env "BASE_URL"}
 
+ ;; Where user-uploaded files (content-addressed blobs) live. On the state
+ ;; volume in prod, so the backup story covers them; a local dir in dev. Caddy
+ ;; serves it directly at /uploads (immutable cache — the names are hashes).
+ :uploads-root #profile {:dev "uploads-dev"
+                         :prod #or [#env "MYAPP_UPLOADS_ROOT" "/mnt/data/uploads"]}
+
  :session-key #env "SESSION_KEY"
  :signing-key #env "SIGNING_KEY"
  ;; Optional: the previous signing key, honoured during a rotation grace

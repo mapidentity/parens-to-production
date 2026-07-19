@@ -61,6 +61,7 @@
    :database-uri "datomic:mem://myapp-e2e"
    :analytics-database-uri "datomic:mem://myapp-e2e-analytics"
    :base-url "http://localhost:9876"
+   :uploads-root "target/e2e-uploads"
    :session-key h/test-session-key
    :signing-key h/test-signing-key
    :smtp {:host "localhost"

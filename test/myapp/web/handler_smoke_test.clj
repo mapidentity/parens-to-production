@@ -123,6 +123,121 @@
               (assoc (h/request :get "x")
                 :path-params {:id (str (UUID/randomUUID))}))))))))
 
+(deftest recipe-photo-upload-through-handlers
+  (myapp.web.ratelimit/clear!)
+  (let [png (fn []
+              (let [img
+                    (java.awt.image.BufferedImage. 12 8 java.awt.image.BufferedImage/TYPE_INT_RGB)
+                    f (java.io.File/createTempFile "img" ".png")]
+                (javax.imageio.ImageIO/write img "png" f)
+                f))
+        u (mk-user! "cook@x.lan")
+        mallory (mk-user! "mallory@x.lan")
+        id (recipe/create!
+             h/*conn*
+             u
+             {:title "Toast"
+              :servings 1})
+        up-req (fn [email eid tmp]
+                 (assoc (h/auth-request :post (str "/recipes/" id "/image") email)
+                   :user-eid eid
+                   :path-params {:id (str id)}
+                   :multipart-params {"image" {:tempfile tmp}}))]
+    (testing "a non-owner cannot attach a photo"
+      (is (= 404 (:status (handler/recipe-image-upload (up-req "mallory@x.lan" mallory (png))))))
+      (is (nil? (:recipe/image (recipe/recipe-by-id (d/db h/*conn*) id)))))
+    (testing "the owner attaches a photo → 302 and the recipe gains an image"
+      (let [resp (handler/recipe-image-upload (up-req "cook@x.lan" u (png)))]
+        (is (= 302 (:status resp)))
+        (is (str/includes? (get-in resp [:headers "Location"]) "toast=photo-added"))
+        (is (some? (:recipe/image (recipe/recipe-by-id (d/db h/*conn*) id))))))
+    (testing "a non-image is rejected with a reason in the redirect"
+      (let [junk (doto (java.io.File/createTempFile "junk" ".png") (spit "nope"))
+            resp (handler/recipe-image-upload (up-req "cook@x.lan" u junk))]
+        (is (str/includes? (get-in resp [:headers "Location"]) "photo-error=not-an-image"))))
+    (testing "the owner removes the photo → the ref is gone"
+      (let [resp (handler/recipe-image-delete
+                   (assoc (h/auth-request :post (str "/recipes/" id "/image/delete") "cook@x.lan")
+                     :user-eid u
+                     :path-params {:id (str id)}))]
+        (is (= 302 (:status resp)))
+        (is (nil? (:recipe/image (recipe/recipe-by-id (d/db h/*conn*) id))))))))
+
+(deftest recipe-upload-is-rate-limited
+  ;; An owner flooding distinct images would otherwise fill the shared state
+  ;; volume; the write path is bounded per user like every other resource.
+  (myapp.web.ratelimit/clear!)
+  (let [png
+        (fn [i]
+          (let [img
+                (java.awt.image.BufferedImage. (+ 8 i) 8 java.awt.image.BufferedImage/TYPE_INT_RGB)
+                f (java.io.File/createTempFile "img" ".png")]
+            (javax.imageio.ImageIO/write img "png" f)
+            f))
+        u (mk-user! "flood@x.lan")
+        id (recipe/create!
+             h/*conn*
+             u
+             {:title "Flood"
+              :servings 1})
+        attempt (fn [i]
+                  (get-in
+                    (handler/recipe-image-upload
+                      (assoc (h/auth-request :post (str "/recipes/" id "/image") "flood@x.lan")
+                        :user-eid u
+                        :path-params {:id (str id)}
+                        :multipart-params {"image" {:tempfile (png i)}}))
+                    [:headers "Location"]))
+        results (mapv attempt (range 25))]
+    (testing "the first upload is accepted"
+      (is (str/includes? (first results) "toast=photo-added")))
+    (testing "the flood is eventually refused with a rate-limit reason"
+      (is (str/includes? (last results) "photo-error=rate-limited")))))
+
+(deftest recipe-image-derivative-endpoint
+  (myapp.web.ratelimit/clear!)
+  (let [png
+        (fn []
+          (let [img
+                (java.awt.image.BufferedImage. 900 600 java.awt.image.BufferedImage/TYPE_INT_RGB)
+                f (java.io.File/createTempFile "img" ".png")]
+            (javax.imageio.ImageIO/write img "png" f)
+            f))
+        u (mk-user! "cook@x.lan")
+        id (recipe/create!
+             h/*conn*
+             u
+             {:title "Stew"
+              :servings 2})
+        _ (handler/recipe-image-upload
+            (assoc (h/auth-request :post (str "/recipes/" id "/image") "cook@x.lan")
+              :user-eid u
+              :path-params {:id (str id)}
+              :multipart-params {"image" {:tempfile (png)}}))
+        hex (get-in (recipe/recipe-by-id (d/db h/*conn*) id) [:recipe/image :upload/hash])
+        req (fn [a b h variant]
+              (assoc (h/request :get (str "/img/" a "/" b "/" h "/" variant))
+                :path-params {:a a
+                              :b b
+                              :hash h
+                              :variant variant}))]
+    (testing "a hero variant is served with an image type and an immutable cache"
+      (let [resp (handler/recipe-image (req (subs hex 0 2) (subs hex 2 4) hex "hero.jpg"))]
+        (is (= 200 (:status resp)))
+        (is (= "image/jpeg" (get-in resp [:headers "Content-Type"])))
+        (is (str/includes? (get-in resp [:headers "Cache-Control"]) "immutable"))
+        (is (instance? java.io.File (:body resp)))))
+    (testing "an unknown variant is a 404"
+      (is
+        (=
+          404
+          (:status (handler/recipe-image (req (subs hex 0 2) (subs hex 2 4) hex "banner.jpg"))))))
+    (testing "a hash with no master is a 404 (prefix matches, but nothing on disk)"
+      (let [ghost (apply str (repeat 64 "b"))]
+        (is (= 404 (:status (handler/recipe-image (req "bb" "bb" ghost "hero.jpg")))))))
+    (testing "an /img path whose a/b do not match the hash prefix is a 404 (cannot point off-tree)"
+      (is (= 404 (:status (handler/recipe-image (req "zz" "zz" hex "hero.jpg"))))))))
+
 (deftest authed-pages-render
   (let [_ (mk-user! "cook@x.lan")]
     (testing "dashboard"

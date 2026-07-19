@@ -79,6 +79,19 @@
    :recipe/no-recipes "No recipes yet."
    :recipe/next-page "Next"
    :recipe/pagination "Pagination"
+
+   ;; Photo upload
+   :upload/add "Add a photo"
+   :upload/replace "Replace photo"
+   :upload/remove "Remove photo"
+   :upload/hint
+   "JPEG, PNG, or GIF, up to 5 MB. We'll scale large photos down to 2048px and make the sizes we need."
+   :upload/error-empty "That file was empty."
+   :upload/error-too-large "That image is too large (max 5 MB)."
+   :upload/error-not-an-image "That file is not an image we can read."
+   :upload/error-unsupported-type "Only JPEG, PNG, and GIF images are supported."
+   :upload/error-too-many-pixels "That image has too many pixels."
+   :upload/error-rate-limited "You're adding photos too quickly. Give it a minute and try again."
    :recipe/note-label "What changed? (optional)"
    :recipe/note-placeholder "e.g. Halved the salt — it was too much"
    :recipe/preview-title "Preview"

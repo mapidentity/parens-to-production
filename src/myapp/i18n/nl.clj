@@ -81,6 +81,19 @@
    :recipe/no-recipes "Nog geen recepten."
    :recipe/next-page "Volgende"
    :recipe/pagination "Paginering"
+
+   ;; Foto-upload
+   :upload/add "Voeg een foto toe"
+   :upload/replace "Vervang foto"
+   :upload/remove "Verwijder foto"
+   :upload/hint
+   "JPEG, PNG of GIF, tot 5 MB. Grote foto's schalen we terug naar 2048px en maken we in de maten die we nodig hebben."
+   :upload/error-empty "Dat bestand was leeg."
+   :upload/error-too-large "Die afbeelding is te groot (max 5 MB)."
+   :upload/error-not-an-image "Dat bestand is geen afbeelding die we kunnen lezen."
+   :upload/error-unsupported-type "Alleen JPEG-, PNG- en GIF-afbeeldingen worden ondersteund."
+   :upload/error-too-many-pixels "Die afbeelding heeft te veel pixels."
+   :upload/error-rate-limited "Je voegt te snel foto's toe. Wacht even en probeer opnieuw."
    :recipe/note-label "Wat is er veranderd? (optioneel)"
    :recipe/note-placeholder "bijv. Zout gehalveerd — het was te veel"
    :recipe/preview-title "Voorvertoning"

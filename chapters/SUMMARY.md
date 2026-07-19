@@ -83,5 +83,6 @@
 - [Watching the Watchers: When the Safety Net Needs Its Own](46-watching-the-watchers.md)
 - [The Queue the Database Already Is: Durable Jobs Without a Broker](47-job-queue.md)
 - [Paging the Catalog: Keyset Pagination on an Ascending Index](48-pagination.md)
+- [Photos Without a Bucket: A Content-Addressed File Store on One Box](49-file-storage.md)
 
 [Afterword: What You Built, and Where It Goes](afterword.md)

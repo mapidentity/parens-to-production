@@ -33,6 +33,7 @@
    :recipe/ingredients :recipe/steps :recipe/position
    :recipe/created-at :recipe/updated-at
    {:recipe/user [:db/id :user/email :user/display-name]}
+   {:recipe/image [:db/id :upload/hash :upload/content-type :upload/width :upload/height]}
    {:recipe/forked-from [:recipe/id :recipe/title {:recipe/user [:user/display-name]}]}])
 
 (def ^:private versioned-attrs

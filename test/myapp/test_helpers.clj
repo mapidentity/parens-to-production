@@ -61,6 +61,7 @@
   {:server {:port 3000
             :host "0.0.0.0"}
    :base-url "https://test.myapp.lan"
+   :uploads-root "target/test-uploads"
    :session-key test-session-key
    :signing-key test-signing-key
    :admin-email "admin@test.myapp.lan"

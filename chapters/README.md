@@ -49,8 +49,9 @@ the magnifier to search the full text.
   viewer presence** over Server-Sent Events — SSR is not the opposite of live
 - **The Long Run**: the safety machinery **watching itself** (the guard
   nothing watched), a durable **job queue** whose storage is Datomic rather
-  than a broker, and **keyset pagination** that seeks the index the schema
-  already carries — bounding the last unbounded read
+  than a broker, **keyset pagination** that seeks the index the schema
+  already carries, and a **content-addressed photo store** on the box's own
+  disk — bytes on disk, metadata in Datomic, no bucket required
 
 Start with [the primer](01-primer.md) for what we are building and why, or jump
 to any topic from the table of contents.

@@ -110,7 +110,45 @@
    {:db/ident :recipe/updated-at
     :db/valueType :db.type/instant
     :db/cardinality :db.cardinality/one
-    :db/doc "When this recipe was last edited"}])
+    :db/doc "When this recipe was last edited"}
+   {:db/ident :recipe/image
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one
+    :db/doc "The recipe's photo — a ref to an :upload (content-addressed blob)."}])
+
+(def upload-schema
+  "A user-uploaded file — the METADATA of a content-addressed blob.
+  The bytes live on the filesystem (see myapp.upload.core), keyed by their own
+  SHA-256, so uploading the same image twice reuses one file and one entity.
+  Datomic holds only the facts about it — its hash (the storage key), type,
+  size, and dimensions — because a blob is not data the transactor should carry,
+  exactly as presence is not. `:upload/hash` is unique-identity, so a re-upload
+  upserts rather than duplicates."
+  [{:db/ident :upload/hash
+    :db/valueType :db.type/string
+    :db/unique :db.unique/identity
+    :db/cardinality :db.cardinality/one
+    :db/doc "SHA-256 (hex) of the file's bytes — its content address and storage key."}
+   {:db/ident :upload/content-type
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/doc "The validated MIME type, decided by decoding the bytes — never the client's claim."}
+   {:db/ident :upload/size
+    :db/valueType :db.type/long
+    :db/cardinality :db.cardinality/one
+    :db/doc "Size in bytes."}
+   {:db/ident :upload/width
+    :db/valueType :db.type/long
+    :db/cardinality :db.cardinality/one
+    :db/doc "Image width in pixels (from the header)."}
+   {:db/ident :upload/height
+    :db/valueType :db.type/long
+    :db/cardinality :db.cardinality/one
+    :db/doc "Image height in pixels (from the header)."}
+   {:db/ident :upload/created-at
+    :db/valueType :db.type/instant
+    :db/cardinality :db.cardinality/one
+    :db/doc "When the blob was first stored."}])
 
 (def tx-schema
   "Annotations on the TRANSACTION entity itself.
@@ -209,4 +247,4 @@
   "The full schema, transacted on database creation.
   Order matters only in that referenced idents must exist; these are all
   independent attribute installs, so a single concatenated vector is fine."
-  (vec (concat user-schema recipe-schema tx-schema proposal-schema job-schema)))
+  (vec (concat user-schema recipe-schema tx-schema proposal-schema job-schema upload-schema)))
