@@ -78,16 +78,10 @@
 - [Proposing Changes Back: The Three-Way Merge](44-three-way-merge.md)
 - [N People Are Looking: Real-Time Presence Without Leaving SSR](45-live-presence.md)
 
-# Endurance
+# The Long Run
 
 - [Watching the Watchers: When the Safety Net Needs Its Own](46-watching-the-watchers.md)
-
-# Background Work
-
 - [The Queue the Database Already Is: Durable Jobs Without a Broker](47-job-queue.md)
-
-# Scale
-
 - [Paging the Catalog: Keyset Pagination on an Ascending Index](48-pagination.md)
 
 [Afterword: What You Built, and Where It Goes](afterword.md)
