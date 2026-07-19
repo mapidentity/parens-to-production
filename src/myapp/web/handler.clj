@@ -622,28 +622,40 @@
 
   In production Caddy serves an existing variant straight from disk and only a
   MISS reaches here; in dev there is no Caddy, so every request lands here. The
-  filename encodes the master hash and the named variant; the bytes are immutable
+  filename encodes the source hash and the named variant; the bytes are immutable
   (content-derived), hence the forever-cache. An unknown variant, a bad
-  extension, or a hash with no master is a 404 — nothing here trusts the path,
-  and `a`/`b` must be the hash's own prefix (the URL cannot point off-tree)."
+  extension, or a hash with no source is a 404 — nothing here trusts the path,
+  and `a`/`b` must be the hash's own prefix (the URL cannot point off-tree). If
+  the image processor is saturated the generation is shed as 503 + Retry-After,
+  so a burst of first-view misses backs off instead of piling up."
   [request]
   (let [{:keys [a b variant]
          hex :hash}
         (:path-params request)
-        [spec-name ext] (when variant (str/split variant #"\." 2))]
-    (if-let [result (and
-                      (string? hex)
-                      (re-matches #"[0-9a-f]{64}" hex)
-                      (= a (subs hex 0 2))
-                      (= b (subs hex 2 4))
-                      spec-name
-                      ext
-                      (upload/ensure-derivative! hex spec-name ext))]
+        [spec-name ext] (when variant (str/split variant #"\." 2))
+        valid? (and
+                 (string? hex)
+                 (re-matches #"[0-9a-f]{64}" hex)
+                 (= a (subs hex 0 2))
+                 (= b (subs hex 2 4))
+                 spec-name
+                 ext)
+        result (when valid? (upload/ensure-derivative! hex spec-name ext))]
+    (cond
+      (= :busy result)
+      {:status 503
+       :headers {"Retry-After" "2"
+                 "Content-Type" "text/plain; charset=UTF-8"
+                 "Cache-Control" "no-store"}
+       :body "Image processor busy. Please retry."}
+
+      (map? result)
       {:status 200
        :headers {"Content-Type" (:content-type result)
                  "Cache-Control" "public, max-age=31536000, immutable"}
        :body (:file result)}
-      (not-found request))))
+
+      :else (not-found request))))
 
 (defn recipe-preview
   "POST /recipes/new/preview and /recipes/:id/preview — the preview pane.

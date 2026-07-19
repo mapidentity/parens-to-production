@@ -146,6 +146,20 @@
             (nil? (upload/ensure-derivative! (apply str (repeat 64 "a")) "card" "webp"))
             "no source for this hash"))))))
 
+(deftest saturation-sheds-load-as-busy
+  (with-uploads-root
+    (fn [_dir]
+      ;; Make a real source first (needs real permits), then swap in a
+      ;; zero-permit processor so every further vips acquire times out fast.
+      (let [{:keys [upload]} (upload/store! h/*conn* (solid-png 800 600 0x123456))
+            hex (:upload/hash upload)]
+        (with-redefs [vips/acquire-timeout-ms 50
+                      vips/processes (java.util.concurrent.Semaphore. 0)]
+          (testing "an upload with no permit free is shed as :busy, not blocked forever"
+            (is (= :busy (:error (upload/store! h/*conn* (solid-png 40 40 0x654321))))))
+          (testing "a not-yet-cached derivative is shed as :busy"
+            (is (= :busy (upload/ensure-derivative! hex "hero" "webp")))))))))
+
 (deftest orphan-gc-reaps-unreferenced-sources-and-their-derivatives
   (with-uploads-root
     (fn [_dir]

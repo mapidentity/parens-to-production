@@ -92,6 +92,7 @@
    :upload/error-unsupported-type "Only JPEG, PNG, and GIF images are supported."
    :upload/error-too-many-pixels "That image has too many pixels."
    :upload/error-rate-limited "You're adding photos too quickly. Give it a minute and try again."
+   :upload/error-busy "We're processing a lot of photos right now. Please try again in a moment."
    :recipe/note-label "What changed? (optional)"
    :recipe/note-placeholder "e.g. Halved the salt — it was too much"
    :recipe/preview-title "Preview"

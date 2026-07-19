@@ -194,48 +194,52 @@
   to `max-edge`, auto-oriented, and re-encoded to WebP by libvips — that source is
   stored and its metadata transacted. Returns {:upload <pulled map>} on success,
   or {:error <keyword>} on rejection (:empty, :too-large, :not-an-image,
-  :unsupported-type, :too-many-pixels). Idempotent by content: a source that
-  hashes the same reuses one file and one entity."
+  :unsupported-type, :too-many-pixels, or :busy when the image processor is
+  saturated). Idempotent by content: a source that hashes the same reuses one
+  file and one entity."
   [conn ^File tmp]
-  (let [size (.length tmp)]
-    (cond
-      (zero? size) {:error :empty}
-      (> size (long max-bytes)) {:error :too-large}
-      :else
-      (if-let [{:keys [width height loader]} (vips/probe tmp)]
-        (if-not (contains? allowed-loaders loader)
-          {:error :unsupported-type}
-          (if (> (* (long width) (long height)) (long max-pixels))
-            {:error :too-many-pixels}
-            (let [source-tmp (File/createTempFile "source" ".webp")]
-              (try
-                (vips/thumbnail!
-                  tmp
-                  source-tmp
-                  (str max-edge "x" max-edge ">")
-                  {:quality source-quality})
-                (let [data (Files/readAllBytes (.toPath source-tmp))
-                      hex (sha256 data)
-                      {sw :width
-                       sh :height}
-                      (vips/probe source-tmp)]
-                  (write-blob! (stored-path hex "webp") data)
-                  @(db/transact* conn
-                     [{:upload/hash hex
-                       :upload/content-type "image/webp"
-                       :upload/size (alength data)
-                       :upload/width sw
-                       :upload/height sh
-                       :upload/created-at (time/now)}])
-                  {:upload (db/pull* (d/db conn) upload-pull [:upload/hash hex])})
-                (finally
-                  (.delete source-tmp))))))
-        {:error :not-an-image}))))
+  (try
+    (let [size (.length tmp)]
+      (cond
+        (zero? size) {:error :empty}
+        (> size (long max-bytes)) {:error :too-large}
+        :else
+        (if-let [{:keys [width height loader]} (vips/probe tmp)]
+          (if-not (contains? allowed-loaders loader)
+            {:error :unsupported-type}
+            (if (> (* (long width) (long height)) (long max-pixels))
+              {:error :too-many-pixels}
+              (let [source-tmp (File/createTempFile "source" ".webp")]
+                (try
+                  (vips/thumbnail!
+                    tmp
+                    source-tmp
+                    (str max-edge "x" max-edge ">")
+                    {:quality source-quality})
+                  (let [data (Files/readAllBytes (.toPath source-tmp))
+                        hex (sha256 data)
+                        {sw :width
+                         sh :height}
+                        (vips/probe source-tmp)]
+                    (write-blob! (stored-path hex "webp") data)
+                    @(db/transact* conn
+                       [{:upload/hash hex
+                         :upload/content-type "image/webp"
+                         :upload/size (alength data)
+                         :upload/width sw
+                         :upload/height sh
+                         :upload/created-at (time/now)}])
+                    {:upload (db/pull* (d/db conn) upload-pull [:upload/hash hex])})
+                  (finally
+                    (.delete source-tmp))))))
+          {:error :not-an-image})))
+    (catch clojure.lang.ExceptionInfo e (if (vips/busy? e) {:error :busy} (throw e)))))
 
 (defn ensure-derivative!
   "Serve a named variant of the source `hex`, generating it on first request.
   Returns {:file <File> :content-type <mime>} in format `ext`, caching the bytes
-  to disk; nil for an unknown variant, an unsupported ext, or a missing source.
+  to disk; nil for an unknown variant, an unsupported ext, or a missing source;
+  the keyword :busy when the image processor is saturated (the caller sheds 503).
 
   This is the app's role in the on-the-fly cache: in production Caddy serves an
   existing derivative from disk and only a MISS reaches here; in dev (no Caddy)
@@ -243,27 +247,30 @@
   and atomically moved into place, so a concurrent reader never sees half a file
   and a concurrent double-generate is harmless."
   [hex spec-name ext]
-  (let [spec (get specs spec-name)
-        mime (get ext->mime ext)]
-    (when (and spec mime)
-      (let [^File source (stored-path hex ext)]
-        (when (.exists source)
-          (let [dp (derived-path hex spec-name ext)]
-            (when-not (.exists dp)
-              (.mkdirs (.getParentFile dp))
-              (let [part (File. (.getParentFile dp) (str spec-name "." (System/nanoTime) "." ext))]
-                (try
-                  (vips/thumbnail!
-                    source
-                    part
-                    (geometry spec)
-                    {:smartcrop? (= (:mode spec) :cover)
-                     :quality derivative-quality})
-                  (when-not (.exists dp) (move-atomic! part dp))
-                  (finally (when (.exists part) (.delete part))))))
-            (when (.exists dp)
-              {:file dp
-               :content-type mime})))))))
+  (try
+    (let [spec (get specs spec-name)
+          mime (get ext->mime ext)]
+      (when (and spec mime)
+        (let [^File source (stored-path hex ext)]
+          (when (.exists source)
+            (let [dp (derived-path hex spec-name ext)]
+              (when-not (.exists dp)
+                (.mkdirs (.getParentFile dp))
+                (let [part
+                      (File. (.getParentFile dp) (str spec-name "." (System/nanoTime) "." ext))]
+                  (try
+                    (vips/thumbnail!
+                      source
+                      part
+                      (geometry spec)
+                      {:smartcrop? (= (:mode spec) :cover)
+                       :quality derivative-quality})
+                    (when-not (.exists dp) (move-atomic! part dp))
+                    (finally (when (.exists part) (.delete part))))))
+              (when (.exists dp)
+                {:file dp
+                 :content-type mime}))))))
+    (catch clojure.lang.ExceptionInfo e (if (vips/busy? e) :busy (throw e)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Orphan collection — DEFERRED, because a blob may be shared

@@ -41,11 +41,22 @@
   cannot wedge a worker."
   15000)
 
-(def ^:private ^Semaphore processes
+(def ^Semaphore processes
   "Bounds concurrent vips children.
   The raster memory and CPU are the box's now, not one heap's, so cap how many run
   at once; ingest is rare, so a small pool is plenty."
   (Semaphore. 3))
+
+(def acquire-timeout-ms
+  "How long a call waits for a vips permit before shedding load as BUSY.
+  A short queue absorbs a transient burst; past it we refuse rather than pile
+  request threads up waiting, and the caller turns that into a 503/retry."
+  2000)
+
+(defn busy?
+  "True when `e` is the exception `run` throws on saturation (no permit in time)."
+  [e]
+  (= ::busy (:type (ex-data e))))
 
 (defn- run
   "Run `argv` in a child process and return {:exit :out :err}.
@@ -55,25 +66,28 @@
   stdout and stderr are drained on their own threads: a child that fills the pipe
   buffer while we sit in `waitFor` would otherwise deadlock, each side blocked on
   the other. The call is bounded by `timeout-ms` and the child is
-  `destroyForcibly`-killed past it, and by the `processes` permit pool."
+  `destroyForcibly`-killed past it. Acquiring a `processes` permit is itself
+  bounded by `acquire-timeout-ms`: rather than block a request thread forever
+  under saturation, we throw a ::busy signal the caller sheds as a 503."
   [argv]
-  (.acquire processes)
-  (try
-    (let [proc (.start (ProcessBuilder. ^java.util.List argv))
-          out (future (slurp (.getInputStream proc)))
-          err (future (slurp (.getErrorStream proc)))]
-      (if (.waitFor proc timeout-ms TimeUnit/MILLISECONDS)
-        {:exit (.exitValue proc)
-         :out @out
-         :err @err}
-        (do
-          (.destroyForcibly proc)
-          (throw
-            (ex-info
-              "vips timed out"
-              {:argv argv
-               :timeout-ms timeout-ms})))))
-    (finally (.release processes))))
+  (if-not (.tryAcquire processes acquire-timeout-ms TimeUnit/MILLISECONDS)
+    (throw (ex-info "image processor is busy" {:type ::busy}))
+    (try
+      (let [proc (.start (ProcessBuilder. ^java.util.List argv))
+            out (future (slurp (.getInputStream proc)))
+            err (future (slurp (.getErrorStream proc)))]
+        (if (.waitFor proc timeout-ms TimeUnit/MILLISECONDS)
+          {:exit (.exitValue proc)
+           :out @out
+           :err @err}
+          (do
+            (.destroyForcibly proc)
+            (throw
+              (ex-info
+                "vips timed out"
+                {:argv argv
+                 :timeout-ms timeout-ms})))))
+      (finally (.release processes)))))
 
 (defn probe
   "Read {:width :height :loader} from an image header, or nil if not an image.

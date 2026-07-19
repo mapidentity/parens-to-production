@@ -11,6 +11,7 @@
     [myapp.recipe.proposal :as proposal]
     [myapp.test-helpers :as h]
     [myapp.time :as time]
+    [myapp.upload.core :as upload]
     [myapp.web.handler :as handler]
     [myapp.web.ratelimit]
     [myapp.web.routes :as routes])
@@ -193,6 +194,20 @@
       (is (str/includes? (first results) "toast=photo-added")))
     (testing "the flood is eventually refused with a rate-limit reason"
       (is (str/includes? (last results) "photo-error=rate-limited")))))
+
+(deftest recipe-image-sheds-503-when-processor-busy
+  ;; When derivative generation can't get a vips permit it returns :busy; the
+  ;; /img endpoint turns that into a 503 + Retry-After so a burst backs off.
+  (with-redefs [upload/ensure-derivative! (fn [& _] :busy)]
+    (let [hex (apply str (repeat 64 "a"))
+          resp (handler/recipe-image
+                 (assoc (h/request :get (str "/img/aa/aa/" hex "/hero.webp"))
+                   :path-params {:a "aa"
+                                 :b "aa"
+                                 :hash hex
+                                 :variant "hero.webp"}))]
+      (is (= 503 (:status resp)))
+      (is (= "2" (get-in resp [:headers "Retry-After"]))))))
 
 (deftest recipe-image-derivative-endpoint
   (myapp.web.ratelimit/clear!)
