@@ -10,7 +10,11 @@
   `version-history`. ours = the parent now, theirs = the fork now."
   (:require
     [datomic.api :as d]
+    [myapp.auth.email :as email]
+    [myapp.config :as config]
     [myapp.db.core :as db]
+    [myapp.i18n :as i18n]
+    [myapp.jobs.core :as jobs]
     [myapp.recipe.core :as recipe]
     [myapp.time :as time]))
 
@@ -130,12 +134,17 @@
         parent-id (get-in src [:recipe/forked-from :recipe/id])]
     (when (and src (recipe/owned-by? src user-eid) parent-id (recipe/recipe-by-id db parent-id))
       (let [pid (random-uuid)]
+        ;; The proposal and the "you have a proposed change" notification job
+        ;; commit in ONE transaction: a crash can never leave a proposal opened
+        ;; with no notification queued, or a notification for a proposal that
+        ;; was never written. The worker delivers it, with retries.
         @(db/transact* conn
            [{:proposal/id pid
              :proposal/source (d/entid db [:recipe/id source-id])
              :proposal/target (d/entid db [:recipe/id parent-id])
              :proposal/status :open
-             :proposal/created-at (time/now)}])
+             :proposal/created-at (time/now)}
+            (jobs/enqueue-tx :proposal-notification {:proposal-id pid})])
         pid))))
 
 (defn accept!
@@ -189,3 +198,31 @@
          [{:proposal/id proposal-id
            :proposal/status :declined}])
       true)))
+
+;; The job handler for the notification enqueued by create-proposal!. Lives here,
+;; with the domain it serves, so `jobs.core` stays generic. It throws on a failed
+;; send so the worker retries; a rare duplicate (at-least-once) is acceptable for
+;; a notification. No request means no Accept-Language, so it defaults to English
+;; — a per-user locale preference would be a small refinement.
+(defmethod jobs/run-job :proposal-notification
+  [conn {:keys [proposal-id]} _kind]
+  (let [db (d/db conn)
+        prop (proposal-by-id db proposal-id)
+        target-id (get-in prop [:proposal/target :recipe/id])
+        info (some->> target-id
+                      (vector :recipe/id)
+                      (db/pull* db [:recipe/title {:recipe/user [:user/email]}]))
+        to (get-in info [:recipe/user :user/email])]
+    (when (and prop to)
+      (let [url (str (config/get-config :base-url) "/proposals/" proposal-id)
+            {:keys [error message]}
+            (email/send-notification!
+              to
+              (i18n/t :en :email/proposal-subject)
+              (format (i18n/t :en :email/proposal-body) (:recipe/title info) url))]
+        (when (= :FAIL error)
+          (throw
+            (ex-info
+              "proposal notification send failed"
+              {:to to
+               :message message})))))))

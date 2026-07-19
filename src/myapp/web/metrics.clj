@@ -12,6 +12,9 @@
   (:require
     [clojure.java.io :as io]
     [clojure.string :as str]
+    [datomic.api :as d]
+    [myapp.db.core :as db]
+    [myapp.jobs.core :as jobs]
     [myapp.web.presence :as presence])
   (:import
     [com.sun.management UnixOperatingSystemMXBean]
@@ -142,6 +145,16 @@
       (emit sb "presence_recipes" (double recipes)))
     (when-let [fds (open-fd-count)]
       (emit sb "process_open_fds" (double fds)))
+    ;; Background job queue depth. A rising jobs{status="failed"} is the one
+    ;; signal a job handler is broken — otherwise a background failure is
+    ;; invisible until someone notices the effect never happened. Guarded: a
+    ;; metrics scrape must never fail because the DB blipped.
+    (try
+      (let [{:keys [pending running failed]} (jobs/stats (d/db (db/get-connection)))]
+        (emit sb "jobs{status=\"pending\"}" (double pending))
+        (emit sb "jobs{status=\"running\"}" (double running))
+        (emit sb "jobs{status=\"failed\"}" (double failed)))
+      (catch Throwable _ nil))
     (when-let [dm @datomic-metrics]
       (emit-datomic sb dm))
     (str sb)))

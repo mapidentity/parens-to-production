@@ -52,6 +52,27 @@
             (getPasswordAuthentication [] (jakarta.mail.PasswordAuthentication. user pass)))))
       (Session/getInstance props))))
 
+(defn- deliver!
+  "Send one plain-text email synchronously via SMTP.
+  Returns {:error :SUCCESS} or {:error :FAIL :message ..}."
+  [to subject body]
+  (let [^String from (config/get-config :smtp :from)
+        ^Session session (smtp-session)
+        msg (doto (MimeMessage. session)
+              (.setFrom (InternetAddress. from))
+              (.setRecipient Message$RecipientType/TO (InternetAddress. ^String to))
+              (.setSubject ^String subject)
+              (.setText ^String body))]
+    (try
+      (Transport/send msg)
+      {:error :SUCCESS}
+      (catch Exception e
+        (log/error e "Failed to send email"
+          {:to to
+           :subject subject})
+        {:error :FAIL
+         :message (.getMessage e)}))))
+
 (defn send-magic-link!
   "Send a magic link email to `email` via SMTP (synchronous).
   Returns {:error :SUCCESS} or {:error :FAIL :message ..}. This is the raw
@@ -59,21 +80,19 @@
   blocking SMTP work off the worker thread."
   [locale email token base-url]
   (let [magic-link (str base-url "/auth/verify?token=" token)
-        ^String from (config/get-config :smtp :from)
-        ^Session session (smtp-session)
-        msg (doto (MimeMessage. session)
-              (.setFrom (InternetAddress. from))
-              (.setRecipient Message$RecipientType/TO (InternetAddress. ^String email))
-              (.setSubject ^String (t locale :email/magic-link-subject))
-              (.setText ^String (format (t locale :email/magic-link-body) magic-link)))]
-    (try
-      (Transport/send msg)
-      (log/info "Magic link email sent" {:to email})
-      {:error :SUCCESS}
-      (catch Exception e
-        (log/error e "Failed to send magic link email" {:to email})
-        {:error :FAIL
-         :message (.getMessage e)}))))
+        result (deliver!
+                 email
+                 (t locale :email/magic-link-subject)
+                 (format (t locale :email/magic-link-body) magic-link))]
+    (when (= :SUCCESS (:error result)) (log/info "Magic link email sent" {:to email}))
+    result))
+
+(defn send-notification!
+  "Send a plain-text notification email (synchronous). Returns {:error ..}.
+  Called from a background job handler, off the request thread by construction,
+  where the job queue — not the in-memory mailer — is the durable retry layer."
+  [to subject body]
+  (deliver! to subject body))
 
 ;; ---------------------------------------------------------------------------
 ;; The bounded background mailer — keeps the relay off the request thread

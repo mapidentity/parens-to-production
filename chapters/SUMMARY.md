@@ -82,4 +82,8 @@
 
 - [Watching the Watchers: When the Safety Net Needs Its Own](46-watching-the-watchers.md)
 
+# Background Work
+
+- [The Queue the Database Already Is: Durable Jobs Without a Broker](47-job-queue.md)
+
 [Afterword: What You Built, and Where It Goes](afterword.md)

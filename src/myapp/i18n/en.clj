@@ -35,6 +35,9 @@
    :email/magic-link-subject "Sign in to MyApp"
    :email/magic-link-body
    "Click this link to sign in to MyApp:\n\n%s\n\nIf the link doesn't work, copy and paste it into your browser.\n\nThis link expires in 15 minutes.\n\nIf you didn't request this, you can safely ignore this email."
+   :email/proposal-subject "A proposed change to your recipe"
+   :email/proposal-body
+   "Someone proposed a change to your recipe \"%s\".\n\nReview and merge or decline it here:\n\n%s\n\nYou are receiving this because you own the recipe."
 
    ;; Terms / onboarding
    :terms/welcome-title "Welcome to MyApp"

@@ -8,6 +8,7 @@
     [myapp.auth.email :as email]
     [myapp.config :as config]
     [myapp.db.core :as db]
+    [myapp.jobs.core :as jobs]
     [myapp.web.assets :as assets]
     [myapp.web.presence :as presence]
     [myapp.web.routes :as routes]
@@ -78,6 +79,9 @@
     ;; The live-diagnosis lever: a loopback socket REPL, only if MYAPP_REPL_PORT
     ;; is set. Started BEFORE announcing ready so it is up for the first incident.
     (start-repl-server!)
+    ;; The durable job worker: polls Datomic for due background jobs and runs
+    ;; them, CAS-claimed so the pair deploy can't double-run one (see jobs.core).
+    (jobs/start-worker!)
     (println (str "Server running at http://" host ":" port))
     @server))
 
@@ -95,6 +99,7 @@
      ;; a restart in this same JVM doesn't inherit the dead instance's viewers.
      (presence/stop-reaper!)
      (email/stop-mailer!)
+     (jobs/stop-worker!)
      (stop-repl-server!)
      (stop-fn :timeout drain-ms)
      (reset! server nil)

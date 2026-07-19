@@ -37,6 +37,9 @@
    :email/magic-link-subject "Inloggen bij MyApp"
    :email/magic-link-body
    "Klik op deze link om in te loggen bij MyApp:\n\n%s\n\nWerkt de link niet? Kopieer en plak hem in je browser.\n\nDeze link verloopt over 15 minuten.\n\nAls je dit niet hebt aangevraagd, kun je deze e-mail veilig negeren."
+   :email/proposal-subject "Een voorgestelde wijziging aan je recept"
+   :email/proposal-body
+   "Iemand stelt een wijziging voor aan je recept \"%s\".\n\nBekijk en voeg samen of wijs af:\n\n%s\n\nJe krijgt dit bericht omdat je de eigenaar van het recept bent."
 
    ;; Terms / onboarding
    :terms/welcome-title "Welkom bij MyApp"

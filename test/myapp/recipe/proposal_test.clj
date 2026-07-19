@@ -5,7 +5,9 @@
   (:require
     [clojure.test :refer [deftest is testing use-fixtures]]
     [datomic.api :as d]
+    [myapp.auth.email :as email]
     [myapp.db.core :as db]
+    [myapp.jobs.core :as jobs]
     [myapp.recipe.core :as recipe]
     [myapp.recipe.proposal :as prop]
     [myapp.test-helpers :as h]
@@ -15,7 +17,7 @@
 
 (set! *warn-on-reflection* true)
 
-(use-fixtures :each h/with-test-db)
+(use-fixtures :each h/with-test-db h/with-test-config)
 
 (defn- mk-user!
   "Create a terms-accepted user, return its eid."
@@ -148,6 +150,23 @@
             "no second merge landed"))
         (testing "declining a closed proposal is refused (nil)"
           (is (nil? (prop/decline! h/*conn* alice pid))))))))
+
+(deftest create-proposal-enqueues-and-worker-delivers-notification
+  ;; Opening a proposal enqueues a notification job IN THE SAME transaction, and
+  ;; the durable worker delivers it to the target recipe's owner.
+  (let [{:keys [bob fork]} (setup-fork!)
+        sent (atom [])]
+    (recipe/update! h/*conn* bob fork {:recipe/ingredients "pasta\neggs\npecorino"})
+    (with-redefs [email/send-notification! (fn [to _subject _body]
+                                             (swap! sent conj to)
+                                             {:error :SUCCESS})]
+      (prop/create-proposal! h/*conn* bob fork)
+      (testing "a notification job is queued atomically with the proposal"
+        (is (= 1 (:pending (jobs/stats (d/db h/*conn*))))))
+      (jobs/poll-once! h/*conn*)
+      (testing "the worker delivers it to the recipe's owner and marks it done"
+        (is (= ["alice@x.lan"] @sent) "emailed the target owner, not the proposer")
+        (is (zero? (:pending (jobs/stats (d/db h/*conn*)))))))))
 
 (deftest proposal-authz
   (let [{:keys [alice bob orig fork]} (setup-fork!)
