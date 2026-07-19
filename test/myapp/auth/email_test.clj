@@ -4,10 +4,11 @@
   content, and i18n."
   (:require
     [clojure.string :as str]
-    [clojure.test :refer [deftest is use-fixtures]]
+    [clojure.test :refer [deftest is testing use-fixtures]]
     [myapp.auth.email :as email]
     [myapp.config :as config]
-    [myapp.test-helpers :as h])
+    [myapp.test-helpers :as h]
+    [myapp.web.metrics :as metrics])
   (:import
     [com.icegreen.greenmail.util GreenMail ServerSetup]
     [jakarta.mail.internet MimeMessage]))
@@ -102,3 +103,36 @@
             (let [messages (.getReceivedMessages gm)]
               (is (= 1 (alength messages)))))))
       (finally (.stop gm)))))
+
+(deftest deliver-inline-sends-and-counts-the-outcome
+  ;; With no mailer running (a REPL, or these tests), deliver falls back to an
+  ;; inline send so it is never a silent no-op — and folds the outcome into the
+  ;; metric that makes an email outage visible.
+  (let [before (:success @metrics/emails)]
+    (email/deliver-magic-link! :nl "inline@example.com" "tok" "https://myapp.test")
+    (testing "the message actually went out (inline fallback)"
+      (is
+        (= 1 (alength (.getReceivedMessages ^com.icegreen.greenmail.util.GreenMail *greenmail*)))))
+    (testing "a success was counted" (is (= (inc before) (:success @metrics/emails))))))
+
+(deftest deliver-through-the-mailer-eventually-sends
+  ;; The bounded background mailer path: submit, then wait (bounded) for the
+  ;; daemon thread to run the send. Off-thread, so the request never blocks.
+  (email/start-mailer!)
+  (try
+    (email/deliver-magic-link! :nl "async@example.com" "tok2" "https://myapp.test")
+    (let [gm ^com.icegreen.greenmail.util.GreenMail *greenmail*]
+      (is (.waitForIncomingEmail gm 3000 1) "the mailer delivered within 3s"))
+    (finally (email/stop-mailer!))))
+
+(deftest mailer-lifecycle-is-idempotent
+  (email/stop-mailer!)
+  (let [ratom @#'email/mailer]
+    (is (nil? @ratom) "baseline: stopped")
+    (email/start-mailer!)
+    (let [ex1 @ratom]
+      (is (some? ex1) "started")
+      (email/start-mailer!)
+      (is (identical? ex1 @ratom) "starting again does not spawn a second mailer"))
+    (email/stop-mailer!)
+    (is (nil? @ratom) "stopped: cleared")))

@@ -1,0 +1,11 @@
+[Unit]
+Description=Verify the MyApp backup restores, weekly
+
+[Timer]
+# Sunday 05:00 — after a night of backups, before the week. A box that was
+# off runs the missed verification on boot.
+OnCalendar=Sun *-*-* 05:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

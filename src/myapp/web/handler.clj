@@ -231,7 +231,7 @@
       (let [signing-key (config/get-config :signing-key)
             base-url (config/get-config :base-url)
             {:keys [token nonce]} (auth/create-magic-link-token signing-key email)]
-        (email/send-magic-link! locale email token base-url)
+        (email/deliver-magic-link! locale email token base-url)
         (analytics/record!
           [{:magic-link/email email
             :magic-link/nonce nonce

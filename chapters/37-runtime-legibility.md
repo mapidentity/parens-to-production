@@ -81,6 +81,8 @@ datomic_storage_get_msec_sum 31.0
 datomic_storage_get_msec_count 41.0
 ```
 
+A later pass folded in the gauges that make a *silent* failure legible, because a number nobody reads is not observability. `email_send_total{outcome="fail"}` turns [the invisible login outage](38-alerting.md) into a line that climbs; `presence_channels` and `process_open_fds` turn [the reaper's leaked-socket failure mode](45-live-presence.md) into a slope you can watch approach the FD limit while the heap stays flat; and `build_info{build_id="…"}` (also on `/health`) lets you ask a box which build it is actually running. Each exists because [the resilience capstone](46-watching-the-watchers.md) found a failure that was real, ongoing, and emitting no signal at all -- and a metric is the cheapest way to make trouble visible before it is fatal.
+
 This is the deferred measurement, paid in full, and it is worth reading like a sentence: **one thousand and forty-eight renders cost forty-one trips to PostgreSQL.** The object cache absorbed everything else. The trips that did happen cost 31 milliseconds *in total*, but the `_hi` sample is the honest tail -- a single cold segment fetch took 29 ms, which is the cost `datomic:mem` structurally could not show. And the mean render through the full stack -- middleware, real storage, the lot -- lands at 1.86 ms against [chapter 32's](32-server-path-measured.md) 1.03 ms in-memory floor at the handler seam. The floor was real; the tax above it is now measured instead of guessed; and the shape of the answer -- *storage cost is a cold-start phenomenon that the cache turns into a rounding error* -- is exactly the one [the Datomic chapter](08-datomic.md) promised and could never demonstrate from a REPL.
 
 ## The errors that happen elsewhere

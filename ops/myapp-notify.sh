@@ -21,7 +21,17 @@ msg=$(mktemp); trap 'rm -f "$msg"' EXIT
   echo "$(hostname) at $(date -Is)"
 } > "$msg"
 
+# Out-of-band webhook first (independent of the relay), then the relay
+# best-effort — same reasoning as myapp-alert.sh: the relay is a thing that
+# fails, and an alert about it must not travel through it.
+if [ -n "${ALERT_WEBHOOK_URL:-}" ]; then
+  curl -sS -m 10 -X POST "$ALERT_WEBHOOK_URL" \
+    -H 'Content-Type: application/json' \
+    --data "$(printf '{"text":"[myapp] %s — %s (%s)"}' "$subject" "$body" "$(hostname)")" \
+    >/dev/null 2>&1 || true
+fi
+
 auth=(); [ -n "${SMTP_USER:-}" ] && auth=(--user "$SMTP_USER:$SMTP_PASS")
 tls=(--ssl-reqd); [ "${SMTP_TLS:-true}" = "false" ] && tls=()
 curl -sS "${tls[@]}" --url "smtp://$SMTP_HOST:$SMTP_PORT" \
-  --mail-from "$SMTP_FROM" --mail-rcpt "$ADMIN_EMAIL" "${auth[@]}" -T "$msg"
+  --mail-from "$SMTP_FROM" --mail-rcpt "$ADMIN_EMAIL" "${auth[@]}" -T "$msg" || true

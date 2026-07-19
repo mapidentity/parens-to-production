@@ -6,16 +6,22 @@ set -euo pipefail
 
 set -a; . /etc/myapp/env; set +a
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/myapp}"
+# The backup TARGET. Default file: is on THIS box — which shares the exact
+# failure domain ch.39 opens on (the dead disk, the wrong rm, the box that
+# never comes back). A backup that can only die with the thing it protects is
+# not a backup. In production, set BACKUP_URI=s3://your-bucket/myapp: datomic
+# backup-db writes there natively (credentials via the environment), and that
+# copy is the one that survives the box. See ch.46.
+BACKUP_URI="${BACKUP_URI:-file:$BACKUP_DIR}"
 DATOMIC="${DATOMIC_HOME:-/opt/datomic}/bin/datomic"
 
 mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"   # the backup contains everything the database does
 
 # backup-db is incremental: pointing at the same target URI only writes
-# segments new since last time. Swap file: for s3:// and the same command
-# is the offsite story (credentials via the environment).
-"$DATOMIC" backup-db "$DATABASE_URI" "file:$BACKUP_DIR/myapp"
-"$DATOMIC" backup-db "$ANALYTICS_DATABASE_URI" "file:$BACKUP_DIR/myapp-analytics"
+# segments new since last time.
+"$DATOMIC" backup-db "$DATABASE_URI" "$BACKUP_URI/myapp"
+"$DATOMIC" backup-db "$ANALYTICS_DATABASE_URI" "$BACKUP_URI/myapp-analytics"
 
 # The other half of "what is state on this box" (ch.35): /etc/myapp.
 # The env file holds the crypto keys — the backup directory must be

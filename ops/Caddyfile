@@ -7,6 +7,14 @@
 myapp.example.com {
 	encode zstd gzip
 
+	# Front-door limits — the "wall" the app repeatedly defers to (ch.21's
+	# body cap, ch.45's slow-reader). A request body over 2 MB is refused
+	# with 413 before it reaches the app: the recipe forms are kilobytes, so
+	# this only ever stops an abusive upload from touching the single heap.
+	request_body {
+		max_size 2MB
+	}
+
 	# Access log, to stderr and therefore journald: the answer to "what hit
 	# the box around the incident?" One JSON line per request; retention is
 	# journald's, like every other log on this machine.
@@ -60,6 +68,16 @@ myapp.example.com {
 			health_interval 2s
 			fail_duration 10s
 			lb_try_duration 4s
+			# Bound the app-facing hop. dial_timeout catches an instance that
+			# accepts TCP but never completes; response_header_timeout catches
+			# one that took the request but never started answering (the
+			# wedged-worker case). These time the HEADERS only — the SSE
+			# presence stream (headers now, body forever) is untouched, which
+			# is exactly why a full read-timeout is deliberately NOT set here.
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 15s
+			}
 			# The app binds loopback, so every request reaches it from
 			# 127.0.0.1 — its own :remote-addr is useless for per-IP
 			# controls. Hand it the real client, authoritatively:

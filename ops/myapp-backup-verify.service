@@ -1,0 +1,20 @@
+[Unit]
+Description=MyApp weekly backup-restore verification (the drill, automated)
+# A verify that fails silently defeats its own purpose — it must page, on the
+# same spine as every other failure.
+OnFailure=myapp-alert@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/etc/scripts/myapp-backup-verify.sh
+# --- Sandboxing. Needs network (scratch DB + off-box backup URI) and a
+# writable scratch area; it never touches production storage.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+ReadWritePaths=/var/backups/myapp

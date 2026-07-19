@@ -294,6 +294,7 @@
              ;; than one that under-promises.
              (handler/json-response
                {:status "ok"
+                :build @metrics/build-id
                 :basis-t (d/basis-t (d/db (db/get-connection)))
                 :analytics-basis-t (d/basis-t (analytics/get-db))}))}]
     ["/csp-report" {:post #'handler/csp-report}]

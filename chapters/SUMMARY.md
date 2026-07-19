@@ -78,4 +78,8 @@
 - [Proposing Changes Back: The Three-Way Merge](44-three-way-merge.md)
 - [N People Are Looking: Real-Time Presence Without Leaving SSR](45-live-presence.md)
 
+# Endurance
+
+- [Watching the Watchers: When the Safety Net Needs Its Own](46-watching-the-watchers.md)
+
 [Afterword: What You Built, and Where It Goes](afterword.md)
