@@ -122,9 +122,10 @@ src/myapp/           the application
   core.clj             server lifecycle
   config.clj           Aero config + key management
   db/                  Datomic access + java.time bridge + tenant isolation
-  recipe/core.clj      the recipe-versioning domain (forks, history, diff, search, preview)
+  recipe/core.clj      the recipe-versioning domain (forks, history, diff, search, preview, keyset pagination)
   recipe/proposal.clj  pull-request-style proposals + the three-way merge (ch.44)
   web/presence.clj     live viewer presence over Server-Sent Events (ch.45)
+  jobs/core.clj        durable background jobs whose storage is Datomic, no broker (ch.47)
   auth/                passwordless magic-link auth
   web/                 routes, handlers, Hiccup views, the dev source inspector
   admin/, analytics/   admin dashboard + the signup funnel

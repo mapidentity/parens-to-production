@@ -47,6 +47,10 @@ the magnifier to search the full text.
 - **Collaboration**: a fork's changes **proposed back** and resolved by a
   **three-way merge** (the common ancestor is a read), and **real-time
   viewer presence** over Server-Sent Events — SSR is not the opposite of live
+- **The Long Run**: the safety machinery **watching itself** (the guard
+  nothing watched), a durable **job queue** whose storage is Datomic rather
+  than a broker, and **keyset pagination** that seeks the index the schema
+  already carries — bounding the last unbounded read
 
 Start with [the primer](01-primer.md) for what we are building and why, or jump
 to any topic from the table of contents.
