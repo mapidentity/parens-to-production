@@ -40,6 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rlwrap \
     locales \
     unzip \
+    libvips-tools \
     && sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
     && dpkg-reconfigure --frontend=noninteractive locales \
     && apt-get clean \

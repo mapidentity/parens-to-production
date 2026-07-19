@@ -1,20 +1,20 @@
 (ns myapp.upload.core
   "Content-addressed image storage — the case that a photo store does not need S3.
 
-  A user upload is NORMALIZED on ingest into a *master*: decoded, downscaled to a
-  bounded long edge, and re-encoded to a canonical format. The master — not the
-  arbitrary bytes the client sent — is the source of truth, stored on the
+  A user upload is NORMALIZED on ingest into a *source* image: decoded, downscaled
+  to a bounded long edge, auto-oriented, and re-encoded to WebP. The source — not
+  the arbitrary bytes the client sent — is the source of truth, stored on the
   filesystem keyed by its own SHA-256; Datomic holds only the metadata (see
-  `myapp.db.schema/upload-schema`). Re-encoding from the decoded raster strips
-  EXIF (the GPS tracker in a phone photo) for free.
+  `myapp.db.schema/upload-schema`). Re-encoding through libvips strips EXIF (the
+  GPS tracker in a phone photo) and applies its orientation on the way.
 
   The same content hash that cache-busts the asset pipeline (ch.29) does three
-  jobs: it DEDUPLICATES (one master, one file), makes the blob IMMUTABLE (the
-  name is the checksum, so Caddy caches it forever and serves it from disk), and
-  makes the filename its own INTEGRITY check.
+  jobs: it DEDUPLICATES (one source, one file), makes the blob IMMUTABLE (the name
+  is the checksum, so Caddy caches it forever and serves it from disk), and makes
+  the filename its own INTEGRITY check.
 
   Display sizes are DERIVATIVES: named variants (`card`, `hero`) computed from the
-  master, cached under `img/…`, and generated lazily the first time each is
+  source, cached under `img/…`, and generated lazily the first time each is
   requested — a new size later is a new URL, not a migration. The variant set is a
   WHITELIST; client-supplied dimensions are refused, since `?w=1..10000` is a
   disk-fill DoS.
@@ -23,25 +23,22 @@
   derived from the hash alone (never the filename — no traversal), the type is
   decided by DECODING (never the declared Content-Type), and a decompression bomb
   is caught by a pixel ceiling read from the header before any raster is expanded.
-  Raster work is heavy and memory-shaped nothing like request serving, so it is
-  serialized through a small semaphore — concurrent decodes cannot stack on the
-  one heap and OOM the box. That heaviness is also the argument (ch.49) for
-  graduating this to an out-of-process libvips subprocess."
+  The actual decoding and resizing happen out-of-process in libvips
+  (`myapp.upload.vips`), so the heavy, hostile-byte work never runs on the app
+  heap and a decoder crash cannot take the box with it."
   (:require
     [clojure.java.io :as io]
     [datomic.api :as d]
     [myapp.config :as config]
     [myapp.db.core :as db]
-    [myapp.time :as time])
+    [myapp.time :as time]
+    [myapp.upload.vips :as vips])
   (:import
-    [java.awt Graphics2D RenderingHints]
-    [java.awt.image BufferedImage]
-    [java.io ByteArrayOutputStream File]
+    [java.io File]
     [java.nio.file Files StandardCopyOption]
     [java.security MessageDigest]
     [java.util Date]
-    [java.util.concurrent Executors ScheduledExecutorService Semaphore ThreadFactory TimeUnit]
-    [javax.imageio IIOImage ImageIO ImageReader ImageWriteParam ImageWriter]))
+    [java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit]))
 
 (set! *warn-on-reflection* true)
 
@@ -51,38 +48,41 @@
 
 (def max-pixels
   "Decompression-bomb ceiling: a 100KB file can claim to be gigapixels.
-  Read from the header BEFORE any raster is expanded, so this bounds the decode's heap."
+  Read from the header BEFORE any raster is expanded, so this bounds the decode."
   (* 25 1000 1000))
 
 (def max-edge
-  "Longest-edge ceiling for the stored master.
+  "Longest-edge ceiling for the stored source.
   A photo larger than this is downscaled on ingest; we never keep the arbitrary
   resolution a client sent."
   2048)
 
-(def ^:private jpeg-quality
-  "JPEG re-encode quality for opaque masters and their derivatives."
-  0.82)
+(def ^:private source-quality
+  "WebP quality for the stored source — high, because derivatives re-encode from it."
+  90)
 
-(def ^:private allowed
-  "Decoded formats we accept.
-  The DECODER names the format; the client's Content-Type is never consulted.
-  Masters are always re-encoded to jpeg/png."
-  #{"jpeg" "png" "gif"})
+(def ^:private derivative-quality
+  "WebP quality for display derivatives."
+  80)
+
+(def ^:private allowed-loaders
+  "Accepted libvips loaders — raster formats only.
+  The loader is libvips' verdict on the real bytes; the client's Content-Type and
+  extension are never consulted. SVG and PDF loaders are deliberately absent (an
+  SVG can carry script), as is anything that is not a plain image."
+  #{"jpegload" "pngload" "gifload" "webpload"})
 
 (def ^:private mime->ext
-  {"image/jpeg" "jpg"
-   "image/png" "png"})
+  {"image/webp" "webp"})
 
 (def ^:private ext->mime
-  {"jpg" "image/jpeg"
-   "png" "image/png"})
+  {"webp" "image/webp"})
 
 (def specs
   "The whitelist of derivative variants.
   Client-supplied dimensions are NOT honored (that is a disk-fill DoS); only these
-  named variants exist. `:cover` scales to fill and center-crops to an exact box
-  (uniform browse tiles); `:fit` scales to fit inside a box, aspect preserved
+  named variants exist. `:cover` fills and attention-crops to an exact box
+  (uniform browse tiles); `:fit` shrinks to fit inside a box, aspect preserved
   (the detail view)."
   {"card" {:mode :cover
            :width 400
@@ -100,151 +100,7 @@
   ^File []
   (io/file (config/get-config :uploads-root)))
 
-;; ---------------------------------------------------------------------------
-;; Bounded raster work — heavy, so serialized through a small permit pool
-;; ---------------------------------------------------------------------------
-
-(def ^:private ^Semaphore transform-permits
-  "Serialize heavy raster work so it cannot OOM the box: one decode at a time.
-  A full-image decode expands the whole raster to heap (a 25 MP source is ~100 MB
-  of int[]), and the resize holds source and destination at once. Ingest is rare
-  and derivatives generate once, so a single permit bounds the transient raster
-  to one worst-case decode instead of letting concurrent uploads stack them."
-  (Semaphore. 1))
-
-(defn- with-permit
-  "Run `thunk` holding a transform permit, bounding concurrent raster work."
-  [thunk]
-  (.acquire transform-permits)
-  (try
-    (thunk)
-    (finally (.release transform-permits))))
-
-(defn- has-alpha?
-  "True when the image carries an alpha channel (so it must stay PNG, not JPEG)."
-  [^BufferedImage img]
-  (.hasAlpha (.getColorModel img)))
-
-(defn- render-resized
-  "Resize `src` to `nw`x`nh` with quality hints, preserving any alpha channel."
-  ^BufferedImage [^BufferedImage src nw nh]
-  (let [kind (if (has-alpha? src) BufferedImage/TYPE_INT_ARGB BufferedImage/TYPE_INT_RGB)
-        dst (BufferedImage. (int nw) (int nh) kind)
-        ^Graphics2D g (.createGraphics dst)]
-    (doto g
-      (.setRenderingHint
-        RenderingHints/KEY_INTERPOLATION
-        RenderingHints/VALUE_INTERPOLATION_BICUBIC)
-      (.setRenderingHint RenderingHints/KEY_RENDERING RenderingHints/VALUE_RENDER_QUALITY)
-      (.setRenderingHint RenderingHints/KEY_ANTIALIASING RenderingHints/VALUE_ANTIALIAS_ON)
-      (.drawImage src 0 0 (int nw) (int nh) nil)
-      (.dispose))
-    dst))
-
-(defn- clamp-round
-  "Round `x` to the nearest int, floored at 1 — a primitive result, no boxing."
-  ^long [^double x]
-  (Math/max 1 (Math/round x)))
-
-(defn- scale-to-max
-  "Downscale `src` so its longest edge is at most `edge`; never upscale."
-  ^BufferedImage [^BufferedImage src ^long edge]
-  (let [w (.getWidth src)
-        h (.getHeight src)
-        longest (Math/max w h)]
-    (if (<= longest edge)
-      src
-      (let [ratio (/ (double edge) longest)]
-        (render-resized src (clamp-round (* ratio w)) (clamp-round (* ratio h)))))))
-
-(defn- fit-within
-  "Scale `src` to fit inside `bw`x`bh`, aspect preserved; never upscale."
-  ^BufferedImage [^BufferedImage src ^long bw ^long bh]
-  (let [w (.getWidth src)
-        h (.getHeight src)
-        ratio (Math/min 1.0 (Math/min (/ (double bw) w) (/ (double bh) h)))]
-    (if (>= ratio 1.0)
-      src
-      (render-resized src (clamp-round (* ratio w)) (clamp-round (* ratio h))))))
-
-(defn- cover
-  "Scale `src` to fill `bw`x`bh` then center-crop to exactly that box."
-  ^BufferedImage [^BufferedImage src ^long bw ^long bh]
-  (let [w (.getWidth src)
-        h (.getHeight src)
-        ratio (Math/max (/ (double bw) w) (/ (double bh) h))
-        sw (clamp-round (* ratio w))
-        sh (clamp-round (* ratio h))
-        scaled (render-resized src sw sh)
-        cw (Math/min bw sw)
-        ch (Math/min bh sh)]
-    (.getSubimage scaled (int (quot (- sw cw) 2)) (int (quot (- sh ch) 2)) (int cw) (int ch))))
-
-(defn- transform
-  "Apply a named variant `spec` to a master image."
-  ^BufferedImage [^BufferedImage src {:keys [mode width height]}]
-  (case mode
-    :fit (fit-within src width height)
-    :cover (cover src width height)))
-
-(defn- read-image
-  "Fully decode an image file to a BufferedImage, or nil if it will not decode.
-  Called only after `probe` has bounded the pixel count, so the heap is bounded."
-  ^BufferedImage [^File f]
-  (with-open [iis (ImageIO/createImageInputStream f)]
-    (let [readers (ImageIO/getImageReaders iis)]
-      (when (.hasNext readers)
-        (let [^ImageReader r (.next readers)]
-          (try
-            (.setInput r iis true true)
-            (.read r 0)
-            (catch Exception _ nil)
-            (finally (.dispose r))))))))
-
-(defn- probe
-  "Read format + dimensions from the image HEADER, without decoding the raster.
-  Returns {:format :width :height}, or nil if the bytes are not a decodable
-  image. Header-only, so a bomb is measured (by pixels) before it is expanded."
-  [^File f]
-  (with-open [iis (ImageIO/createImageInputStream f)]
-    (let [readers (ImageIO/getImageReaders iis)]
-      (when (.hasNext readers)
-        (let [^ImageReader r (.next readers)]
-          (try
-            (.setInput r iis true true)
-            {:format (.toLowerCase (.getFormatName r))
-             :width (.getWidth r 0)
-             :height (.getHeight r 0)}
-            (catch Exception _ nil)
-            (finally (.dispose r))))))))
-
-(defn- write-jpeg
-  "Encode a BufferedImage to JPEG bytes at `quality`."
-  ^bytes [^BufferedImage img quality]
-  (let [baos (ByteArrayOutputStream.)
-        ^ImageWriter writer (.next (ImageIO/getImageWritersByFormatName "jpeg"))
-        param (.getDefaultWriteParam writer)]
-    (.setCompressionMode param ImageWriteParam/MODE_EXPLICIT)
-    (.setCompressionQuality param (float quality))
-    (with-open [ios (ImageIO/createImageOutputStream baos)]
-      (.setOutput writer ios)
-      (.write writer nil (IIOImage. img nil nil) param))
-    (.dispose writer)
-    (.toByteArray baos)))
-
-(defn- write-png
-  "Encode a BufferedImage to PNG bytes."
-  ^bytes [^BufferedImage img]
-  (let [baos (ByteArrayOutputStream.)]
-    (ImageIO/write img "png" baos)
-    (.toByteArray baos)))
-
-(defn- encode
-  "Encode a BufferedImage to bytes in the master's format (`ext` = jpg | png)."
-  ^bytes [^BufferedImage img ext]
-  (if (= ext "png") (write-png img) (write-jpeg img jpeg-quality)))
-
-(defn- sha256-hex
+(defn- sha256
   "Lowercase-hex SHA-256 of a byte array — the content address."
   [^bytes b]
   (let [md (MessageDigest/getInstance "SHA-256")]
@@ -252,19 +108,27 @@
     (apply str (map #(format "%02x" %) (.digest md)))))
 
 (defn stored-path
-  "Filesystem path for a master's content hash and extension.
+  "Filesystem path for a source's content hash and extension.
   `root/ab/cd/<hex>.<ext>` — the two-level fan-out keeps any one directory from
   holding millions of files."
   ^File [hex ext]
   (io/file (uploads-root) (subs hex 0 2) (subs hex 2 4) (str hex "." ext)))
 
 (defn derived-path
-  "Filesystem path for a named variant of a master.
+  "Filesystem path for a named variant of a source.
   `root/img/ab/cd/<hex>/<spec>.<ext>` — the URL path mirrors this exactly, so
   Caddy serves a cached derivative straight from disk and only a MISS reaches
   the app."
   ^File [hex spec-name ext]
   (io/file (uploads-root) "img" (subs hex 0 2) (subs hex 2 4) hex (str spec-name "." ext)))
+
+(defn- move-atomic!
+  "Atomically move `src` onto `dest` (same directory), replacing any existing file."
+  [^File src ^File dest]
+  (Files/move
+    (.toPath src)
+    (.toPath dest)
+    (into-array [StandardCopyOption/REPLACE_EXISTING StandardCopyOption/ATOMIC_MOVE])))
 
 (defn- write-blob!
   "Atomically write `data` to `dest`, unless it is already there.
@@ -276,15 +140,12 @@
     (let [part (File. (.getParentFile dest) (str (.getName dest) "." (System/nanoTime) ".part"))]
       (with-open [o (io/output-stream part)]
         (.write o data))
-      (Files/move
-        (.toPath part)
-        (.toPath dest)
-        (into-array [StandardCopyOption/REPLACE_EXISTING StandardCopyOption/ATOMIC_MOVE])))))
+      (move-atomic! part dest))))
 
 (defn url-for
-  "The /uploads URL Caddy serves a pulled `:upload` map's MASTER blob at.
+  "The /uploads URL Caddy serves a pulled `:upload` map's SOURCE blob at.
   Rarely linked directly — display goes through derivatives — but it is the
-  full-size original for a download link."
+  full-size image for a download link."
   [upload]
   (when-let [h (:upload/hash upload)]
     (when-let [ext (mime->ext (:upload/content-type upload))]
@@ -298,31 +159,34 @@
       (str "/img/" (subs h 0 2) "/" (subs h 2 4) "/" h "/" spec-name "." ext))))
 
 (defn variant-dimensions
-  "The [w h] a named variant renders at, from the master's stored dimensions.
+  "The [w h] a named variant renders at, from the source's stored dimensions.
   Lets the view set <img width/height> so the layout never shifts, without
   storing a row per derivative."
   [upload spec-name]
   (when-let [{:keys [mode width height]} (get specs spec-name)]
-    (let [mw (:upload/width upload)
-          mh (:upload/height upload)]
-      (when (and mw mh)
+    (let [sw (:upload/width upload)
+          sh (:upload/height upload)]
+      (when (and sw sh)
         (case mode
           :cover [width height]
-          :fit (let [ratio (Math/min
-                             1.0
-                             (Math/min (/ (double width) (long mw)) (/ (double height) (long mh))))]
-                 [(int (clamp-round (* ratio (double mw))))
-                  (int (clamp-round (* ratio (double mh))))]))))))
+          :fit (let [ratio (min 1.0 (/ (double width) (long sw)) (/ (double height) (long sh)))]
+                 [(max 1 (int (Math/round (* ratio (double sw)))))
+                  (max 1 (int (Math/round (* ratio (double sh)))))]))))))
+
+(defn- geometry
+  "The libvips size string for a variant spec: shrink-only fit, or an exact box."
+  [{:keys [mode width height]}]
+  (str width "x" height (when (= mode :fit) ">")))
 
 (defn store!
-  "Normalize and store an uploaded file as a content-addressed master.
+  "Normalize and store an uploaded file as a content-addressed source image.
 
   `tmp` is the `File` the multipart middleware wrote the part to. The bytes are
   validated (size, real-image-by-decode, pixel ceiling), then decoded, downscaled
-  to `max-edge`, and re-encoded to a canonical format — that master is stored and
-  its metadata transacted. Returns {:upload <pulled map>} on success, or
-  {:error <keyword>} on rejection (:empty, :too-large, :not-an-image,
-  :unsupported-type, :too-many-pixels). Idempotent by content: a master that
+  to `max-edge`, auto-oriented, and re-encoded to WebP by libvips — that source is
+  stored and its metadata transacted. Returns {:upload <pulled map>} on success,
+  or {:error <keyword>} on rejection (:empty, :too-large, :not-an-image,
+  :unsupported-type, :too-many-pixels). Idempotent by content: a source that
   hashes the same reuses one file and one entity."
   [conn ^File tmp]
   (let [size (.length tmp)]
@@ -330,56 +194,65 @@
       (zero? size) {:error :empty}
       (> size (long max-bytes)) {:error :too-large}
       :else
-      (if-let [{fmt :format
-                :keys [width height]}
-               (probe tmp)]
-        (if-not (contains? allowed fmt)
+      (if-let [{:keys [width height loader]} (vips/probe tmp)]
+        (if-not (contains? allowed-loaders loader)
           {:error :unsupported-type}
           (if (> (* (long width) (long height)) (long max-pixels))
             {:error :too-many-pixels}
-            (with-permit
-              (fn []
-                (if-let [src (read-image tmp)]
-                  (let [^BufferedImage master (scale-to-max src max-edge)
-                        alpha? (has-alpha? master)
-                        ext (if alpha? "png" "jpg")
-                        mime (if alpha? "image/png" "image/jpeg")
-                        data (encode master ext)
-                        hex (sha256-hex data)]
-                    (write-blob! (stored-path hex ext) data)
-                    @(db/transact* conn
-                       [{:upload/hash hex
-                         :upload/content-type mime
-                         :upload/size (alength data)
-                         :upload/width (.getWidth master)
-                         :upload/height (.getHeight master)
-                         :upload/created-at (time/now)}])
-                    {:upload (db/pull* (d/db conn) upload-pull [:upload/hash hex])})
-                  {:error :not-an-image})))))
+            (let [source-tmp (File/createTempFile "source" ".webp")]
+              (try
+                (vips/thumbnail!
+                  tmp
+                  source-tmp
+                  (str max-edge "x" max-edge ">")
+                  {:quality source-quality})
+                (let [data (Files/readAllBytes (.toPath source-tmp))
+                      hex (sha256 data)
+                      {sw :width
+                       sh :height}
+                      (vips/probe source-tmp)]
+                  (write-blob! (stored-path hex "webp") data)
+                  @(db/transact* conn
+                     [{:upload/hash hex
+                       :upload/content-type "image/webp"
+                       :upload/size (alength data)
+                       :upload/width sw
+                       :upload/height sh
+                       :upload/created-at (time/now)}])
+                  {:upload (db/pull* (d/db conn) upload-pull [:upload/hash hex])})
+                (finally
+                  (.delete source-tmp))))))
         {:error :not-an-image}))))
 
 (defn ensure-derivative!
-  "Serve a named variant of the master `hex`, generating it on first request.
+  "Serve a named variant of the source `hex`, generating it on first request.
   Returns {:file <File> :content-type <mime>} in format `ext`, caching the bytes
-  to disk; nil for an unknown variant, an unsupported ext, or a missing master.
+  to disk; nil for an unknown variant, an unsupported ext, or a missing source.
 
   This is the app's role in the on-the-fly cache: in production Caddy serves an
   existing derivative from disk and only a MISS reaches here; in dev (no Caddy)
-  every request lands here. The generated bytes are content-derived and immutable,
-  so a concurrent double-generate is harmless — same bytes, atomic move."
+  every request lands here. The derivative is rendered by libvips to a temp file
+  and atomically moved into place, so a concurrent reader never sees half a file
+  and a concurrent double-generate is harmless."
   [hex spec-name ext]
   (let [spec (get specs spec-name)
         mime (get ext->mime ext)]
     (when (and spec mime)
-      (let [^File master (stored-path hex ext)]
-        (when (.exists master)
+      (let [^File source (stored-path hex ext)]
+        (when (.exists source)
           (let [dp (derived-path hex spec-name ext)]
             (when-not (.exists dp)
-              (with-permit
-                (fn []
-                  (when-not (.exists dp) ; re-check: another request may have won the permit
-                    (when-let [src (read-image master)]
-                      (write-blob! dp (encode (transform src spec) ext)))))))
+              (.mkdirs (.getParentFile dp))
+              (let [part (File. (.getParentFile dp) (str spec-name "." (System/nanoTime) "." ext))]
+                (try
+                  (vips/thumbnail!
+                    source
+                    part
+                    (geometry spec)
+                    {:smartcrop? (= (:mode spec) :cover)
+                     :quality derivative-quality})
+                  (when-not (.exists dp) (move-atomic! part dp))
+                  (finally (when (.exists part) (.delete part))))))
             (when (.exists dp)
               {:file dp
                :content-type mime})))))))
@@ -412,7 +285,7 @@
   (some? (d/q '[:find ?r . :in $ ?h :where [?e :upload/hash ?h] [?r :recipe/image ?e]] db h)))
 
 (defn- delete-tree!
-  "Recursively delete a directory (a master's derivative subtree)."
+  "Recursively delete a directory (a source's derivative subtree)."
   [^File dir]
   (when (.exists dir)
     (doseq [^File f (reverse (file-seq dir))]
@@ -420,7 +293,7 @@
 
 (defn gc-orphans!
   "Reap unreferenced uploads older than `grace-ms`.
-  Deletes the master file, its whole derivative subtree, and retracts the entity;
+  Deletes the source file, its whole derivative subtree, and retracts the entity;
   returns the number actually reaped. Safe to run repeatedly."
   [conn grace-ms]
   (let [cutoff (Date/from (.minusMillis (time/now) (long grace-ms)))

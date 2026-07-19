@@ -222,21 +222,21 @@
                               :hash h
                               :variant variant}))]
     (testing "a hero variant is served with an image type and an immutable cache"
-      (let [resp (handler/recipe-image (req (subs hex 0 2) (subs hex 2 4) hex "hero.jpg"))]
+      (let [resp (handler/recipe-image (req (subs hex 0 2) (subs hex 2 4) hex "hero.webp"))]
         (is (= 200 (:status resp)))
-        (is (= "image/jpeg" (get-in resp [:headers "Content-Type"])))
+        (is (= "image/webp" (get-in resp [:headers "Content-Type"])))
         (is (str/includes? (get-in resp [:headers "Cache-Control"]) "immutable"))
         (is (instance? java.io.File (:body resp)))))
     (testing "an unknown variant is a 404"
       (is
         (=
           404
-          (:status (handler/recipe-image (req (subs hex 0 2) (subs hex 2 4) hex "banner.jpg"))))))
-    (testing "a hash with no master is a 404 (prefix matches, but nothing on disk)"
+          (:status (handler/recipe-image (req (subs hex 0 2) (subs hex 2 4) hex "banner.webp"))))))
+    (testing "a hash with no source is a 404 (prefix matches, but nothing on disk)"
       (let [ghost (apply str (repeat 64 "b"))]
-        (is (= 404 (:status (handler/recipe-image (req "bb" "bb" ghost "hero.jpg")))))))
+        (is (= 404 (:status (handler/recipe-image (req "bb" "bb" ghost "hero.webp")))))))
     (testing "an /img path whose a/b do not match the hash prefix is a 404 (cannot point off-tree)"
-      (is (= 404 (:status (handler/recipe-image (req "zz" "zz" hex "hero.jpg"))))))))
+      (is (= 404 (:status (handler/recipe-image (req "zz" "zz" hex "hero.webp"))))))))
 
 (deftest authed-pages-render
   (let [_ (mk-user! "cook@x.lan")]

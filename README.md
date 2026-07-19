@@ -127,6 +127,7 @@ src/myapp/           the application
   web/presence.clj     live viewer presence over Server-Sent Events (ch.45)
   jobs/core.clj        durable background jobs whose storage is Datomic, no broker (ch.47)
   upload/core.clj      content-addressed photo store: bytes on disk, metadata in Datomic (ch.49)
+  upload/vips.clj      out-of-process libvips interop (decode/resize/WebP), done safely (ch.49)
   auth/                passwordless magic-link auth
   web/                 routes, handlers, Hiccup views, the dev source inspector
   admin/, analytics/   admin dashboard + the signup funnel

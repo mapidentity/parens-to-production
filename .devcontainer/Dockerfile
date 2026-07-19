@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y \
     jq \
     locales \
     libnss3-tools \
+    libvips-tools \
     lsb-release \
     netcat-openbsd \
     nethogs \

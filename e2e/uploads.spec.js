@@ -58,13 +58,13 @@ test('owner uploads a photo; it is normalized, served as a derivative, and remov
   const img = page.locator('img[alt="Photo Recipe"]');
   await expect(img).toBeVisible();
   const src = await img.getAttribute('src');
-  expect(src).toMatch(/^\/img\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{64}\/hero\.jpg$/);
+  expect(src).toMatch(/^\/img\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{64}\/hero\.webp$/);
 
   // Fetching that URL generates the derivative on the first hit and serves real
-  // JPEG bytes with an immutable cache — the on-the-fly cache, end to end.
+  // WebP bytes with an immutable cache — the on-the-fly cache, end to end.
   const res = await request.get(src);
   expect(res.status()).toBe(200);
-  expect(res.headers()['content-type']).toContain('image/jpeg');
+  expect(res.headers()['content-type']).toContain('image/webp');
   expect(res.headers()['cache-control']).toContain('immutable');
   expect((await res.body()).length).toBeGreaterThan(0);
 

@@ -20,7 +20,7 @@ The database knows *about* every photo and holds *none* of them. That is the sam
 
 ## The name is the hash
 
-Given bytes on a disk, the only real question is what to call the file. The answer is the one the [asset pipeline](29-asset-pipeline.md) already committed to for CSS and JS: **name it after its own SHA-256.** A photo becomes `uploads/ab/cd/<hash>.jpg`, where `ab/cd` is a two-level fan-out so no single directory holds a million entries. That one choice pays for three properties at once:
+Given bytes on a disk, the only real question is what to call the file. The answer is the one the [asset pipeline](29-asset-pipeline.md) already committed to for CSS and JS: **name it after its own SHA-256.** A photo becomes `uploads/ab/cd/<hash>.webp`, where `ab/cd` is a two-level fan-out so no single directory holds a million entries. That one choice pays for three properties at once:
 
 - **Deduplication is free.** The same image uploaded twice hashes to the same name and is one file. A popular recipe forked five hundred times with its photo intact costs one blob, not five hundred.
 - **The blob is immutable.** The name *is* the checksum, so the bytes at a given path can never change. That is exactly the precondition for `Cache-Control: immutable`, so the file caches forever in every browser and proxy between you and the reader.
@@ -28,22 +28,23 @@ Given bytes on a disk, the only real question is what to call the file. The answ
 
 ## Never trust the upload: validate by decoding
 
-The second half is that everything about an upload is a claim by an attacker until proven otherwise. The declared `Content-Type` is a lie waiting to happen; the filename is a directory-traversal attempt (`../../etc/...`) waiting to happen. Neither is ever consulted. The path comes from the hash. The type comes from **decoding the bytes** and asking the decoder what it found:
+The second half is that everything about an upload is a claim by an attacker until proven otherwise. The declared `Content-Type` is a lie waiting to happen; the filename is a directory-traversal attempt (`../../etc/...`) waiting to happen. Neither is ever consulted. The path comes from the hash. The type comes from **reading the bytes** and asking the decoder what it actually found:
 
 ```clojure
-;; the DECODER names the format; the client's Content-Type is never read
-(with-open [iis (ImageIO/createImageInputStream tmp)]
-  (let [r (.next (ImageIO/getImageReaders iis))]
-    {:format (.toLowerCase (.getFormatName r)) :width (.getWidth r 0) :height (.getHeight r 0)}))
+;; libvips names the REAL format from the bytes; Content-Type and filename
+;; are never consulted. vipsheader reads only the header — no full decode.
+(vips/probe tmp)  ;; => {:width 4032 :height 3024 :loader "jpegload"}  (or nil)
 ```
 
-Reading the header also reads the dimensions, and that closes a real hole: the **decompression bomb**. A hundred-kilobyte PNG can declare itself 50,000 × 50,000 pixels and, when decoded, try to allocate ten gigabytes of raster and take the box down. Because the dimensions come from the header *before* any raster is expanded, a pixel ceiling rejects the bomb while it is still small on disk. A byte-size cap sits in front of that as a cheap belt (and a redundant one to [Caddy's request-body limit](35-going-live.md), which already refuses an oversized body at the door).
+That `:loader` is libvips' verdict, and it is checked against a whitelist of raster formats — `jpegload`, `pngload`, `gifload`, `webpload`, and no others. `svgload` is deliberately absent (an SVG is a document that can carry script, not a picture), as is anything that is not a plain image.
 
-## Store a master, not the user's bytes
+The header read also returns the dimensions, and that closes a real hole: the **decompression bomb**. A hundred-kilobyte PNG can declare itself 50,000 × 50,000 pixels and, expanded, would try to become ten gigabytes of raster. Because `vipsheader` reads only the header, that pixel count is known *before* any raster is expanded, and a pixel ceiling rejects the bomb while it is still small on disk. A byte-size cap sits in front of that as a cheap belt (and a redundant one to [Caddy's request-body limit](35-going-live.md), which already refuses an oversized body at the door).
 
-Here is where the design earns the word *correctly*, and where an early draft was wrong. The tempting move is to keep the file the user sent. Don't. Keep it and you have built your store on whatever a phone, a scanner, or a hostile client chose to emit: a 48-megapixel HEIC, a CMYK TIFF, a JPEG with the GPS coordinates of someone's kitchen baked into its EXIF. You would be depending on input you do not control, forever.
+## Store a source, not the user's bytes
 
-So nothing the client sent is ever stored. On ingest we **normalize** into a *master*: decode it, cap the long edge (2,048 px is plenty for any view a recipe page has), and re-encode to a canonical format. Re-encoding from the decoded raster strips EXIF — the GPS tracker — for free, as a side effect of not copying it. *That* master, addressed by *its* hash, is the source of truth. It is bounded, sanitized, and predictable, and the arbitrary original is discarded the moment it is normalized.
+Here is where the design earns the word *correctly*, and where an early draft was wrong. The tempting move is to keep the file the user sent. Don't. Keep it and you have built your store on whatever a phone, a scanner, or a hostile client chose to emit: a 48-megapixel JPEG, a PNG dragged out of a screenshot tool, a photo with the GPS coordinates of someone's kitchen baked into its EXIF. You would be depending on input you do not control, forever.
+
+So nothing the client sent is ever stored. On ingest we **normalize** into a *source* image: libvips decodes it, applies its EXIF orientation, caps the long edge (2,048 px is plenty for any view a recipe page has), and re-encodes to WebP. The orientation is baked into the pixels and everything else — including the GPS tracker in a phone's EXIF — is dropped on the way. *That* image, addressed by *its* own hash, is the source of truth: bounded, sanitized, predictable. The arbitrary original is discarded the moment it is normalized.
 
 Which means the UI owes the user one honest sentence, set before they choose a file:
 
@@ -53,11 +54,11 @@ No surprise, no silent mangling: you told them it would be scaled, and it is.
 
 ## Sizes are derivatives, generated on the fly
 
-A recipe page wants a big hero image; the browse grid wants a small square tile. Shipping the 2,048-px master into a 400-px slot wastes bandwidth on every card. So the master is never displayed directly — the views ask for **derivatives**: named variants computed from the master.
+A recipe page wants a big hero image; the browse grid wants a small square tile. Shipping the 2,048-px source into a 400-px slot wastes bandwidth on every card. So the source is never displayed directly — the views ask for **derivatives**: named variants computed from the source.
 
-Two rules make this safe and cheap. First, the variants are a **whitelist** — `card` (a 400×300 center-crop) and `hero` (fit within 1,200 px, aspect kept) — and *only* those. Honoring client-supplied dimensions (`?w=1..10000`) would be a disk-fill DoS: an attacker requests ten thousand sizes and you generate ten thousand files. A fixed set of named variants has no such surface.
+Two rules make this safe and cheap. First, the variants are a **whitelist** — `card` (a 400×300 attention-crop, where libvips picks the interesting region rather than the middle) and `hero` (fit within 1,200 px, aspect kept) — and *only* those. Honoring client-supplied dimensions (`?w=1..10000`) would be a disk-fill DoS: an attacker requests ten thousand sizes and you generate ten thousand files. A fixed set of named variants has no such surface.
 
-Second, derivatives are generated **lazily** and cached as content on disk, and this is where a single box quietly does what teams pay a service for. The variant's URL is derived from the master hash, so an existing derivative is a plain file. [Caddy](35-going-live.md) serves it straight from disk if it is there, and only a *miss* falls through to the app, which renders the variant, writes it, and returns it:
+Second, derivatives are generated **lazily** and cached as content on disk, and this is where a single box quietly does what teams pay a service for. The variant's URL is derived from the source hash, so an existing derivative is a plain file. [Caddy](35-going-live.md) serves it straight from disk if it is there, and only a *miss* falls through to the app, which renders the variant, writes it, and returns it:
 
 ```
 handle /img/* {
@@ -70,32 +71,43 @@ handle /img/* {
 
 The consequences are worth stating plainly. Every derivative is generated at most once and served from disk forever after. Adding a new size next year — a `thumb`, a retina `hero@2x` — is a new URL, not a migration and not a batch job: the first request for it materializes it, and the rest are disk hits. Purging is `rm -rf` on the derivative tree; it repopulates itself on demand. This is precisely what Cloudflare Images, imgproxy, and S3-plus-Lambda@Edge sell as a product, and here it is a Caddy fallback, a whitelist, and the filesystem.
 
-## Where image processing belongs
+## The tool for the job is not on the JVM
 
-Which raises the question the whole feature turns on: *what* renders those derivatives? The path of least resistance is the JDK's own `ImageIO`, and this book ships exactly that — but it is worth being honest that image processing is a poor long-term tenant for the request-serving JVM, for three concrete reasons:
+Which raises the question the whole feature turns on: *what* renders those derivatives? The path of least resistance is the JDK's own `ImageIO`, and it is the wrong choice, because image processing is a poor tenant for the request-serving JVM, for three concrete reasons:
 
-- **Formats.** The JDK encodes JPEG, PNG, and GIF, and nothing modern. No WebP, no AVIF, no HEIC *decode* — which is what current phones actually shoot. Serving JPEG-only in this decade leaves a real bandwidth win unclaimed.
-- **Memory.** `ImageIO` decodes the *entire* raster to heap. A 25-megapixel photo is ~100 MB of `int[]`, transiently, on the one heap that serves every other request. A purpose-built library streams the pixels and holds a few MB.
-- **Correctness papercuts.** Phone photos store their orientation in EXIF; strip the metadata without first *applying* it and every portrait shows sideways. The JDK makes you hand-parse the tag; the right tool has a flag.
+- **Formats.** The JDK encodes JPEG, PNG, and GIF, and nothing modern — no WebP, no AVIF. Serving JPEG-only in this decade leaves a real bandwidth win unclaimed.
+- **Memory.** `ImageIO` decodes the *entire* raster to heap: a 25-megapixel photo is ~100 MB of `int[]`, transiently, on the one heap that serves every other request. A streaming library holds a few MB.
+- **Correctness papercuts.** Phone photos store their orientation in EXIF; strip the metadata without first *applying* it and every portrait shows sideways. The JDK makes you hand-parse the tag out of hostile bytes; the right tool has a flag.
 
-The purpose-built tool is **libvips**, and the correct way to use it is *out of process* — a `vipsthumbnail` subprocess whose raster lives and dies in its own address space, never on the app heap. That is not "you need a service"; libvips is a twenty-year-old C library you `apt install`, the same as Caddy. So why does this book ship the JDK instead? Because its entire deployment thesis is *one jar, one box, no native libraries*, and on the critical upload path a native dependency would cost more of that story than it buys at this scale, where ingest is rare and derivatives are cached-once. So the JDK path is bounded honestly — the pixel ceiling caps a decode before it allocates, and a single permit serializes the heavy work so that two uploads can never stack their full rasters on the one heap and OOM the box — and libvips is named as the graduation, with the exact call you would swap in:
+The right tool is **libvips** — a streaming C library that resizes in a few megabytes, speaks WebP and AVIF, and auto-rotates with a switch. Reaching for it means reaching past the JVM for a native dependency, and this is the place to be plain about that: the book's *one jar* thesis is about the deploy artifact, not a vow of purity. The jar stays a jar; the box gains one `apt` package, exactly as it already gained Caddy and PostgreSQL. A native dependency is just a dependency — one you opt into with strong reasons, and image processing is precisely the strong reason. The dogmatic reading of "no native libraries" would have us decode hostile gigapixels on the request heap to honor a rule the deployment never actually needed.
+
+So we use libvips, and — the deliberate part — we use it **out of process**. Not an in-JVM binding sharing our address space, but a `vipsthumbnail` child whose raster lives and dies in its own memory, and whose *crash* dies with it: a decoder segfault on a malicious byte fails one request, not the JVM that is the whole application. The shipped render is the call the JDK could not make:
 
 ```bash
-# the out-of-process derivative, when formats or volume demand it:
-vipsthumbnail master.jpg --size 1200x1200 --auto-rotate -o hero.webp[Q=82]
+# shrink-to-fit, auto-orient, strip metadata, encode WebP — one child process
+vipsthumbnail source.webp --size "1200x1200>" -o "hero.webp[Q=80,strip]"
 ```
 
-Pick the tool that fits the tenancy. In-process and bounded is right for a box that uploads occasionally; out-of-process libvips is right the moment you want AVIF or you are resizing in a hot loop. The architecture around it — content-addressed master, lazy cached derivatives, Caddy-served — does not change either way. Only the renderer does.
+### Interop, done deliberately
+
+Shelling out is where careless code earns a CVE, so the wrapper around that call is the careful part, in four specific ways — each a trap that bites in production, not in the demo:
+
+- **The arguments are a vector, never a string.** `(ProcessBuilder. [bin in "--size" geo …])` hands the OS an `argv` directly; there is no shell to parse it, so a filename containing `; rm -rf ~` is a filename, not a command. The most common shell-out vulnerability simply cannot occur, because there is no shell.
+- **stdout and stderr are drained concurrently.** A child that fills the pipe buffer blocks on write while a parent that only reads *after* `waitFor` blocks on wait — a textbook deadlock. Two threads read the streams *while* we wait, so neither side can wedge the other.
+- **Every call has a hard timeout.** Past it the child is `destroyForcibly`-killed and the call throws, so a pathological image that sends the decoder into a spin cannot pin a worker forever.
+- **A semaphore bounds how many children run at once.** The memory and CPU are the box's to spend now, not one heap's, so the concurrency cap lives with the thing being capped.
+
+That wrapper is one small namespace, and each of those four points is a line of code, not a paragraph of hope. Native interop is not scary; it is *specific*. The architecture around it — content-addressed source, lazy cached derivatives, Caddy-served — never touches the JVM heap for the pixels at all; the heavy, hostile-byte work happens in a child that the OS can kill.
 
 ## Served by Caddy, gated only when it must be
 
-Notice what never happened above: a photo request never reached the application. Both the masters (`/uploads/*`) and the derivatives (`/img/*`, on a hit) are served by Caddy straight from the state volume, with an immutable cache header, never proxied. The app's job is to *accept* an upload and to *render* a derivative on the first miss; serving bytes is the web server's job, and it does it without waking a single thread of the JVM.
+Notice what never happened above: a photo request never reached the application. Both the sources (`/uploads/*`) and the derivatives (`/img/*`, on a hit) are served by Caddy straight from the state volume, with an immutable cache header, never proxied. The app's job is to *accept* an upload and to *render* a derivative on the first miss; serving bytes is the web server's job, and it does it without waking a single thread of the JVM.
 
 That is safe here because recipe photos are public — the recipes are public reads. When uploads are *private*, the same architecture holds with one addition: Caddy's `forward_auth` asks the app for a yes/no before serving the file, so access is gated while the bytes still never touch the heap. This app does not need it, so it does not have it, but the seam is one directive wide.
 
 ## Deletion is deferred, because a blob can be shared
 
-Removing a photo cannot delete its file, and the reason is the deduplication that content-addressing bought us. If two recipes point at the same hash and one drops its photo, deleting the blob would blank the other. So an unlink retracts only the *reference*; the bytes stay. Collecting them is a separate, deferred job — the same lifecycle-managed, daemon-threaded, idempotent sweep as [the presence reaper and the mailer](46-watching-the-watchers.md): once a day, find every upload with no incoming `:recipe/image` reference that is older than a grace period, and delete the master, its derivative subtree, and the metadata entity.
+Removing a photo cannot delete its file, and the reason is the deduplication that content-addressing bought us. If two recipes point at the same hash and one drops its photo, deleting the blob would blank the other. So an unlink retracts only the *reference*; the bytes stay. Collecting them is a separate, deferred job — the same lifecycle-managed, daemon-threaded, idempotent sweep as [the presence reaper and the mailer](46-watching-the-watchers.md): once a day, find every upload with no incoming `:recipe/image` reference that is older than a grace period, and delete the source, its derivative subtree, and the metadata entity.
 
 ```clojure
 ;; an orphan: referenced by nothing, past the grace window
@@ -106,7 +118,7 @@ Removing a photo cannot delete its file, and the reason is the deduplication tha
 
 The grace period matters for more than caution: it is what makes backup consistent without a lock. Because a blob is always written *before* the transaction that references it, and is deleted only long *after* it goes unreferenced, a backup that copies the blob volume at or after the database snapshot always contains a superset of what the database points at. Restore the DB and the files, and every reference resolves. That is the whole backup story, and it is [the same drill as chapter 39](39-backup-restore.md): the blobs are just more files on the volume you were already snapshotting.
 
-The grace window has a sharp edge worth naming: it means an orphaned master lingers on the *shared* state volume — the same disk Datomic and the backups live on — for as long as the grace lasts. Left unbounded, that is a disk-exhaustion DoS: an authenticated user loops the upload with a byte of noise appended each time, so every image is a distinct hash that dedup cannot collapse, and the volume fills faster than the daily sweep drains it. When the disk is full the transactor cannot write, and a failed *photo* becomes a failed *application*. So the write path is bounded like every other unbounded resource in this book — the upload handler is rate-limited per user and per IP, the same posture as [the magic-link sender](25-auth-email-flow.md) and the report sinks. Uploads are rare and legitimate ones stay far under the ceiling; a flood hits the wall long before it touches the disk.
+The grace window has a sharp edge worth naming: it means an orphaned source lingers on the *shared* state volume — the same disk Datomic and the backups live on — for as long as the grace lasts. Left unbounded, that is a disk-exhaustion DoS: an authenticated user loops the upload with a byte of noise appended each time, so every image is a distinct hash that dedup cannot collapse, and the volume fills faster than the daily sweep drains it. When the disk is full the transactor cannot write, and a failed *photo* becomes a failed *application*. So the write path is bounded like every other unbounded resource in this book — the upload handler is rate-limited per user and per IP, the same posture as [the magic-link sender](25-auth-email-flow.md) and the report sinks. Uploads are rare and legitimate ones stay far under the ceiling; a flood hits the wall long before it touches the disk.
 
 ## How far this actually scales, in one place
 
@@ -124,9 +136,10 @@ The thing that makes rungs 3 through 6 clean — the reason this ladder is climb
 
 ## Trade-offs & limitations, in one place
 
-- **Modern formats are a seam.** The shipped JDK renderer is JPEG/PNG/GIF. WebP and AVIF — a real bandwidth win — arrive with the out-of-process libvips renderer described above; the architecture is ready for them, the encoder is the only missing piece. Named, not hidden.
-- **EXIF orientation is not auto-applied on the JDK path.** Stripping EXIF (privacy) happens for free on re-encode; *applying* the orientation tag first does not, because the JDK will not do it without hand-parsing hostile metadata. libvips' `--auto-rotate` is the clean fix, and it is the same graduation the formats want. Until then, a portrait shot on a phone that relies on the tag can land sideways — a known limitation, written down.
-- **No virus scanning.** A public site that lets strangers upload files should run the bytes past ClamAV before they are served. It slots in exactly where validation already sits (decode, then scan, then store) and is left out here only because the demo's uploads are images bound for `<img>`, never downloads.
+- **libvips is a box dependency.** The price of the native tool, paid on purpose: the box, CI, and the dev environment all need `libvips-tools` on `PATH`, and the app will not process an upload without it. The deploy artifact is unchanged (still one jar), but "runs on a bare JVM host" is no longer true — an honest cost, and one `apt install` line in each of the three places.
+- **AVIF and content-negotiation are the next format step, not this one.** We ship WebP to everyone, which ~97% of browsers take and the rest tolerate via the `<img>` fallback path. AVIF is smaller still; serving it means adding an `avif` variant and a `Vary: Accept` negotiation so each client gets the best format it supports. libvips already encodes it — this is a variant and a header, deliberately deferred, not a re-architecture.
+- **HEIC and RAW inputs are refused.** The accept-whitelist is `jpeg/png/gif/webp`; a phone that uploads HEIC is rejected with a readable error rather than half-supported. Accepting it is one more loader in the whitelist *once the box's libvips is built with libheif* — a provisioning decision, surfaced rather than assumed.
+- **No virus scanning.** A public site that lets strangers upload files should run the bytes past ClamAV before they are served. It slots in exactly where validation already sits (probe, then scan, then normalize) and is left out here only because the demo's uploads are images bound for `<img>`, never downloads.
 - **Dedup is content-exact, not perceptual.** Two visually identical photos that differ by one byte are two blobs. Perceptual dedup is a different, much harder feature, and not one a recipe site needs.
 - **A CDN is still a config line, not a rewrite.** Immutable URLs are the ideal CDN origin; putting one in front is a DNS change and a cache rule, and nothing in the app changes. Staying on the box does not foreclose the edge — it just declines to *require* it.
 
