@@ -24,7 +24,7 @@ mdbook build                       # the book still builds (if you touched chapt
 npx playwright test                # e2e (auto-starts the e2e server on :9876; needs libvips)
 ```
 
-`compile-strict` is the one people forget: if you add interop, **type-hint it** (no reflection); if you do arithmetic, **keep it primitive** (no boxed math) — or the uberjar will not build. A stale `target/` can mask this; `clojure -T:build clean` first when in doubt. (Note: two pre-existing boxed-math warnings in `jobs/core.clj` + `recipe/core.clj` fail a *clean* compile-strict — verify your OWN files are clean with `grep -E "myapp/<your-file>" target/compile-warnings.txt`.)
+`compile-strict` is the one people forget: if you add interop, **type-hint it** (no reflection); if you do arithmetic, **keep it primitive** (no boxed math) — or the uberjar will not build. A stale `target/` can mask this; `clojure -T:build clean` first when in doubt. As of the 2026-07-20 review-fix pass **`myapp` compiles clean from a fresh `target/`** — the boxed-math sites that used to be tolerated in `jobs/core.clj` and `recipe/core.clj` (the old LCS diff, since rewritten as Myers) are all hinted now, so ANY `myapp` line in `target/compile-warnings.txt` is yours to fix. (The entries that remain in that file are third-party libs compiled from source — ring, crypto.equality, core.async — which the gate does not fail on.)
 
 ## Where things are
 

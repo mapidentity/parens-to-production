@@ -146,7 +146,7 @@
   [conn eid attempts ^Throwable e]
   (let [n (inc (long (or attempts 0)))
         msg (str (.getMessage e))]
-    (if (>= n max-attempts)
+    (if (>= n (long max-attempts))
       (do
         (log/error e "job failed permanently"
           {:eid eid
@@ -193,7 +193,7 @@
         :done
         (catch Throwable e
           (fail! conn eid attempts e)
-          (if (>= (inc (long (or attempts 0))) max-attempts) :failed :retry))))))
+          (if (>= (inc (long (or attempts 0))) (long max-attempts)) :failed :retry))))))
 
 (defn poll-once!
   "One worker tick: reclaim stuck jobs, then claim-and-run a batch of due ones."

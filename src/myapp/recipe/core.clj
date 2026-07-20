@@ -99,7 +99,7 @@
   on the uuid would disagree with the index and skip a row whose uuid happened to
   sort before its same-title predecessor's. `eid` is the datom's own entity id,
   so it never disagrees. Callers keep the cursor opaque (see the handler)."
-  [db after limit]
+  [db after ^long limit]
   (let [cursor [(:recipe/title after) (:eid after)]
         datoms (->> (d/index-range db :recipe/title (:recipe/title after) nil)
                     (drop-while (fn [d] (and after (<= (compare [(:v d) (:e d)] cursor) 0))))
@@ -321,50 +321,127 @@
       (db/pull* (d/as-of db tx) pull-pattern eid))))
 
 ;; ---------------------------------------------------------------------------
-;; Line diff (LCS) — the version-to-version comparison
+;; Line diff (Myers O(ND)) — the version-to-version comparison
+;;
+;; The greedy algorithm from Myers 1986 ("An O(ND) Difference Algorithm"),
+;; the core of what git's own diff runs. Its cost scales with the EDIT
+;; DISTANCE D (how much actually changed), not with the product of the two
+;; lengths — so a one-line edit to a thousand-line recipe is O(lines), not
+;; O(lines^2). That is why it needs no line-count cap: the old LCS table was
+;; O(n*m) in time AND heap for every diff, so a big pair OOMed the box and a
+;; 2000-line ceiling plus an all-del/all-add fallback were bolted on to
+;; contain it. Real recipe edits have a tiny D and never approach the one
+;; bound this keeps — an edit-distance ceiling, not a size guess — which
+;; exists only so a deliberately antagonistic "share almost nothing" pair
+;; (a line diff of which would be visual noise anyway) cannot make the
+;; trace's own memory the DoS. All arithmetic is primitive-long over a
+;; java long-array, so the strict build stays clean of boxed math.
 ;; ---------------------------------------------------------------------------
 
-(defn- lcs-suffix-table
-  "Map from [i j] to the length of the longest common subsequence of the suffixes a[i..] and b[j..].
-  Missing entries (the boundary row/column) read as 0 via the lookup default."
-  [a b]
-  (let [n (count a)
-        m (count b)]
-    ;; Primitive-long index loops (not reduce-over-range) so the arithmetic
-    ;; stays unboxed — the strict build (ch2) fails on boxed math.
-    (loop [i (dec n)
-           dp (transient {})]
-      (if (neg? i)
-        (persistent! dp)
-        (recur
-          (dec i)
-          (loop [j (dec m)
-                 dp dp]
-            (if (neg? j)
-              dp
-              (recur
-                (dec j)
-                (assoc!
-                  dp
-                  [i j]
-                  (if (= (nth a i) (nth b j))
-                    (inc (long (get dp [(inc i) (inc j)] 0)))
-                    (max (long (get dp [(inc i) j] 0)) (long (get dp [i (inc j)] 0)))))))))))))
+(def ^:private max-edit-distance
+  "Ceiling on the Myers edit distance D before we stop and emit a coarse diff.
+  Bounds the trace's time (O(D*(n+m))) and heap (O(D^2)) against a pair that
+  shares almost nothing. A real recipe edit's D is in the dozens; this is
+  generous headroom above any genuine change, reached only by antagonistic
+  input, and even the fields it guards are capped at ~20k chars by `conform`."
+  4000)
 
-(def ^:private max-diff-lines
-  "Above this many lines on either side, the LCS table is skipped.
-  `lcs-suffix-table` is O(n*m) in time AND memory (an entry per [i j] pair), so
-  on a public, cacheable endpoint two large inputs are a quadratic-blowup DoS
-  that OOMs the whole single box, not just the diff. The content caps in
-  `conform` (~20k chars) still permit thousands of lines; this ceiling turns a
-  pathological pair into a coarse-but-bounded diff instead of a heap bomb."
-  2000)
+(defn- myers-trace
+  "Run the Myers greedy search and return its per-`d` frontier snapshots.
+  Each snapshot is the array `V` after edit-distance `d`, where `V` maps a
+  diagonal k -> the furthest x reached with d edits (k in [-d, d], stored
+  offset by `max-edit-distance` in a primitive long-array). Returns nil when
+  the edit distance exceeds the ceiling."
+  [a b ^long n ^long m]
+  (let [ceiling (long max-edit-distance)
+        off ceiling
+        size (inc (* 2 ceiling))
+        v (long-array size)
+        av (object-array a)
+        bv (object-array b)]
+    (loop [d 0
+           trace (transient [])]
+      (if (> d (min ceiling (+ n m)))
+        nil
+        (let [snap (long-array size)
+              _ (System/arraycopy v 0 snap 0 size)
+              result
+              (loop [k (- d)]
+                (if (> k d)
+                  :continue
+                  (let [x0
+                        (if
+                          (or
+                            (= k (- d))
+                            (and (not= k d) (< (aget v (+ off (dec k))) (aget v (+ off (inc k))))))
+                          (aget v (+ off (inc k))) ; move down (an insertion)
+                          (inc (aget v (+ off (dec k))))) ; move right (a deletion)
+                        ;; Slide down the diagonal over equal lines (the snake).
+                        [x y] (loop [x (long x0)
+                                     y (- (long x0) k)]
+                                (if (and (< x n) (< y m) (= (aget av x) (aget bv y)))
+                                  (recur (inc x) (inc y))
+                                  [x y]))]
+                    (aset v (+ off k) (long x))
+                    (if (and (>= (long x) n) (>= (long y) m)) :done (recur (+ k 2))))))
+              trace' (conj! trace snap)]
+          (if (= result :done) (persistent! trace') (recur (inc d) trace')))))))
+
+(defn- backtrack
+  "Walk the Myers `trace` from (n,m) to the origin, emitting ops in display order.
+  Each step moves along a diagonal (context lines) then takes one edit — a
+  deletion when x advanced, an insertion when y advanced."
+  [trace a b n m]
+  (let [off (long max-edit-distance)]
+    (loop [d (dec (count trace))
+           x (long n)
+           y (long m)
+           acc ()]
+      (if (neg? d)
+        (vec acc)
+        (let [^longs v (nth trace d)
+              k (- x y)
+              prev-k (if
+                       (or
+                         (= k (- d))
+                         (and (not= k d) (< (aget v (+ off (dec k))) (aget v (+ off (inc k))))))
+                       (inc k)
+                       (dec k))
+              prev-x (aget v (+ off prev-k))
+              prev-y (- prev-x prev-k)
+              ;; Snake: the diagonal run of context lines before the edit.
+              ;; (y falls out of the destructure but is not needed downstream —
+              ;; the next hop is driven by prev-x/prev-y.)
+              [x _ acc]
+              (loop [x x
+                     y y
+                     acc acc]
+                (if (and (> x prev-x) (> y prev-y))
+                  (recur
+                    (dec x)
+                    (dec y)
+                    (cons
+                      {:op :ctx
+                       :text (nth a (dec x))}
+                      acc))
+                  [x y acc]))
+              acc (cond
+                    (zero? d) acc
+                    (= x prev-x) (cons
+                                   {:op :add
+                                    :text (nth b prev-y)}
+                                   acc) ; y advanced
+                    :else (cons
+                            {:op :del
+                             :text (nth a prev-x)}
+                            acc))]      ; x advanced
+          (recur (dec d) (long prev-x) (long prev-y) acc))))))
 
 (defn- coarse-diff
-  "A bounded O(n+m) fallback for oversized inputs.
-  Every old line as `:del`, every new line as `:add`. Not minimal, but honest
-  and safe to render — reached only past `max-diff-lines`, where a minimal diff
-  is not worth OOMing the box for."
+  "Emit an all-del/all-add diff for a pair whose edit distance blew the ceiling.
+  Every old line as `:del`, every new line as `:add` — not minimal, but
+  bounded and honest, reached only by antagonistic input a line-level diff
+  could not meaningfully align anyway."
   [a b]
   (into
     (mapv
@@ -378,60 +455,23 @@
          :text t})
       b)))
 
-(declare line-diff*)
-
 (defn line-diff
   "A git-style line diff of two newline-separated strings.
 
   Returns a vector of `{:op :ctx|:add|:del :text <line>}` in display order,
-  computed from a longest-common-subsequence of the lines: shared lines are
-  `:ctx`, lines only in `new-text` are `:add`, lines only in `old-text` are
-  `:del`. Pure data → data. Past `max-diff-lines` on either side it degrades
-  to a coarse all-del/all-add diff rather than build the O(n*m) LCS table."
+  from Myers' O(ND) shortest edit script: shared lines are `:ctx`, lines only
+  in `new-text` are `:add`, lines only in `old-text` are `:del`. Pure data →
+  data. The cost tracks the edit distance, so an ordinary edit is near-linear;
+  only a pair that shares almost nothing (D past `max-edit-distance`) falls
+  back to a coarse all-del/all-add diff."
   [old-text new-text]
   (let [a (lines old-text)
         b (lines new-text)
         n (count a)
         m (count b)]
-    (if (or (> n max-diff-lines) (> m max-diff-lines)) (coarse-diff a b) (line-diff* a b n m))))
-
-(defn- line-diff*
-  "The LCS-based diff walk, given already-split line vectors and their counts."
-  [a b n m]
-  (let [dp (lcs-suffix-table a b)]
-    (loop [i 0
-           j 0
-           acc (transient [])]
-      (cond
-        (and (< i n) (< j m) (= (nth a i) (nth b j)))
-        (recur
-          (inc i)
-          (inc j)
-          (conj!
-            acc
-            {:op :ctx
-             :text (nth a i)}))
-
-        (and (< j m) (or (= i n) (>= (long (dp [i (inc j)] 0)) (long (dp [(inc i) j] 0)))))
-        (recur
-          i
-          (inc j)
-          (conj!
-            acc
-            {:op :add
-             :text (nth b j)}))
-
-        (< i n)
-        (recur
-          (inc i)
-          j
-          (conj!
-            acc
-            {:op :del
-             :text (nth a i)}))
-
-        :else
-        (persistent! acc)))))
+    (if-let [trace (myers-trace a b n m)]
+      (backtrack trace a b n m)
+      (coarse-diff a b))))
 
 (defn diff
   "Field-level diff between two recipe states (pulled maps).

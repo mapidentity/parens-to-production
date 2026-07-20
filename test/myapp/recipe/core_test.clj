@@ -31,20 +31,35 @@
 ;; --- line diff (pure) ---
 
 (deftest line-diff-detects-add-and-delete
+  ;; Myers orders a replaced line as delete-then-add — the same order git
+  ;; prints a hunk (- before +).
   (let [d (recipe/line-diff "a\nb\nc" "a\nB\nc\nd")]
     (is
       (=
         [{:op :ctx
           :text "a"}
-         {:op :add
-          :text "B"}
          {:op :del
           :text "b"}
+         {:op :add
+          :text "B"}
          {:op :ctx
           :text "c"}
          {:op :add
           :text "d"}]
         d))))
+
+(deftest line-diff-is-minimal-and-tracks-edit-distance
+  ;; The Myers win over the old LCS-with-cap: a single edit inside a large
+  ;; input is minimal (one del/add pair, everything else context) and never
+  ;; hits the coarse fallback — the cost tracks the edit distance, not the
+  ;; product of the lengths. The old ceiling would have coarsened this.
+  (let [base (str/join "\n" (map str (range 3000)))
+        edited (str/join "\n" (map str (concat (range 1500) ["CHANGED"] (range 1501 3000))))
+        d (recipe/line-diff base edited)
+        ctx (count (filter #(= :ctx (:op %)) d))]
+    (is (= 2999 ctx) "2999 lines are unchanged context, not a coarse all-del/all-add")
+    (is (= 1 (count (filter #(= :del (:op %)) d))))
+    (is (= 1 (count (filter #(= :add (:op %)) d))))))
 
 (deftest line-diff-identical-is-all-context
   (is (every? #(= :ctx (:op %)) (recipe/line-diff "x\ny" "x\ny"))))
@@ -59,9 +74,10 @@
       (recipe/line-diff "" "one\ntwo"))))
 
 (deftest line-diff-caps-oversized-input-to-a-coarse-bounded-diff
-  ;; The LCS table is O(n*m) in memory; on a public, cacheable endpoint two
-  ;; large inputs would be a quadratic-blowup DoS. Past the ceiling the diff
-  ;; degrades to all-del/all-add — bounded, O(n+m), and quick to compute.
+  ;; A pair that shares almost nothing has an edit distance past
+  ;; `max-edit-distance`; the Myers search stops and emits a coarse
+  ;; all-del/all-add diff — bounded, O(n+m), and quick to compute, where a
+  ;; line-level alignment would be visual noise anyway.
   (let [big-a (str/join "\n" (map #(str "old-" %) (range 6000)))
         big-b (str/join "\n" (map #(str "new-" %) (range 6000)))
         started (System/nanoTime)

@@ -172,14 +172,14 @@ With any two versions reconstructable, a diff between them is a pure function of
   "A git-style line diff of two newline-separated strings.
 
   Returns a vector of `{:op :ctx|:add|:del :text <line>}` in display order,
-  computed from a longest-common-subsequence of the lines: shared lines are
-  `:ctx`, lines only in `new-text` are `:add`, lines only in `old-text` are
-  `:del`. Pure data → data."
+  from Myers' O(ND) shortest edit script: shared lines are `:ctx`, lines
+  only in `new-text` are `:add`, lines only in `old-text` are `:del`.
+  Pure data → data."
   [old-text new-text]
   ...)
 ```
 
-The body is a textbook longest-common-subsequence: a dynamic-programming table over the two line vectors, then a walk back through it emitting context, additions, and deletions in display order. It is the densest function in the namespace, and the repository has it in full; the shape above -- and the data it returns -- is what matters here. One implementation note does connect back to an earlier chapter: the DP table is filled with primitive-`long` index loops rather than a `reduce` over a range, because the [strict build](04-build-hardening.md) fails on boxed math, and the obvious idiomatic version boxes its indices. The constraint set in chapter 4 reaches all the way into a diff algorithm, which is the point of setting it on the first day rather than the three-hundredth.
+The body is Myers' O(ND) difference algorithm -- the greedy edit-distance search at the core of what `git diff` itself runs. The choice matters, and it is where "best engineering over teachability" earns its keep: a textbook longest-common-subsequence table is easier to explain, but it is O(n·m) in *both* time and heap, so on a public, cacheable endpoint two large versions are a quadratic blow-up that OOMs the whole box -- which the first cut then papered over with a line-count cap and an all-delete/all-add fallback bolted on to contain it. Myers costs O(n·d), where *d* is the number of lines that actually changed: a one-line edit to a thousand-line recipe is linear, not quadratic, so the cap and the fallback are simply not needed for any real edit, and the one bound that remains -- a ceiling on the edit distance itself -- fires only for a pair that shares almost nothing, where a line-level diff would be visual noise anyway. It is the densest function in the namespace, and the repository has it in full; the shape above -- and the data it returns -- is what matters here. One implementation note connects back to an earlier chapter: the search runs over a primitive `long`-array frontier with primitive-`long` arithmetic throughout, because the [strict build](04-build-hardening.md) fails on boxed math, and the obvious idiomatic version boxes every index. The constraint set in chapter 4 reaches all the way into a diff algorithm, which is the point of setting it on the first day rather than the three-hundredth.
 
 `line-diff` returns plain data -- a vector of `{:op :add :text "sugar"}` maps -- so the view layer renders a diff by mapping over it, and a test asserts on it without parsing rendered HTML. The field-level `diff` wraps it together with the scalar comparisons into one map describing everything that changed between two recipe states, carrying a top-level `:changed?` the caller can branch on. It, too, is pure data in and pure data out, with no database handle anywhere in sight -- the temporal reads happened upstream, and the comparison is arithmetic.
 
