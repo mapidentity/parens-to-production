@@ -619,9 +619,12 @@
         (t locale :recipe/by) " " [:span.font-medium (author-name (:recipe/user recipe))]
         " · " (t locale :recipe/servings) " " (:recipe/servings recipe)]
        ;; Live viewer count — filled in by the viewers island over SSE.
-       ;; Empty (and hidden) until JS connects: pure enhancement.
+       ;; Empty (and hidden) until JS connects: pure enhancement. The label
+       ;; template rides along as data (i18n'd here, where copy lives; the
+       ;; island only substitutes the count).
        [:p.mt-1.text-sm.text-primary-vivid
         {:data-viewers-url (str "/recipes/" (:recipe/id recipe) "/viewers")
+         :data-viewers-label (t locale :presence/looking)
          :hidden true}]]
       [:div.flex.flex-col.items-end.gap-2
        (if user-email

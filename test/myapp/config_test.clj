@@ -85,3 +85,18 @@
                              :var))
                        :threw)))]
     (is (= :threw (try-load)) "prod profile must fail fast without env vars")))
+
+(deftest session-key-hex-decoding
+  ;; SESSION_KEY prefers 32 hex chars decoded to the 16 AES-128 key bytes —
+  ;; full 128-bit entropy through a text env file (`openssl rand -hex 16`).
+  ;; A raw 16-char string is still honored byte-for-byte; the lengths cannot
+  ;; collide (raw is 16 chars, hex is 32).
+  (let [hex "00ff10a04b3c2d1e00ff10a04b3c2d1e"
+        ^bytes decoded (#'config/parse-session-key hex)]
+    (is (= 16 (alength decoded)))
+    (is
+      (= [0x00 0xff 0x10 0xa0] (map #(bit-and 0xff %) (take 4 decoded)))
+      "hex pairs decode to key bytes, not characters")
+    (is
+      (= 16 (alength ^bytes (#'config/parse-session-key "raw-16-char-key!")))
+      "the raw 16-char spelling still works byte-for-byte")))

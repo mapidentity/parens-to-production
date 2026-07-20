@@ -55,12 +55,17 @@ DATABASE_URI="datomic:sql://myapp?jdbc:postgresql://localhost:5432/datomic?user=
 ANALYTICS_DATABASE_URI="datomic:sql://myapp-analytics?jdbc:postgresql://localhost:5432/datomic?user=datomic&password=datomic"
 BASE_URL=https://myapp.example.com
 ADMIN_EMAIL=you@example.com
-# Exactly 16 bytes (AES-128):     openssl rand -hex 8
-SESSION_KEY=changeme16bytes!
+# The AES-128 session key: 32 hex chars, decoded to the 16 key bytes —
+# full 128-bit entropy. Generate with:  openssl rand -hex 16
+SESSION_KEY=changeme-openssl-rand-hex-16
 # At least 32 bytes (HMAC-SHA256): openssl rand -hex 32
-SIGNING_KEY=changeme-with-at-least-32-bytes-of-entropy
+SIGNING_KEY=changeme-openssl-rand-hex-32
+# Both placeholders FAIL the boot on purpose (wrong length): a box that
+# never generated its keys must refuse to start, not run guessable.
 ,,,
 ```
+
+Two details of those key lines carry more weight than their size suggests. The session key is spelled as 32 hex characters and *decoded* to its 16 bytes ([`parse-session-key`](05-web-server.md), which the config grew for exactly this reason) -- the obvious-looking alternative, sixteen characters used byte-for-byte, quietly halves the key: 16 *hex* characters carry 64 bits of entropy into a 128-bit cipher, and nothing would ever complain. And the placeholders are the wrong length *on purpose*: a template that boots unchanged is a guessable key in production, so this one refuses, with the same named-refusal courtesy as every other missing variable.
 
 That file is the box's secret store: one file, owned by root, mode `0600`, handed to exactly one process by systemd's `EnvironmentFile=`. A secrets manager is a fleet's problem; a single box's problem is file permissions, and pretending otherwise would be machinery without a threat model to justify it.
 
@@ -85,7 +90,12 @@ Provisioning is three scripts that ship inside the Datomic Pro distribution (`bi
 
 ```
 protocol=sql
-host=localhost
+# 127.0.0.1, NOT localhost: `host=` is both the bind address and the
+# address the transactor WRITES INTO STORAGE for peers to find it. On a
+# dual-stack box a peer resolving `localhost` may try ::1 first while the
+# transactor listens on IPv4 — and the peer hangs forever with no error.
+# The failover lab (ops/lab/) hit exactly this; pin the literal.
+host=127.0.0.1
 port=4334
 sql-url=jdbc:postgresql://localhost:5432/datomic
 sql-user=datomic
@@ -93,6 +103,8 @@ sql-password=datomic
 sql-driver-class=org.postgresql.Driver
 ,,,
 ```
+
+That `host=` comment is the file's one landmine, and it is worth the capitals: the value is not just where the transactor listens, it is the address the transactor *advertises through storage*, the one every peer will dial. `localhost` costs nothing on an IPv4-only machine and hangs the peer forever -- no error, no timeout it will admit to -- on a dual-stack one, where the peer's resolver tries `::1` first. [The failover lab](41-beyond-one-box.md) lost real time to exactly this before pinning the literal, which is why the committed file spells the lesson out rather than trusting the next box to be configured like the last.
 
 Two facts about this topology do a lot of quiet work. First, the version handshake: the peer library in `deps.edn` and the transactor distribution must match (both `1.0.7491` here) -- a version-skewed pair is the classic first-boot failure, and pinning both in committed files is the whole defense. Second, *both* application databases live in this one storage. `myapp` and `myapp-analytics` are two databases to the peer but two key prefixes to the shelf, served by the same transactor -- which is the moment [the admin chapter's](28-admin-dashboard.md) "zero new infrastructure" claim for the analytics split stops being a promise and becomes a line in a properties file.
 

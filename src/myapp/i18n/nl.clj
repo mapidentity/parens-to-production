@@ -95,6 +95,9 @@
    :upload/error-too-many-pixels "Die afbeelding heeft te veel pixels."
    :upload/error-rate-limited "Je voegt te snel foto's toe. Wacht even en probeer opnieuw."
    :upload/error-busy "We verwerken op dit moment veel foto's. Probeer het zo weer."
+
+   ;; Live presence (het viewers-eiland; %s is de live-telling)
+   :presence/looking "👀 %s mensen kijken nu mee"
    :recipe/note-label "Wat is er veranderd? (optioneel)"
    :recipe/note-placeholder "bijv. Zout gehalveerd — het was te veel"
    :recipe/preview-title "Voorvertoning"

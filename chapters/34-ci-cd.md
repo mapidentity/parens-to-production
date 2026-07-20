@@ -507,50 +507,87 @@ The deployment itself is straightforward:
 
 1. **Static files** are copied via `scp` from `myapp/static/` -- the *built* tree that `clojure -T:build assets` produced and `verify-assets` just signed off on -- to the directory the reverse proxy serves: `/mnt/data/static`, which is the production Caddyfile's `root` ([Going Live](35-going-live.md) closes that loop). That tree contains the content-hashed stylesheet and ESM modules, the version-pinned `idiomorph-0.7.4.min.js` (and its sourcemap), the passed-through fonts and SVGs, and `asset-manifest.edn`. The manifest must travel with the assets: the running application reads it at boot to map each logical asset name to its hashed URL and SRI token, so deploying the hashed files without the manifest would leave the app unable to resolve them.
 
-2. **The uberjar** is copied to `/tmp/` on the server, then a deploy script swaps it into place and restarts the application: stop the running process, move the new JAR into position, start the new process, and roll back to the previous JAR if the new one does not come up healthy. It is a brief hard restart, a few seconds of downtime instead of zero-downtime, and the script below names that cost rather than hiding it.
+2. **The uberjar** is copied to `/tmp/` on the server, and a deploy script does the rest -- treating the jar and the manifest the previous step shipped as *one release*: snapshot the current pair, install the new assets additively, swap the jar, and refuse to call any of it deployed until a real smoke passes, restoring jar *and* manifest together on any failure. It is a brief hard restart, a few seconds of downtime instead of zero-downtime, and the script below names that cost rather than hiding it.
 
 That script (`/etc/scripts/deploy-myapp.sh`) is the single highest-stakes line in the whole pipeline -- the one that actually touches production -- so it is worth seeing rather than describing. It is committed at `ops/deploy-myapp.sh`, alongside the rest of the box's artifacts ([Going Live](35-going-live.md) assembles them):
 
 ```bash
 #!/usr/bin/env bash
-# /etc/scripts/deploy-myapp.sh — run on the app server, handed the freshly-uploaded jar.
+# /etc/scripts/deploy-myapp.sh <new-jar> <new-static-dir>
+#                            | --rollback
+#
+# A deploy is ONE coherent unit: the jar, and the asset-manifest its rendered
+# pages resolve against. Earlier these shipped separately — the static tree
+# (manifest included) was copied first and overwritten in place, so by the time
+# the jar swapped there was no old manifest left to restore. Rolling the jar
+# back then paired OLD code with the NEWER manifest, 404-ing or mis-serving the
+# CSS/JS: the rollback, the thing you reach for while panicking, made it worse.
+,,,
 set -euo pipefail
 
-new_jar="$1"
-target=/opt/myapp/myapp.jar
-health=http://127.0.0.1:3000/health   # the app's own readiness endpoint
+# Paths are overridable so the deploy logic is drillable off a real box.
+root="${MYAPP_ROOT:-/opt/myapp}"
+static="${MYAPP_STATIC:-/mnt/data/static}"
+base="${MYAPP_HEALTH_BASE:-http://127.0.0.1:3000}"
+target="$root/myapp.jar"
+manifest="$static/asset-manifest.edn"
+# In a drill, systemctl is stubbed on PATH; on the box it needs sudo.
+sc="${MYAPP_SYSTEMCTL:-sudo systemctl}"
 
-# Refuse a missing or truncated upload before we stop anything.
-[ -s "$new_jar" ] || { echo "no jar at $new_jar" >&2; exit 1; }
+smoke() {
+  # 1. The app answers its own readiness endpoint (both DB connections).
+  ,,,
+  # 2. The home page actually RENDERS. A jar that boots and reads the DB but
+  #    throws 500 on a real render passes /health and fails here.
+  curl -fsS "$base/" >/dev/null 2>&1 || { echo "smoke: home page did not render" >&2; return 1; }
+  # 3. Every hashed asset the LIVE manifest points at is present on disk — the
+  #    exact failure a jar/manifest mismatch produces, caught before users see it.
+  ,,,
+}
 
-cp -f "$target" "$target.prev" 2>/dev/null || true  # keep the last-good jar to roll back to
+roll_back() {
+  echo "rolling back to the previous jar + manifest" >&2
+  [ -s "$target.prev" ] && cp -f "$target.prev" "$target"
+  [ -f "$manifest.prev" ] && cp -f "$manifest.prev" "$manifest"
+  restart
+}
 
-sudo systemctl stop myapp             # the brief outage window opens here
-mv -f "$new_jar" "$target"            # service is stopped, so the swap need not be atomic
-sudo systemctl start myapp            # spawns the process; does NOT wait for it to serve
+# Single-flight: two overlapping deploys race on target/.prev and the manifest
+# snapshot, and can leave .prev pointing at a bad jar — a poisoned rollback.
+mkdir -p "$root"
+exec 9>"$root/.deploy.lock"
+flock -n 9 || { echo "another deploy is already in progress" >&2; exit 1; }
+,,,
+# 1. Snapshot the CURRENT release (jar + manifest) before anything changes.
+cp -f "$target" "$target.prev" 2>/dev/null || true
+cp -f "$manifest" "$manifest.prev" 2>/dev/null || true
 
-# `systemctl start` returns the instant the process is spawned, not when the JVM
-# is answering requests. Poll the real health endpoint until it returns 200,
-# giving the app up to 30s to bind the port and finish booting.
-for _ in $(seq 1 30); do
-  if curl -fsS "$health" >/dev/null 2>&1; then
-    exit 0                            # the app answered — the deploy succeeded
-  fi
-  sleep 1
-done
+# 2. Install new assets additively (old hashes stay for in-flight pages and for
+#    rollback); this also lands the new manifest, matched to the new jar.
+mkdir -p "$static"
+cp -a "$new_static/." "$static/"
 
-# No healthy response in the window: the new jar booted and died (bad config,
-# schema mismatch, port clash) or never came up. Restore the previous jar,
-# restart, and fail the deploy loudly rather than leaving a crash-loop behind.
-echo "myapp did not become healthy — rolling back to previous jar" >&2
-[ -s "$target.prev" ] && mv -f "$target.prev" "$target"
-sudo systemctl restart myapp
-exit 1
+# 3. Swap the jar (service stopped, so the swap need not be atomic) and start.
+$sc stop myapp
+mv -f "$new_jar" "$target"
+$sc start myapp
+
+# 4. Gate on the full smoke, not just a spawned process.
+if smoke; then
+  echo "deployed: $(basename "$new_jar") + assets, smoke passed"
+  exit 0
+fi
+
+echo "new build failed the smoke — rolling back" >&2
+roll_back
+,,,
 ```
 
-It is deliberately small: the `systemd` unit owns restart-on-failure, logging, and the JVM flags, so the script's only job is the swap and the check that the swap actually worked. Because the service is stopped during the swap, the `mv` need not be atomic: nothing is serving that could observe a half-written file. Two points to state plainly. First, this is **not** zero-downtime: `stop` → `mv` → `start` is a hard restart, so requests in flight during the swap would be dropped and the site is unreachable for the second or two the JVM takes to boot. True zero-downtime (a second app node drained behind the proxy, or a blue-green pair) is the horizontal-scale work the afterword flags as out of scope; for a single-node SaaS a few seconds of off-hours restart is usually an acceptable trade -- named rather than hidden, and then softened as far as one node allows in [the restart-window section below](#the-restart-window-softened).
+The `systemd` unit still owns restart-on-failure, logging, and the JVM flags; the script owns the swap and the *proof* that the swap worked. Because the service is stopped during the jar swap, the `mv` need not be atomic: nothing is serving that could observe a half-written file. Three decisions deserve to be stated plainly. First, this is **not** zero-downtime: `stop` → `mv` → `start` is a hard restart, so requests in flight during the swap would be dropped and the site is unreachable for the second or two the JVM takes to boot. True zero-downtime is exactly what [the pair deploy](36-minimal-downtime.md) buys later; for a single-node SaaS a few seconds of off-hours restart is usually an acceptable trade -- named rather than hidden, and then softened as far as one node allows in [the restart-window section below](#the-restart-window-softened).
 
-Second, and this is the subtler trap the script exists to close: `systemctl start` returns the instant the process is *spawned*, well before the application is *serving*. A jar that boots and then dies three seconds later -- a bad config value, a schema mismatch, a port already bound -- would sail straight past a bare `systemctl is-active` check: the unit reads `active` for that instant, the deploy reports green, and the crash-loop surfaces only as a silent outage under the unit's own restart-on-failure. So the script does not ask whether the process spawned. It polls the app's own `/health` endpoint (the same endpoint the e2e server waits on in [the end-to-end-testing chapter](27-e2e-testing.md)) until it answers `200`, and only a real response counts. No healthy answer inside the 30-second window means the deploy failed: restore the previous jar (kept as `myapp.jar.prev`), restart, and exit non-zero. "The deploy succeeded" is thereby defined as *the service answered a request*, not merely *the process started*. The `deploy` user is granted exactly three passwordless `sudo` rights -- `/usr/bin/systemctl stop myapp`, `start myapp`, and `restart myapp`, the third existing only for the rollback line -- and nothing else; the health poll is an ordinary unprivileged HTTP request, so it needs no privilege at all.
+Second, the script's opening comment records a scar, not a design goal. The first version of this script moved only the jar and kept only the jar's `.prev` -- while step 1 had already overwritten the static tree, manifest included. A failed deploy would then "roll back" old code *under the new manifest*, and the pages it rendered pointed at hashed asset names it never built: the rollback made things worse, at the exact moment an operator was trusting it. Hence the shape the script has now: the current jar *and* manifest are snapshotted together before anything changes, new assets are installed *additively* (content-hashed files never collide, old hashes stay for in-flight pages, [a GC timer](46-watching-the-watchers.md) reaps them later), and `roll_back` restores the pair. The `flock` above it closes the remaining race: two overlapping deploys would fight over `.prev` and could leave it pointing at a bad jar -- a poisoned rollback -- so a second deploy refuses to start instead.
+
+Third, the subtler trap: `systemctl start` returns the instant the process is *spawned*, well before the application is *serving*. A jar that boots and then dies three seconds later -- a bad config value, a schema mismatch, a port already bound -- would sail straight past a bare `systemctl is-active` check: the unit reads `active` for that instant, the deploy reports green, and the crash-loop surfaces only as a silent outage under the unit's own restart-on-failure. So the script does not ask whether the process spawned; `smoke` polls the app's own `/health` endpoint (the same endpoint the e2e server waits on in [the end-to-end-testing chapter](27-e2e-testing.md)) for up to thirty seconds -- and then keeps going, because "healthy" is still not "working": it demands a real render of the home page (a jar that boots but 500s on every page passes `/health`), and it checks that every hashed asset the live manifest references exists on disk, which is precisely the failure a jar/manifest mismatch produces. "The deploy succeeded" is thereby defined as *the service answered, rendered, and can resolve its own assets*, not merely *the process started*. No pass inside the window means restore the pair, restart, and exit non-zero. The `deploy` user is granted exactly three passwordless `sudo` rights -- `/usr/bin/systemctl stop myapp`, `start myapp`, and `restart myapp` -- and nothing else; the smoke is ordinary unprivileged HTTP, so it needs no privilege at all.
 
 ### The restart window, softened
 

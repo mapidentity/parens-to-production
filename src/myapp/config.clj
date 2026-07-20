@@ -41,6 +41,24 @@
         {:profile profile
          :var var-name}))))
 
+(defn- parse-session-key
+  "The two spellings of SESSION_KEY, disambiguated by length.
+
+  32 hex characters decode to the 16 AES-128 key bytes — what
+  `openssl rand -hex 16` prints, and the spelling to prefer: the full 128
+  bits of entropy survive the trip through a text env file. A raw
+  16-character string is used byte-for-byte (ISO-8859-1) — it satisfies
+  Ring's length assertion but carries only as much entropy as its
+  characters do (16 hex chars: 64 bits — half the strength the cipher was
+  chosen for). The lengths cannot collide: raw is 16 chars, hex is 32."
+  ^bytes [^String k]
+  (if (re-matches #"[0-9a-fA-F]{32}" k)
+    (let [out (byte-array 16)]
+      (dotimes [i 16]
+        (aset out i (unchecked-byte (Integer/parseInt (subs k (* 2 i) (+ 2 (* 2 i))) 16))))
+      out)
+    (.getBytes k "ISO-8859-1")))
+
 (defn- require-session-key-length!
   "Refuse a session key that is not exactly 16 bytes.
 
@@ -88,7 +106,7 @@
       (update :session-key
               (fn [^String k]
                 (require-session-key-length!
-                  (or (when k (.getBytes k "ISO-8859-1"))
+                  (or (when k (parse-session-key k))
                       (do (require-prod-key! profile "SESSION_KEY")
                           (println "⚠️  Generating random session key (dev mode)")
                           (println "⚠️  Sessions will not survive server restart")
