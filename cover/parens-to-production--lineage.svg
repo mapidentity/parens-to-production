@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1800" width="1200" height="1800">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="30%" r="90%">
+      <stop offset="0%" stop-color="#17233d"/>
+      <stop offset="55%" stop-color="#101a2f"/>
+      <stop offset="100%" stop-color="#0b1220"/>
+    </radialGradient>
+    <radialGradient id="cur" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="1800" fill="url(#bg)"/>
+  <rect x="84" y="84" width="1032" height="1632" fill="none" stroke="#334155" stroke-width="1.5"/>
+
+  <!-- title, framed by heavy parens -->
+  <g fill="none" stroke="#4f46e5" stroke-width="14" stroke-linecap="round">
+    <path d="M 300 372 C 214 470, 214 640, 300 738"/>
+    <path d="M 900 372 C 986 470, 986 640, 900 738"/>
+  </g>
+  <text x="600" y="512" text-anchor="middle"
+        font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="800"
+        font-size="104" letter-spacing="0.5" fill="#fafaf9">Parens to</text>
+  <text x="600" y="636" text-anchor="middle"
+        font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="800"
+        font-size="104" letter-spacing="0.5" fill="#fafaf9">Production</text>
+
+  <!-- subtitle -->
+  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="400"
+     font-size="29" letter-spacing="0.4" fill="#cbd5e1" text-anchor="middle">
+    <text x="600" y="812">A server-rendered, framework-free Clojure + Datomic</text>
+    <text x="600" y="856">SaaS &#8212; built, operated, and defended on one box you own.</text>
+  </g>
+
+  <!-- the lineage: a fork-and-merge version DAG climbing to the current one -->
+  <g stroke="#5b57e6" stroke-width="3.2" fill="none" opacity="0.95">
+    <!-- fork from the origin -->
+    <line x1="600" y1="1500" x2="505" y2="1400"/>
+    <line x1="600" y1="1500" x2="695" y2="1400"/>
+    <line x1="505" y1="1400" x2="505" y2="1290"/>
+    <line x1="695" y1="1400" x2="695" y2="1290"/>
+    <!-- merge back to trunk -->
+    <line x1="505" y1="1290" x2="600" y2="1180"/>
+    <line x1="695" y1="1290" x2="600" y2="1180"/>
+    <line x1="600" y1="1180" x2="600" y2="1070"/>
+    <!-- up to the current version -->
+    <line x1="600" y1="1070" x2="600" y2="964"/>
+  </g>
+
+  <!-- nodes -->
+  <g fill="#101a2f" stroke="#6366f1" stroke-width="3.4">
+    <circle cx="600" cy="1500" r="15"/>
+    <circle cx="505" cy="1400" r="15"/>
+    <circle cx="695" cy="1400" r="15"/>
+    <circle cx="505" cy="1290" r="15"/>
+    <circle cx="695" cy="1290" r="15"/>
+    <circle cx="600" cy="1180" r="15"/>
+    <circle cx="600" cy="1070" r="15"/>
+  </g>
+
+  <!-- the current version: amber, glowing, arrowing up toward production -->
+  <circle cx="600" cy="950" r="60" fill="url(#cur)"/>
+  <circle cx="600" cy="950" r="16" fill="#f59e0b" stroke="#f59e0b"/>
+  <g stroke="#d97706" stroke-width="3" fill="none" stroke-linecap="round">
+    <line x1="600" y1="922" x2="600" y2="892" stroke-dasharray="2 9"/>
+    <path d="M 588 902 L 600 886 L 612 902"/>
+  </g>
+
+  <!-- author -->
+  <line x1="558" y1="1690" x2="642" y2="1690" stroke="#d97706" stroke-width="2.5"/>
+  <text x="600" y="1666" text-anchor="middle"
+        font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="700"
+        font-size="40" letter-spacing="7" fill="#fafaf9">P. de Kruif</text>
+</svg>
