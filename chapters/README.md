@@ -61,7 +61,7 @@ be read alongside a running copy of what it describes. Two chapters in, that
 invitation should be concrete, so here is the whole on-ramp:
 
 ```bash
-git clone <the companion repo>        # the repo this book's code lives in
+git clone https://github.com/mapidentity/parens-to-production
 code parens-to-production             # open in VS Code, then "Reopen in Container"
 # ...the devcontainer builds once (JDK, Node, Caddy, Mailpit, TLS certs), then
 # start a REPL and bring the system up:

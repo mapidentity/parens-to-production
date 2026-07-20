@@ -16,6 +16,7 @@ BACKUP_DIR="${BACKUP_DIR:-/var/backups/myapp}"
 BACKUP_URI="${BACKUP_URI:-file:$BACKUP_DIR}"
 DATOMIC="${DATOMIC_HOME:-/opt/datomic}/bin/datomic"
 JAR="${MYAPP_JAR:-/opt/myapp/myapp.jar}"
+MANIFEST="$BACKUP_DIR/backup-manifest.jsonl"
 
 # Scratch storage the restore lands in — NEVER production. A dedicated
 # throwaway URI (a scratch PostgreSQL, ch.39). Refuse to run without it, so a
@@ -35,16 +36,25 @@ echo "restoring $BACKUP_URI/myapp -> $VERIFY_SCRATCH_URI"
 # are present AND the history/time axis crossed the backup boundary — the one
 # property this versioning product is actually about (ch.39). Non-zero on any
 # miss so the timer flips to failed.
-java -cp "$JAR" clojure.main -e "
+basis_t=$(java -cp "$JAR" clojure.main -e "
   (require '[datomic.api :as d])
   (let [conn (d/connect \"$VERIFY_SCRATCH_URI\")
         db   (d/db conn)
         n    (count (d/q '[:find ?e :where [?e :recipe/id]] db))
         hist (count (d/q '[:find ?tx :where [?e :recipe/title _ ?tx]] (d/history db)))]
-    (when (zero? n)    (println \"FAIL: no recipes restored\") (System/exit 2))
-    (when (zero? hist) (println \"FAIL: history empty — time axis lost\") (System/exit 3))
-    (println (format \"RESULT recipes: %d history-txs: %d basis-t: %d\" n hist (d/basis-t db)))
+    (when (zero? n)    (binding [*out* *err*] (println \"FAIL: no recipes restored\")) (System/exit 2))
+    (when (zero? hist) (binding [*out* *err*] (println \"FAIL: history empty — time axis lost\")) (System/exit 3))
+    (binding [*out* *err*] (println (format \"RESULT recipes: %d history-txs: %d basis-t: %d\" n hist (d/basis-t db))))
+    (print (d/basis-t db))
     (System/exit 0))
-" || fail "restored database did not verify (empty, or history lost)"
+") || fail "restored database did not verify (empty, or history lost)"
 
-echo "backup-verify PASS at $(date -Is)"
+# Stamp the verification into the same manifest the backup writes, so "when was
+# a backup last PROVEN restorable, and to what basis-t" is a field you can read
+# — the drill's result outlives its log line.
+if [ -d "$BACKUP_DIR" ]; then
+  printf '{"verified_at":"%s","epoch":%s,"verdict":"PASS","restored_basis_t":%s}\n' \
+    "$(date -Is)" "$(date +%s)" "${basis_t:-null}" >> "$MANIFEST"
+fi
+
+echo "backup-verify PASS at $(date -Is) (restored basis-t ${basis_t:-?})"

@@ -340,11 +340,19 @@
 
 (def ^:private max-edit-distance
   "Ceiling on the Myers edit distance D before we stop and emit a coarse diff.
-  Bounds the trace's time (O(D*(n+m))) and heap (O(D^2)) against a pair that
-  shares almost nothing. A real recipe edit's D is in the dozens; this is
-  generous headroom above any genuine change, reached only by antagonistic
-  input, and even the fields it guards are capped at ~20k chars by `conform`."
-  4000)
+  Bounds the trace against a pair that shares almost nothing. Be precise about
+  the bound, since the code is: the trace keeps one frontier snapshot per `d`,
+  and each snapshot is a full-width `long-array` (2*ceiling+1), so the heap is
+  O(D * ceiling), NOT the O(D^2) a snapshot trimmed to its live [-d, d] width
+  would give (git's own diff goes further, to the O(n) linear-space refinement;
+  this does not). At this ceiling the pathological peak is about 36 MB
+  (1500 * 3001 longs) -- bounded, and small enough that a handful of concurrent
+  antagonistic diffs on this public endpoint cannot OOM the box. A real recipe
+  edit's D is in the dozens, so its trace is kilobytes; the ceiling is generous
+  headroom above any genuine change (the fields it guards are themselves capped
+  at ~20k chars by `conform`), reached only by a near-total rewrite whose
+  line-level diff would be noise anyway."
+  1500)
 
 (defn- myers-trace
   "Run the Myers greedy search and return its per-`d` frontier snapshots.

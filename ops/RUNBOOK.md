@@ -129,8 +129,10 @@ file copy: `rsync` the backup's `uploads/` tree back onto the uploads root
 the grace-window argument in [ch.49](../chapters/49-file-storage.md)). If the backup target is
 off-box (`BACKUP_URI=s3://…`, as production should be — the local disk shares
 the failure domain you are recovering from), the DB restores from there and
-the uploads/config come back with `aws s3 sync "$BACKUP_URI/uploads/"
-"$UPLOADS_ROOT/"` — the same channel the nightly backup pushed them out on.
+the config + uploads come back through the same off-box file tool the nightly
+backup used (`BACKUP_FILES_SYNC`) run in reverse — `aws s3 sync`, `rclone`,
+`restic`, whatever you set. Check `backup-manifest.jsonl` for the `basis_t` and
+`offbox_files` of the copy you are restoring before you trust it.
 
 ## Roll back a bad deploy
 

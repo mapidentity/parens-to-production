@@ -45,18 +45,28 @@ for path in / /mnt/data "$BACKUP_DIR" /var/log/myapp; do
   { [ -n "$usage" ] && [ "$usage" -lt 90 ]; } || fail "filesystem for $path at ${usage:-?}% — reclaim space"
 done
 
-# 4. The backup actually ran recently. A backup that silently stopped
-#    advancing is Schrödinger's backup — green until the night you need it.
-#    The newest file under BACKUP_DIR must be younger than 25h (nightly +
-#    slack); an empty dir means no backup has ever completed.
-if [ -d "$BACKUP_DIR" ]; then
-  newest=$(find "$BACKUP_DIR" -type f -printf '%T@\n' 2>/dev/null | sort -n | tail -1)
-  if [ -n "$newest" ]; then
-    age=$(( $(date +%s) - ${newest%.*} ))
-    [ "$age" -lt 90000 ] || fail "newest backup is $((age / 3600))h old — the nightly backup has stopped"
-  else
-    fail "backup dir $BACKUP_DIR is empty — no backup has ever completed"
-  fi
+# 4. The backup actually ran and SUCCEEDED recently — read the manifest, not a
+#    file mtime. A file-mtime proxy can't tell a good backup from a half-written
+#    failure, and it doesn't even see the databases when backup-db writes them
+#    off-box; the manifest records the truth of the last run. Last record must
+#    be status=ok, younger than 25h, and (on an off-box target) not a failed
+#    off-box file copy. An absent manifest means no backup ever completed.
+MANIFEST="$BACKUP_DIR/backup-manifest.jsonl"
+if [ -f "$MANIFEST" ]; then
+  # The manifest interleaves nightly BACKUP records (carry "status") with
+  # weekly VERIFY records (carry "verdict"); select the last backup one, so a
+  # verify that ran more recently than the backup can't read as a missing status.
+  last=$(grep '"status":' "$MANIFEST" | tail -n1)
+  [ -n "$last" ] || fail "backup manifest has no backup record yet — has the nightly backup ever completed?"
+  st=$(printf '%s' "$last" | sed -n 's/.*"status":"\([a-z]*\)".*/\1/p')
+  ep=$(printf '%s' "$last" | sed -n 's/.*"epoch":\([0-9]*\).*/\1/p')
+  ob=$(printf '%s' "$last" | sed -n 's/.*"offbox_files":"\([a-z]*\)".*/\1/p')
+  [ "$st" = "ok" ] || fail "last backup record is status=${st:-?} — the nightly backup failed (see $MANIFEST)"
+  age=$(( $(date +%s) - ${ep:-0} ))
+  [ "$age" -lt 90000 ] || fail "last successful backup is $((age / 3600))h old — the nightly backup has stopped"
+  [ "$ob" != "failed" ] || fail "backup off-box file copy FAILED — config/photos are not off the box (see $MANIFEST)"
+elif [ -d "$BACKUP_DIR" ]; then
+  fail "no backup manifest at $MANIFEST — has the nightly backup ever completed?"
 fi
 
 # All checks passed. Ping the external dead-man's-switch (healthchecks.io,
