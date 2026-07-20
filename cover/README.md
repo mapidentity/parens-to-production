@@ -13,7 +13,7 @@ indigo/amber the app and the mdBook site use.
 - **`parens-to-production--monolith.*`** — **the cover.** The title as one
   justified mass (both words tracked to a common measure), held inside a pair of
   parentheses (the Lisp pun made structural) centered on the title's optical
-  middle, crowned by the fork-mark, footed by `;; drilled or not claimed`. Clean,
+  middle, crowned by the fork-mark, footed by `;; verified, not promised`. Clean,
   austere, strongest at thumbnail.
 
 Both are self-contained SVG (system fonts, no external refs). For print, set a

@@ -9,7 +9,6 @@
 
   <rect width="1200" height="1800" fill="url(#bg)"/>
 
-
   <!-- the one box you own: a restrained hairline frame -->
   <rect x="84" y="84" width="1032" height="1632" fill="none" stroke="#334155" stroke-width="1.5"/>
 
@@ -42,22 +41,23 @@
         font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="800"
         font-size="108" fill="#f59e0b">PRODUCTION</text>
 
-  <!-- subtitle -->
+  <!-- subtitle: the distinctive how, landing on the no-lock-in crux; the stack
+       set in bright white so amber stays PRODUCTION's alone -->
   <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="400"
      font-size="30" letter-spacing="0.4" fill="#cbd5e1" text-anchor="middle">
-    <text x="600" y="1214">A server-rendered, framework-free</text>
-    <text x="600" y="1260">Clojure + Datomic SaaS &#8212; built, operated,</text>
-    <text x="600" y="1306">and defended on one box you own.</text>
+    <text x="600" y="1214">A framework-free, server-rendered</text>
+    <text x="600" y="1260" fill="#fafaf9" font-weight="700">Clojure + Datomic SaaS,</text>
+    <text x="600" y="1306">on one box, tied to no cloud.</text>
   </g>
 
   <!-- author -->
-  <line x1="558" y1="1420" x2="642" y2="1420" stroke="#d97706" stroke-width="2.5"/>
+  <line x1="558" y1="1400" x2="642" y2="1400" stroke="#d97706" stroke-width="2.5"/>
   <text x="600" y="1494" text-anchor="middle"
         font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="700"
         font-size="42" letter-spacing="7" fill="#fafaf9">P. de Kruif</text>
 
-  <!-- the thesis, in the book's own syntax -->
+  <!-- the book's method, in its own syntax -->
   <text x="600" y="1608" text-anchor="middle"
         font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-        font-size="26" letter-spacing="1.5" fill="#64748b">;; drilled or not claimed</text>
+        font-size="26" letter-spacing="1.5" fill="#64748b">;; verified, not promised</text>
 </svg>
