@@ -2,7 +2,7 @@
 
 Over the preceding chapters we have built a Clojure/Datomic SaaS piece by piece: strict compilation, server-rendered HTML, passwordless authentication, Datomic modeling, an asset pipeline, end-to-end tests, Lighthouse audits, and more. Each piece works on its own, but without a pipeline that ties them together, shipping is a manual checklist that grows longer with every feature. Forget one step and a broken build makes it to production. Forget two and your users notice.
 
-This final chapter wires everything into a single automated pipeline. Push to main, and the system formats, lints, builds the static assets and verifies their integrity, runs tests with coverage, executes end-to-end tests in a real browser, audits performance with Lighthouse, builds an uberjar, and deploys -- all without human intervention. That is the goal.
+This chapter wires everything into a single automated pipeline. Push to main, and the system formats, lints, builds the static assets and verifies their integrity, runs tests with coverage, executes end-to-end tests in a real browser, audits performance with Lighthouse, builds an uberjar, and deploys -- all without human intervention. That is the goal.
 
 > **A note on what is actually wired up in the companion repository.** The pipeline in this chapter is the *application* deployment pipeline -- the one you would run for the SaaS itself. The companion repository for this book runs a *different*, much smaller CI workflow: a single GitHub Actions job that builds these chapters with mdBook and publishes the result to GitHub Pages. The application pipeline below (uberjar, Tailwind, esbuild, asset verification, Caddy, SSH deploy) is taught here in full, but it is not the workflow that ships this book's prose. Where it matters (the asset-integrity gate especially), we will be explicit about whether a step runs continuously or as a local pre-deploy check. Treat the application pipeline as the design you would adopt the day you stand up your own forge runner; the asset-integrity gate is useful *today*, even run by hand before a deploy.
 
@@ -103,7 +103,7 @@ A few design choices worth explaining.
 
 **Debian Trixie as the base.** We need a recent enough base to support current versions of Java, Node, and Chromium. Debian is stable, well-understood, and produces reasonably small images.
 
-**Versions: pinned where it counts, latest where it helps.** The major pieces are pinned: Adoptium's Temurin 25 JDK, the zprint binary at 1.3.0, nvm at v0.40.3. Several tools track the latest release instead: the Clojure CLI (`releases/latest`), Babashka and clj-kondo (their `master` install scripts), Node (`nvm install --lts`), and the global npm tools (`@playwright/test`, `@lhci/cli`, `tailwindcss`). That is a freshness-versus-reproducibility trade: it keeps the toolchain current, at the cost of two builds months apart not being guaranteed bit-for-bit identical. The drift is narrower than that sounds, and the reason is layer caching. The workflow rebuilds the image on every push (the `Build CI image` step below), but Podman re-executes a `RUN` layer only when its instruction text or a preceding layer changes; a `curl ... releases/latest` line is not re-fetched on an unchanged Dockerfile, the cached layer is reused byte-for-byte. So the `latest`- and `master`-tracking tools are effectively frozen at whenever their layer was last built, and they move only when you bust the cache: edit that line, prune the cache, or build `--no-cache`. If you need the stronger guarantee, pin those too: exact versions on the npm installs, a fixed Clojure CLI version, tagged (not `master`) install scripts, and a digest-pinned base image. That pinning is also a *supply-chain* control, not only a reproducibility one: an unpinned `curl … | bash` from `master` runs whatever that script says the day the layer is built, and an unpinned base image ships whatever vulnerabilities have landed in it since you last looked. Digest-pin the base image, prefer tagged installers over `master`, and pair both with the dependency scan below, so a known-vulnerable transitive dependency fails the build rather than riding it to production.
+**Versions: pinned where it counts, latest where it helps.** The major pieces are pinned: Adoptium's Temurin 25 JDK, the zprint binary at 1.3.0, nvm at v0.40.3. Several tools track the latest release instead: the Clojure CLI (`releases/latest`), clj-kondo (its `master` install script), Node (`nvm install --lts`), and the global npm tools (`@playwright/test`, `@lhci/cli`, `tailwindcss`). That is a freshness-versus-reproducibility trade: it keeps the toolchain current, at the cost of two builds months apart not being guaranteed bit-for-bit identical. The drift is narrower than that sounds, and the reason is layer caching. The workflow rebuilds the image on every push (the `Build CI image` step below), but Podman re-executes a `RUN` layer only when its instruction text or a preceding layer changes; a `curl ... releases/latest` line is not re-fetched on an unchanged Dockerfile, the cached layer is reused byte-for-byte. So the `latest`- and `master`-tracking tools are effectively frozen at whenever their layer was last built, and they move only when you bust the cache: edit that line, prune the cache, or build `--no-cache`. If you need the stronger guarantee, pin those too: exact versions on the npm installs, a fixed Clojure CLI version, tagged (not `master`) install scripts, and a digest-pinned base image. That pinning is also a *supply-chain* control, not only a reproducibility one: an unpinned `curl … | bash` from `master` runs whatever that script says the day the layer is built, and an unpinned base image ships whatever vulnerabilities have landed in it since you last looked. Digest-pin the base image, prefer tagged installers over `master`, and pair both with the dependency scan below, so a known-vulnerable transitive dependency fails the build rather than riding it to production.
 
 **Playwright with Chromium.** The `playwright install --with-deps` command downloads Chromium and all its system dependencies (X11 libraries, fonts, etc.) into the container. The final `ln -s` creates a `/usr/local/bin/chromium` symlink so Lighthouse CI can find the browser without extra configuration.
 
@@ -482,21 +482,12 @@ The `Verify jar exists` step is a simple sanity check that runs on the host (not
 
 ### Conditional deployment
 
-```yaml
-- name: Deploy static files
-  if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-  env:
-    SSH_OPTS: -o StrictHostKeyChecking=no -i /root/.ssh/deploy_ed25519
-  run: |
-    scp -r $SSH_OPTS myapp/static/* deploy@$APP_HOST:/mnt/data/static/
+The single "one coherent unit" deploy step shown after the pipeline listing carries one guard the quality gates above do not -- a condition on the branch and the event:
 
-- name: Deploy app
-  if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-  env:
-    SSH_OPTS: -o StrictHostKeyChecking=no -i /root/.ssh/deploy_ed25519
-  run: |
-    scp $SSH_OPTS myapp/target/myapp.jar deploy@$APP_HOST:/tmp/myapp.jar
-    ssh $SSH_OPTS deploy@$APP_HOST '/etc/scripts/deploy-myapp.sh /tmp/myapp.jar'
+```yaml
+      - name: Deploy release (jar + assets, one coherent unit)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        ,,,
 ```
 
 Deployment only happens when two conditions are met: the branch is `main` and the event is a `push` (not a pull request). Pull requests run the full pipeline -- format, lint, test, build -- but stop short of deploying. This gives you confidence that a PR is ready to merge without actually touching production.
@@ -505,9 +496,9 @@ Deployment only happens when two conditions are met: the branch is `main` and th
 
 The deployment itself is straightforward:
 
-1. **Static files** are copied via `scp` from `myapp/static/` -- the *built* tree that `clojure -T:build assets` produced and `verify-assets` just signed off on -- to the directory the reverse proxy serves: `/mnt/data/static`, which is the production Caddyfile's `root` ([Going Live](35-going-live.md) closes that loop). That tree contains the content-hashed stylesheet and ESM modules, the version-pinned `idiomorph-0.7.4.min.js` (and its sourcemap), the passed-through fonts and SVGs, and `asset-manifest.edn`. The manifest must travel with the assets: the running application reads it at boot to map each logical asset name to its hashed URL and SRI token, so deploying the hashed files without the manifest would leave the app unable to resolve them.
+1. **Static files** are copied via `scp` from `myapp/static/` -- the *built* tree that `clojure -T:build assets` produced and `verify-assets` just signed off on -- to a *staging* directory on the box, not straight onto the live root. That tree contains the content-hashed stylesheet and ESM modules, the version-pinned `idiomorph-0.7.4.min.js` (and its sourcemap), the passed-through fonts and SVGs, and `asset-manifest.edn`. The manifest must travel with the assets: the running application reads it at boot to map each logical asset name to its hashed URL and SRI token, so deploying the hashed files without the manifest would leave the app unable to resolve them.
 
-2. **The uberjar** is copied to `/tmp/` on the server, and a deploy script does the rest -- treating the jar and the manifest the previous step shipped as *one release*: snapshot the current pair, install the new assets additively, swap the jar, and refuse to call any of it deployed until a real smoke passes, restoring jar *and* manifest together on any failure. It is a brief hard restart, a few seconds of downtime instead of zero-downtime, and the script below names that cost rather than hiding it.
+2. **The uberjar** is copied to the same staging directory, and a deploy script does the rest -- treating the jar and the manifest it shipped alongside as *one release*: snapshot the current pair, install the new assets additively onto the reverse-proxy root (`/mnt/data/static`, the production Caddyfile's `root`, [Going Live](35-going-live.md) closes that loop), swap the jar, and refuse to call any of it deployed until a real smoke passes, restoring jar *and* manifest together on any failure. It is a brief hard restart, a few seconds of downtime instead of zero-downtime, and the script below names that cost rather than hiding it.
 
 That script (`/etc/scripts/deploy-myapp.sh`) is the single highest-stakes line in the whole pipeline -- the one that actually touches production -- so it is worth seeing rather than describing. It is committed at `ops/deploy-myapp.sh`, alongside the rest of the box's artifacts ([Going Live](35-going-live.md) assembles them):
 
@@ -614,7 +605,7 @@ Having named the downtime, the honest next move is to spend the two smallest too
 
 **Failing well.** During `stop` → `mv` → `start`, the proxy's dials to `myapp:3000` are refused, and Caddy's default answer is a bare white `502 Bad Gateway` -- which reads as *broken*, not *busy*, and is the single most alarming thing a returning visitor can be shown for what is actually four seconds of scheduled restart. The Caddyfile closes that with its error handler:
 
-```
+```caddyfile
 handle_errors {
 	@upstream-down expression `{err.status_code} in [502, 503, 504]`
 	handle @upstream-down {

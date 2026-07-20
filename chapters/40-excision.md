@@ -7,10 +7,10 @@ This debt is the book's oldest. [Chapter 9](09-recipe-domain.md), having sold im
 Mechanically, excision is a transaction like any other, naming the entity whose past must go:
 
 ```clojure
-@(d/transact conn [{:db/excise eid}])
-;; Excision is performed by the transactor's indexing job; sync-excise
-;; blocks until it is visible.
-@(d/sync-excise conn (d/basis-t (:db-after result)))
+(let [result @(d/transact conn [{:db/excise eid}])]
+  ;; Excision is performed by the transactor's indexing job; sync-excise
+  ;; blocks until it is visible.
+  @(d/sync-excise conn (d/basis-t (:db-after result))))
 ```
 
 Two properties distinguish it from everything else in the book. It is the only write that touches *history* -- after it, `d/history`, `d/as-of`, every time-travel read this application is made of, behaves as if the entity's datoms never happened. And it is heavyweight by design: the actual removal runs inside the transactor's indexing machinery (hence `sync-excise`, the only "wait for it" in the book's Datomic usage), which is Datomic telling you this is a compliance procedure, not a delete button. Routine deletion remains [`delete!`](09-recipe-domain.md); excision is for the day someone has the *right* to be gone.
@@ -52,4 +52,4 @@ What remains afterward, named plainly: **references to the erased, from data tha
 
 ## The ledger, closed
 
-Chapter 9 made a wager it could not yet cover: that keeping everything would prove the right default *because* the exceptional case, unsaying, had a real mechanism when law demanded it. The mechanism is now drilled, its trap on dev storage is pinned, its residue is named, and its runbook composes with the backup shelf it must chase. The application remembers everything, can prove what it remembered, and can forget on demand. What is left is the question every one-box system eventually faces -- what happens when one box stops being enough. That is the last chapter's subject.
+Chapter 9 made a wager it could not yet cover: that keeping everything would prove the right default *because* the exceptional case, unsaying, had a real mechanism when law demanded it. The mechanism is now drilled, its trap on dev storage is pinned, its residue is named, and its runbook composes with the backup shelf it must chase. The application remembers everything, can prove what it remembered, and can forget on demand. What is left is the question every one-box system eventually faces -- what happens when one box stops being enough. That is the next chapter's subject.

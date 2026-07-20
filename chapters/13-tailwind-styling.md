@@ -122,7 +122,7 @@ The second is **responsive prefixes**. Any utility can be gated behind a breakpo
    (recipe-card locale r))]
 ```
 
-The bare `grid` stacks the cards in a single column; `sm:grid-cols-2` takes over once the viewport crosses the `sm` breakpoint. There is nothing new to learn per breakpoint: the same vocabulary, conditionally applied. The app spends the mechanism sparingly -- eight `sm:` gates in the whole source tree, at the places where phone and desktop differ: the recipe grids, the admin dashboard's stat tiles, wider gutters on the main column, and labels that appear only when there is room for them.
+The bare `grid` stacks the cards in a single column; `sm:grid-cols-2` takes over once the viewport crosses the `sm` breakpoint. There is nothing new to learn per breakpoint: the same vocabulary, conditionally applied. The app spends the mechanism sparingly -- nine `sm:` gates in the whole source tree, at the places where phone and desktop differ: the recipe grids, the admin dashboard's stat tiles, wider gutters on the main column, and labels that appear only when there is room for them.
 
 ## The dev stylesheet
 

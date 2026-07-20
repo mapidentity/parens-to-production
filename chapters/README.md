@@ -1,10 +1,11 @@
 # Parens to Production
 
-**A server-rendered, framework-free Clojure/Datomic SaaS — built, operated, and defended on one box you own.**
+**A server-rendered, framework-free Clojure/Datomic SaaS -- built, operated, and defended on one box you own.**
 
 A hands-on, chapter-by-chapter guide to building a production-grade SaaS
 application in Clojure and Datomic. From a reproducible development
-environment all the way to automated CI/CD deployment.
+environment through automated CI/CD deployment to operating, defending, and
+running the box for the long run.
 
 Each chapter is self-contained but builds on the last. Use the sidebar to
 navigate, or the arrow keys to move between chapters. Press **`s`** or click
@@ -46,12 +47,43 @@ the magnifier to search the full text.
   **runbook**
 - **Collaboration**: a fork's changes **proposed back** and resolved by a
   **three-way merge** (the common ancestor is a read), and **real-time
-  viewer presence** over Server-Sent Events — SSR is not the opposite of live
+  viewer presence** over Server-Sent Events -- SSR is not the opposite of live
 - **The Long Run**: the safety machinery **watching itself** (the guard
   nothing watched), a durable **job queue** whose storage is Datomic rather
   than a broker, **keyset pagination** that seeks the index the schema
   already carries, and a **content-addressed photo store** on the box's own
-  disk — bytes on disk, metadata in Datomic, no bucket required
+  disk -- bytes on disk, metadata in Datomic, no bucket required
+
+## Reading this both ways
+
+The prose and the application are one repository, and the book was written to
+be read alongside a running copy of what it describes. Two chapters in, that
+invitation should be concrete, so here is the whole on-ramp:
+
+```bash
+git clone <the companion repo>        # the repo this book's code lives in
+code parens-to-production             # open it in VS Code, then "Reopen in Container"
+# ...the devcontainer builds once (JDK, Node, Caddy, Mailpit, TLS certs), then:
+clojure -M:dev                        # a REPL; at its prompt:
+(start!)                              # server up on https://localhost — a real recipe app
+```
+
+That is the entire setup, and [the devcontainer chapter](03-devcontainer.md)
+is the one that earns it: everything above is checked in, so a fresh clone runs
+the same on every machine. You do not need to master that chapter to use its
+result -- open the container, start the REPL, and you have the live system this
+book takes apart. Read a chapter, then go change the thing it just built and
+watch what moves.
+
+One honest note on prerequisites, so the early chapters do not ambush you. The
+book assumes you can read Clojure and are at home with the infrastructure an
+application sits on -- containers, TLS, a reverse proxy -- which it treats as
+tools you already own rather than topics it teaches. If Docker or a devcontainer
+is new to you, spend an hour with the [VS Code dev containers
+guide](https://code.visualstudio.com/docs/devcontainers/containers) first; it
+will pay for itself by [chapter 3](03-devcontainer.md), the densest
+infrastructure stretch in the first half. The [primer](01-primer.md) names the
+steep chapters and how to read them.
 
 Start with [the primer](01-primer.md) for what we are building and why, or jump
 to any topic from the table of contents.

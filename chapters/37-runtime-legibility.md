@@ -8,7 +8,7 @@ Four questions, four small mechanisms -- an access log, a metrics endpoint, the 
 
 The first question costs one word. Caddy logs nothing by default -- a fact worth a raised eyebrow, since it means [the going-live box](35-going-live.md) initially could not answer "what requests arrived around the incident?" at all. In `ops/Caddyfile`:
 
-```
+```caddyfile
 	# Access log, to stderr and therefore journald: the answer to "what hit
 	# the box around the incident?" One JSON line per request; retention is
 	# journald's, like every other log on this machine.
@@ -17,7 +17,7 @@ The first question costs one word. Caddy logs nothing by default -- a fact worth
 
 One JSON line per request (method, URI, status, duration, remote address) into the same journald every other log on the machine already flows to. The proxy is the right place for it, not the app: Caddy sees *everything*, including static-asset traffic the JVM never touches and, crucially, the requests that arrive while the app is down -- the exact traffic an app-side request log goes blind to at the exact moment you are reconstructing an outage. The app's log stays what it became in [going live](35-going-live.md): warnings and errors, signal only.
 
-## The metrics endpoint is sixty lines
+## The metrics endpoint is a hundred and sixty lines
 
 The metrics *format* war is over and the text won: a Prometheus exposition is `name{label="value"} 1.0`, one sample per line. This book does not buy a client library for that: the whole of `myapp.web.metrics` is a `StringBuilder` and three sources. The JVM's, first: heap, GC, threads, straight from the `ManagementFactory` MXBeans. The request path's, second, folded in by one middleware sitting just inside [the panic belt](25-auth-email-flow.md):
 

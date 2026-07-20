@@ -126,7 +126,7 @@ A single tools.build task, `assets`, generates the entire served tree. It clears
           (swap! assets* assoc (str "js/" nm) url)
           (swap! sri assoc url (sri384 out)))))
     ;; 4. vendored lib: our own minify + sourcemap (upstream ships no map); version in
-    ;; filename (NOT content-hashed) so it survives app deploys; debuggable when needed.
+    ;; filename (NOT content-hashed) so it survives app deploys; debuggable on rare occasions.
     (let [idsrc (io/file asset-src "idiomorph-0.7.4.js")
           idmin (io/file asset-out "idiomorph-0.7.4.min.js")]
       (apply sh! (concat esbuild [(.getPath idsrc) "--minify" "--sourcemap"
@@ -380,12 +380,16 @@ myapp.lan {
     handle {
         reverse_proxy myapp:3000
     }
+
+    # handle_errors: a branded 503 maintenance page for the deploy window,
+    # added in the CI/CD chapter.
+    ,,,
 }
 ```
 
 **Caching tiers.** Content-hashed files (`styles.<hash>.css`, `dispatcher.<hash>.js`) get a one-year `immutable` lifetime -- the browser never revalidates, and a content change means a new filename. The vendored library gets the same immutable treatment because its version is pinned in the filename. Fonts, icons, and images -- which keep their plain names -- get a one-week TTL.
 
-**Long-lived security headers.** Caddy owns the request-invariant headers, applied to every response: HSTS (`Strict-Transport-Security`), `X-Content-Type-Options: nosniff`, `Referrer-Policy`, a restrictive `Permissions-Policy`, and the cross-origin protection pair `Cross-Origin-Opener-Policy` / `Cross-Origin-Resource-Policy` (both `same-origin`). It also strips the `Server` header. Two of these families earn a threat model in a chapter that justifies every CSP directive. HSTS (`max-age=31536000; includeSubDomains`) pins the origin to HTTPS for a year: once the browser has seen the header, an SSL-stripping attacker on the network can no longer downgrade a navigation to plain `http` and read or rewrite it in transit. The cross-origin pair closes two distinct cross-origin holes. `Cross-Origin-Opener-Policy: same-origin` severs the `window.opener` link, so a page we open (or one that opened us) cannot reach into our window and script it; `Cross-Origin-Resource-Policy: same-origin` tells the browser to refuse cross-origin attempts to embed our responses as resources. (This pair is not the same as cross-origin *isolation*: the `crossOriginIsolated` state that unlocks `SharedArrayBuffer` and high-resolution timers additionally requires `Cross-Origin-Embedder-Policy: require-corp`, which we do not set because we need none of what it unlocks.) These headers are static (they do not depend on the page being rendered), so the proxy is the right place for them.
+**Long-lived security headers.** Caddy owns the request-invariant headers, applied to every response: HSTS (`Strict-Transport-Security`), `X-Content-Type-Options: nosniff`, `Referrer-Policy`, a restrictive `Permissions-Policy`, and the cross-origin protection pair `Cross-Origin-Opener-Policy` / `Cross-Origin-Resource-Policy` (both `same-origin`). It also strips the `Server` header. Two of these families earn a threat model in a chapter that justifies every CSP directive. HSTS (`max-age=31536000; includeSubDomains`) pins the origin to HTTPS for a year: once the browser has seen the header, an SSL-stripping attacker on the network can no longer downgrade a navigation to plain `http` and read or rewrite it in transit. The cross-origin pair closes two distinct cross-origin holes. `Cross-Origin-Opener-Policy: same-origin` severs the `window.opener` link, so a cross-origin page we open (or one that opened us) is left holding no handle to our window. The same-origin policy already blocks it from scripting our page across origins; cutting the handle closes what that reference still enables -- redirecting our tab (tabnabbing), `postMessage` traffic, and the cross-window side-channel probes behind some XS-Leaks. `Cross-Origin-Resource-Policy: same-origin` tells the browser to refuse cross-origin attempts to embed our responses as resources. (This pair is not the same as cross-origin *isolation*: the `crossOriginIsolated` state that unlocks `SharedArrayBuffer` and high-resolution timers additionally requires `Cross-Origin-Embedder-Policy: require-corp`, which we do not set because we need none of what it unlocks.) These headers are static (they do not depend on the page being rendered), so the proxy is the right place for them.
 
 **Caddy does NOT set the Content-Security-Policy.** That is the one security header Caddy must stay out of. The CSP is per-document -- it embeds the hashes of the inline scripts the app emits -- so only the app can build it. The `@static file` matcher checks that a file exists on disk before serving it; everything else falls through to `reverse_proxy` and reaches the Clojure app, which attaches the CSP to its HTML responses.
 
@@ -461,7 +465,7 @@ That choice is worth defending, because both mechanisms are legitimate. A nonce 
 Reading it directive by directive:
 
 - **`default-src 'none'`** -- deny everything by default, then open the minimum.
-- **`script-src 'self' <sha256...>`** -- same-origin scripts (the modules, authorized further by SRI) plus the SHA-256 hash of every inline `<script>` the app can emit. Crucially there is **no `'unsafe-inline'`** for scripts. An injected `<script>` whose hash is not on the list simply does not run -- which is why the CSP would have blocked the stored XSS even if escaping had failed.
+- **`script-src 'self' <sha256...>`** -- same-origin scripts (the modules, authorized further by SRI) plus the SHA-256 hash of every inline `<script>` the app can emit. Crucially there is **no `'unsafe-inline'`** for scripts. An injected `<script>` whose hash is not on the list simply does not run -- which is why the CSP would have blocked the stored XSS even if escaping had failed. One caveat about `'self'` is worth naming: it authorizes *any* same-origin URL as a script, so it is only as strong as our control over what our own origin will serve with a script content-type. That surface grew when [uploads became a same-origin user-file store](49-file-storage.md), where a crafted file served back as `text/javascript` would satisfy `'self'`. Two things keep that door shut: Caddy's `X-Content-Type-Options: nosniff` stops the browser from re-reading a non-script response as executable, and libvips re-encodes every upload into an image served with an image content-type, so an uploaded blob never carries runnable JS. That is defense in depth around `'self'`, reasoned rather than drilled, not a hash-grade guarantee.
 - **`style-src 'self' 'unsafe-inline'`** -- this one is pragmatic. A truly strict `style-src` is unsolved across DOM-morphing front-ends (inline style attributes get rewritten during morphs), so this directive is the concession we make. We document it as such, and the residual risk it leaves is worth spelling out. `'unsafe-inline'` on styles permits CSS injection, which is not as harmless as it sounds: an attacker who can inject a `<style>` or a `style=` attribute can restyle the page for clickjacking or phishing. The textbook escalation from there, using attribute selectors plus `background: url(...)` to exfiltrate a hidden CSRF token one character at a time, needs a fetch to an attacker-observable origin; this policy's own `img-src 'self' data:` and `font-src 'self'` (under `default-src 'none'`) block that fetch, so the exfiltration channel is largely closed here even though the injection is not. And CSS injection cannot run script, since `script-src` carries no `'unsafe-inline'`, so its blast radius is meaningfully smaller than a script injection's, though not nothing. The escaping renderer is what keeps injected markup out in the first place; this concession is why that defense, not the style CSP, is what actually protects the page.
 - **`connect-src 'self'`** -- plus `ws: wss:` in dev for the hot-reload socket.
 - The rest: `img-src 'self' data:`, `font-src 'self'`, `object-src 'none'`, `base-uri 'none'`, `form-action 'self'`, `frame-ancestors 'none'`.
@@ -505,9 +509,9 @@ The macro records each script's path with `register-inline-script!`, and `csp-sc
 
 ```clojure
 (defn- csp-script-hashes
-  "sha256 CSP tokens for every inline <script> the app may emit (registered inline
-  assets + the import map JSON + the speculation-rules script). Recomputed each
-  call (cheap); in dev the inline content hot-reloads, so the policy self-heals."
+  "The sha256 CSP tokens for every inline <script> the app may emit (registered
+  inline assets + the import map JSON). Recomputed each call (cheap); in dev the
+  inline content hot-reloads, so the policy self-heals."
   []
   (-> (mapv (fn [p] (sha256-b64 (slurp (io/resource p)))) (sort @inline-scripts))
       (conj (sha256-b64 (importmap-json)))
@@ -534,7 +538,7 @@ These guarantees are pinned by regression tests in `test/myapp/web/security_test
 
 ```clojure
 (deftest output-escaping-prevents-stored-xss
-  (testing "user-controlled content is HTML-escaped by the shared layout"
+  (testing "plain text content is HTML-escaped by the shared layout"
     (let [payload "<img src=x onerror=alert(document.cookie)>"
           html (str (views/error-page :en payload))]
       (is (str/includes? html "&lt;img src=x onerror=alert(document.cookie)&gt;")

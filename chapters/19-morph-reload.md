@@ -349,10 +349,10 @@ Three message types, four behaviors -- because `reload` forks on `morphable`. (O
     <path d="M 465 172 H 508"/><path d="M 465 210 H 508"/>
   </g>
   <g font-size="12.5">
-    <text x="520" y="62" fill="#2a9d8f">morph &lt;body&gt; — page state kept</text>
-    <text x="520" y="100" fill="#e07840">full reload — scroll restored</text>
-    <text x="520" y="138" fill="#e07840">full reload — scroll restored</text>
-    <text x="520" y="176" fill="#4a7fb5">hot-swap the &lt;link&gt; — no reload</text>
+    <text x="520" y="62" fill="#2a9d8f">morph &lt;body&gt; -- page state kept</text>
+    <text x="520" y="100" fill="#e07840">full reload -- scroll restored</text>
+    <text x="520" y="138" fill="#e07840">full reload -- scroll restored</text>
+    <text x="520" y="176" fill="#4a7fb5">hot-swap the &lt;link&gt; -- no reload</text>
     <text x="520" y="214" fill="#c65353">stale-page warning stays up</text>
   </g>
 </svg>
@@ -379,6 +379,13 @@ function morphReload() {
             beforeNodeRemoved: function (node) {
               return !(node.nodeType === 1 && node.hasAttribute('data-myapp-overlay'));
             },
+            // A user-opened <details> reflects `open` onto the live node, but the
+            // server re-render has it closed -- idiomorph would strip `open` and
+            // collapse the panel. Veto that one attribute removal so an expanded
+            // <details> survives a view-edit morph.
+            beforeAttributeUpdated: function (attr, node, mutationType) {
+              return !(mutationType === 'remove' && attr === 'open' && node.tagName === 'DETAILS');
+            },
           } });
     })
     .catch(function () { window.location.reload(); });
@@ -388,7 +395,7 @@ function morphReload() {
 The key point is that this is *not* a new mechanism. `fetchAndMorph` is the app's production interaction layer ([the morph-dispatcher chapter](15-morph-dispatcher.md)): it fetches the current URL, parses the response, and uses idiomorph to morph the requested target in place, preserving form values, focus, and scroll. Dev hot-reload is just one more caller of it. A few options matter:
 
 - `target: 'body'` -- morph the whole page body, not just `<main>`. Why the widest target is the narrowest *correct* one is the decision below.
-- `morphCallbacks` with a `beforeNodeRemoved` veto -- refuses to remove any element carrying `data-myapp-overlay`, the mark every client-injected dev node wears. Also part of the decision below.
+- `morphCallbacks` with two vetoes -- `beforeNodeRemoved` refuses to remove any element carrying `data-myapp-overlay`, the mark every client-injected dev node wears; `beforeAttributeUpdated` refuses the one attribute change that would strip `open` off a user-expanded `<details>` and collapse it. Both are part of the decision below, and the second is what makes the "keeps open `<details>`" claim above true rather than aspirational.
 - `ignoreActiveValue: true` -- this one is mandatory. Without it, idiomorph would clobber the value of the field you are currently typing in. With it, your in-progress input survives the morph.
 - `focus: false` -- a hot reload should not steal focus.
 - The `.catch(...)` falls back to a full `window.location.reload()` if anything goes wrong, so a morph failure degrades to the safe behavior rather than leaving a half-updated page.

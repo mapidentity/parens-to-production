@@ -13,14 +13,21 @@
 What `backup-db` cannot carry is the second item, so the script carries it alongside -- with the consequence stated where the operator will read it:
 
 ```bash
-"$DATOMIC" backup-db "$DATABASE_URI" "file:$BACKUP_DIR/myapp"
-"$DATOMIC" backup-db "$ANALYTICS_DATABASE_URI" "file:$BACKUP_DIR/myapp-analytics"
+# The backup TARGET: file: on this box by default, but production sets
+# BACKUP_URI=s3://… so the copy that survives the box lives off it (ch.46).
+BACKUP_URI="${BACKUP_URI:-file:$BACKUP_DIR}"
+"$DATOMIC" backup-db "$DATABASE_URI" "$BACKUP_URI/myapp"
+"$DATOMIC" backup-db "$ANALYTICS_DATABASE_URI" "$BACKUP_URI/myapp-analytics"
 
 # The other half of "what is state on this box" (ch.35): /etc/myapp.
-# The env file holds the crypto keys — the backup directory must be
-# treated as exactly as secret as the box itself.
-cp -a /etc/myapp "$BACKUP_DIR/etc-myapp"
+# The env file holds the crypto keys — treat this directory as exactly as
+# secret as the box. rsync --delete keeps an exact mirror; a `cp -a` into
+# an existing target would nest a stale copy on every run after the first.
+rsync -a --delete /etc/myapp/ "$BACKUP_DIR/etc-myapp/"
+,,,
 ```
+
+The listing stops there, but the shipped script grew one more line when [the file-storage chapter](49-file-storage.md) gave the app user photos: an `rsync` of the content-addressed uploads tree, taken *after* `backup-db`, so the copied blobs are always a superset of what the restored database references. The whole photo-backup argument -- why the grace window makes that copy consistent without a lock -- lives in that chapter; here it is one more directory on the same nightly run.
 
 The schedule is [the watchdog chapter's](38-alerting.md) pattern at a longer period, `myapp-backup.timer`, nightly at 04:00, `Persistent=true` so a box that was off runs the missed backup on boot. And the backup *unit* wires into the alerting spine for the reason its comment states outright: `OnFailure=myapp-alert@%n.service`, because **a backup that fails silently is worse than none: it converts "we have no backups" into "we think we have backups."** Offsite is the same command with a different URI (`backup-db` speaks `s3://` natively, credentials from the environment), named here and not drilled, because this book's sandbox has no bucket and pretending otherwise would break the chapter's own rule.
 
@@ -49,7 +56,7 @@ RESULT verdict: PASS
 
 The third line is the one this book cares about most. `d/history` works on the restored database -- every version, [every diff](09-recipe-domain.md), [every transaction's author and note](10-provenance.md) crossed the backup boundary intact, because the archive carries the log, not a snapshot of the present. The features this application is *about* survive its disaster story. That is not a given elsewhere: a `mysqldump` of a hand-built versions table restores whatever the versions table happened to contain; this restores *the time axis itself*.
 
-The production runbook falls out of the same property that made the drill safe, and [the URI-is-config design](35-going-live.md) pays one more time: restore into *fresh storage under the same name* (the first stumble is why "fresh database name" is not on the menu), point the transactor's `sql-url` and then `DATABASE_URI` at it — the second stumble is why the transactor moves first — and restart both. The damaged original is never overwritten (it remains standing as evidence), and "rollback of the restore" is editing those lines back.
+The production runbook falls out of the same property that made the drill safe, and [the URI-is-config design](35-going-live.md) pays one more time: restore into *fresh storage under the same name* (the first stumble is why "fresh database name" is not on the menu), point the transactor's `sql-url` and then `DATABASE_URI` at it -- the second stumble is why the transactor moves first -- and restart both. The damaged original is never overwritten (it remains standing as evidence), and "rollback of the restore" is editing those lines back.
 
 ## The chore ch.36 promised
 
@@ -57,7 +64,7 @@ The production runbook falls out of the same property that made the drill safe, 
 
 ## Scheduled work, the general answer
 
-Three timers now run this box (watchdog, backup, asset GC), and that is this book's entire background-jobs story, so the position deserves stating once, plainly. Every periodic need this system has turned out to have is *box-shaped*: check the machine, copy the machine's state, sweep the machine's disk. For box-shaped work, systemd timers are strictly better than an in-process scheduler -- they survive the app, they compose with `OnFailure=` alerting, they show up in `systemctl list-timers` next to everything else, and they cost zero new infrastructure. What this application has never yet needed is a *domain-shaped* job (the digest email, the delayed webhook), and the day one appears is the day a jobs queue earns real consideration, [as the afterword has said all along](afterword.md). Until then, a queue would be machinery in search of a requirement.
+Three timers now run this box (watchdog, backup, asset GC) -- [the resilience capstone](46-watching-the-watchers.md) adds a fourth that re-runs this chapter's restore drill on a schedule -- and that is this book's entire background-jobs story, so the position deserves stating once, plainly. Every periodic need this system has turned out to have is *box-shaped*: check the machine, copy the machine's state, sweep the machine's disk. For box-shaped work, systemd timers are strictly better than an in-process scheduler -- they survive the app, they compose with `OnFailure=` alerting, they show up in `systemctl list-timers` next to everything else, and they cost zero new infrastructure. What this application has never yet needed is a *domain-shaped* job (the digest email, the delayed webhook), and the day one appears is the day a jobs queue earns real consideration, [as the afterword has said all along](afterword.md). Until then, a queue would be machinery in search of a requirement.
 
 ## Trade-offs & limitations, in one place
 

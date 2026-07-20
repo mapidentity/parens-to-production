@@ -217,7 +217,7 @@ There is no wrapper script to write -- the whole audit is one command, run from 
 lhci autorun
 ```
 
-`lhci autorun` handles everything: it starts your server (using `startServerCommand`), waits for the ready pattern, runs Lighthouse against each URL, collects the reports, and checks the assertions. If any assertion fails, it exits non-zero, which fails your CI step. This is the command [the CI/CD chapter](34-ci-cd.md) wires into the pipeline -- no bespoke script in between. (If you prefer a short alias, a one-line `lhci autorun` wrapper is fine, but the companion repo deliberately keeps the canonical command in the workflow rather than hiding it behind a script.)
+`lhci autorun` handles everything: it starts your server (using `startServerCommand`), waits for the ready pattern, runs Lighthouse against each URL, collects the reports, and checks the assertions. If any assertion fails, it exits non-zero, which fails your CI step. This is the command [the CI/CD chapter](34-ci-cd.md) wires into the pipeline -- no bespoke script in between. (If you prefer a short alias, a one-line `lhci autorun` wrapper is fine, but that pipeline deliberately keeps the canonical command in the workflow rather than hiding it behind a script.)
 
 ## Hitting 100%
 
@@ -229,7 +229,7 @@ Run the audit cold and the first things to fall are accessibility, SEO, and best
 
 ```clojure
 (defn- base-layout
-  [locale & body]
+  [locale page-meta & body]
   (h/html
     {:mode :html}
     (h/raw "<!DOCTYPE html>")
@@ -240,7 +240,7 @@ Run the audit cold and the first things to fall are accessibility, SEO, and best
         :content "width=device-width, initial-scale=1.0"}]
       [:meta
        {:name "description"
-        :content (t locale :meta/description)}]
+        :content (or (:description page-meta) (t locale :meta/description))}]
       ;; ...
       ]]))
 ```
@@ -287,6 +287,7 @@ In the app layout, this looks like:
   (let [admin? (:admin? opts)]
     (base-layout
       locale
+      (:page-meta opts)
       [:div.min-h-screen.flex.flex-col.bg-surface-subtle
        (top-nav locale user-email active-tab admin?)   ;; renders the <nav>
        [:main.flex-1 {:data-layout "app"}              ;; the single <main>

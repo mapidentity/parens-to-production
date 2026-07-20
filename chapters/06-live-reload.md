@@ -293,7 +293,7 @@ The `/dev/ws` route resolves its handler at request time with `requiring-resolve
 
 The route entry exists in the route table in every build, but in production the `dev-reload` namespace is absent, the resolve fails, the catch converts the failure to nil, and the endpoint returns 404. There is no dev WebSocket server in production because there is no handler to run.
 
-The same guard governs whether the browser even loads the dev script. The base layout emits the `dev-reload.js` `<script>` only when the dev namespace resolves:
+The same guard governs whether the browser even loads the dev script. The base layout -- the shared Hiccup wrapper [the views chapter](14-hiccup-views.md) builds; the stub page this chapter's server returns has no `<script>` slot yet -- emits the `dev-reload.js` `<script>` only when the dev namespace resolves:
 
 ```clojure
 ;; In base-layout, at the end of <body>:
@@ -379,7 +379,7 @@ And `hot-reload/start` brings up the server and the watcher:
      :watch-path "/src"}))
 ```
 
-Open a REPL, type `(start!)`, and the whole loop is live: the server is up, the watcher is watching `src/`, and any connected browser tab will reload when you save. (The two log lines label the same tree differently, `"src"` from the watcher and `"/src"` in this summary map; the strings are display labels, and nothing reads them.)
+Open a REPL, type `(start!)`, and the server side of the loop is live: the server is up, the watcher is watching `src/`, and a save fires the reload push. The browser half engages only once a rendered page carries the `dev-reload.js` tag, which the base layout of [the views chapter](14-hiccup-views.md) supplies -- until then the stub home page has nothing to reload; from that chapter on, any connected tab reloads when you save. (The two log lines label the same tree differently, `"src"` from the watcher and `"/src"` in this summary map; the strings are display labels, and nothing reads them.)
 
 ## Where this goes next
 

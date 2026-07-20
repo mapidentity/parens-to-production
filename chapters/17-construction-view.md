@@ -235,7 +235,7 @@ This is the eviction rule the memory story below leans on, and one more place th
 This is sound for one reason, and it is the same reason the inspector's `for`-row tagging was sound: **our request path is synchronous**. `http-kit` serves each request start-to-finish on one worker thread; every handler calls the domain layer and Datomic *inline*; `hiccup2`'s `html` macro forces its sequences eagerly before the response map is returned. So a request is *exactly* the slice `[start, end)` of one thread's timeline: no `future`, no `core.async`, no context-propagation machinery to chase a span across threads. (An async handler would break this; the day one appears, the slice boundary is the thing to revisit.)
 
 <svg viewBox="0 0 760 235" role="img" aria-label="A request as a slice of one thread's append-only timeline" style="width:100%;height:auto;font-family:monospace">
-  <text x="40" y="24" fill="currentColor" font-size="13" opacity="0.75">thread 27 — FlowStorm timeline (append-only)</text>
+  <text x="40" y="24" fill="currentColor" font-size="13" opacity="0.75">thread 27 -- FlowStorm timeline (append-only)</text>
   <text x="240" y="50" fill="currentColor" font-size="11" opacity="0.6">enable-recording!</text>
   <text x="566" y="50" fill="currentColor" font-size="11" opacity="0.6" text-anchor="end">disable-recording!</text>
   <rect x="40" y="58" width="680" height="42" fill="none" stroke="currentColor" stroke-opacity="0.35"/>
@@ -255,16 +255,16 @@ This is sound for one reason, and it is the same reason the inspector's `for`-ro
     <rect x="494" y="63" width="14" height="32"/><rect x="512" y="63" width="14" height="32"/>
     <rect x="530" y="63" width="14" height="32"/><rect x="548" y="63" width="14" height="32"/>
   </g>
-  <text x="104" y="115" fill="currentColor" font-size="11" opacity="0.5" text-anchor="middle">the visit so far — evicted on</text>
+  <text x="104" y="115" fill="currentColor" font-size="11" opacity="0.5" text-anchor="middle">the visit so far -- evicted on</text>
   <text x="104" y="129" fill="currentColor" font-size="11" opacity="0.5" text-anchor="middle">the next full navigation</text>
-  <text x="655" y="83" fill="currentColor" font-size="11" opacity="0.5" text-anchor="middle">idle — recording off</text>
+  <text x="655" y="83" fill="currentColor" font-size="11" opacity="0.5" text-anchor="middle">idle -- recording off</text>
   <path d="M 240 104 v 8 M 566 104 v 8" stroke="currentColor" stroke-opacity="0.6" fill="none"/>
   <text x="240" y="128" fill="currentColor" font-size="11" opacity="0.7" text-anchor="middle">start = 1042</text>
   <text x="566" y="128" fill="currentColor" font-size="11" opacity="0.7" text-anchor="middle">end = 1199</text>
   <path d="M 262 158 L 244 132 M 528 158 L 562 132" stroke="currentColor" stroke-opacity="0.35" fill="none"/>
   <rect x="220" y="160" width="360" height="30" fill="none" stroke="currentColor" stroke-opacity="0.5" rx="4"/>
   <text x="400" y="180" fill="currentColor" font-size="12.5" text-anchor="middle">{:tid 27 :start 1042 :end 1199 :epoch 3 …}</text>
-  <text x="400" y="215" fill="currentColor" font-size="11" opacity="0.6" text-anchor="middle">the descriptor is the only thing we store (a ring of ≤ 256) — the entries stay in FlowStorm's recorder</text>
+  <text x="400" y="215" fill="currentColor" font-size="11" opacity="0.6" text-anchor="middle">the descriptor is the only thing we store (a ring of ≤ 256) -- the entries stay in FlowStorm's recorder</text>
 </svg>
 
 *A request is a slice: `record-page` flips recording on, notes the timeline length before and after the handler, and stores a small descriptor. Everything heavy stays where it already lives.*
@@ -612,7 +612,7 @@ Every conditional key above (`:instance`, `:morph`, `:lazy`, `:threw`, the two `
       <path d="M 0 0 L 8 4 L 0 8 z" fill="currentColor" opacity="0.5"/>
     </marker>
   </defs>
-  <text x="20" y="28" fill="currentColor" font-size="13" opacity="0.75">temporal — where it ran (:children-rt)</text>
+  <text x="20" y="28" fill="currentColor" font-size="13" opacity="0.75">temporal -- where it ran (:children-rt)</text>
   <g font-size="12.5" fill="currentColor">
     <text x="20" y="58">admin-dashboard</text>
     <text x="20" y="80">├─ users-table</text>
@@ -623,7 +623,7 @@ Every conditional key above (`:instance`, `:morph`, `:lazy`, `:threw`, the two `
     <text x="66" y="146">└─</text>
     <text x="88" y="146" fill="#e07840">fmt-instant</text>
   </g>
-  <text x="430" y="28" fill="currentColor" font-size="13" opacity="0.75">lexical — where it was written (:children)</text>
+  <text x="430" y="28" fill="currentColor" font-size="13" opacity="0.75">lexical -- where it was written (:children)</text>
   <g font-size="12.5" fill="currentColor">
     <text x="430" y="58">admin-dashboard</text>
     <text x="430" y="80">├─ users-table</text>
@@ -635,7 +635,7 @@ Every conditional key above (`:instance`, `:morph`, `:lazy`, `:threw`, the two `
   </g>
   <path d="M 196 152 C 290 200, 380 170, 496 108" stroke="currentColor" stroke-opacity="0.5" fill="none" marker-end="url(#cv-arrow)"/>
   <text x="380" y="210" fill="currentColor" font-size="11" opacity="0.6" text-anchor="middle">re-parented: the runtime path crosses an iter-- frame, and the for-body's owning fn appears exactly once,</text>
-  <text x="380" y="226" fill="currentColor" font-size="11" opacity="0.6" text-anchor="middle">so the move is unambiguous — both trees are kept, and the overlay's toggle switches between them</text>
+  <text x="380" y="226" fill="currentColor" font-size="11" opacity="0.6" text-anchor="middle">so the move is unambiguous -- both trees are kept, and the overlay's toggle switches between them</text>
 </svg>
 
 *One recording, two parentings: temporally, `fmt-instant` ran during HTML serialization under `base-layout`; lexically, it belongs to `users-table`, where it was written. The tree that reads the way a human expects is the one that would be a lie without the `:lazy` flag pointing back at the truth.*

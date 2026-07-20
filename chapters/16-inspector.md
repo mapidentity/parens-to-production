@@ -168,7 +168,7 @@ The loader (`dev/inspector_load.clj`, under `dev/` and so never on the prod clas
   "Read a .clj view file with tools.reader; eval each form with element + call-
    site tags; then instrument its fns (component layer) and index it (reverse)."
   [path]
-  (let [file  (str/replace path #"^.*/src/" "")           ;; classpath-relative
+  (let [file  (-> path (str/replace #"^.*/src/" "") (str/replace #"^src/" ""))  ;; classpath-relative (absolute OR watcher-relative)
         rdr   (rt/indexing-push-back-reader (slurp path))
         eof   (Object.)]
     (binding [*ns* *ns*, *file* file]
@@ -315,7 +315,7 @@ We never call this directly -- that would defeat Hiccup's compile-time precompil
 ```clojure
 (defmacro tag-root [tree] (if dev? `(tag-tree ~tree) tree))
 
-(defn base-layout [& body]
+(defn- base-layout [locale page-meta & body]
   (h/html {:mode :html}                     ;; the escaping renderer from the views chapter
     (h/raw "<!DOCTYPE html>")
     [:html
@@ -560,7 +560,7 @@ The feature is structurally absent, not merely disabled.
   Three positions, three answers: the definition (all instances), one element within it (that element in all instances), and one call (exactly one rendered card). The looped case is the floor noted above: a single `(for [r recipes] (recipe-card r))` is one call site, so a cursor on it lights up the whole family, not iteration 3.
 - **Source rewriting is conservative.** Call-site wrapping refuses threading/`quote` contexts and reserved names; it loses precision in component-via-threading composition (rare in views) to guarantee it never corrupts code.
 - **Editor coupling.** Navigation pushes to a connected Joyride agent (exact window, exact range, works in remote containers); with no agent connected, the browser reports "no editor connected" rather than guessing. Both directions need the agent. An earlier `code -g` fallback for the forward direction was dropped because landing it in the right window required a fragile newest-IPC-socket sniff.
-- **The dev WebSocket is unauthenticated.** Anything that can reach `localhost:3000/dev/ws` can ask to open a (src-confined) file or push a cursor. That is acceptable for a dev-only, loopback service; don't expose the dev server.
+- **The dev WebSocket is unauthenticated.** Anything that can reach the dev server's `/dev/ws` can ask to open a (src-confined) file or push a cursor. Mind the reach: the dev profile binds `0.0.0.0` (`resources/config.edn`), so on a shared network that surface is open to the whole LAN, not just loopback -- keep the dev server off untrusted networks, or bind it to `127.0.0.1`. None of it ships to prod: there the server binds loopback and the entire `/dev/*` tree 404s.
 - **A small dev startup cost.** Reading views through tools.reader, wrapping calls, instrumenting vars, and indexing is more work than a plain `load`. It is paid once per view file at startup or reload, and never in production.
 
 ## What it rests on

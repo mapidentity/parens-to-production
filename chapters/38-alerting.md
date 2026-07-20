@@ -6,7 +6,7 @@
 
 ## The watchdog
 
-`ops/myapp-watchdog.sh` runs three checks, one per class of silent death the audits actually surfaced:
+`ops/myapp-watchdog.sh` runs three checks -- one per class of silent death the audits actually surfaced, with a fourth added later by [the resilience capstone](46-watching-the-watchers.md):
 
 ```bash
 # Same source of truth as the app itself.
@@ -29,11 +29,20 @@ done
 timeout 5 bash -c "exec 3<>/dev/tcp/$SMTP_HOST/$SMTP_PORT" 2>/dev/null \
   || fail "SMTP relay $SMTP_HOST:$SMTP_PORT does not accept connections"
 
-# 3. Disk headroom. The slowest outage on any single box is the full disk;
-#    it deserves two minutes' notice, not a crashed transactor's.
-usage=$(df --output=pcent / | tail -1 | tr -dc '0-9')
-[ "$usage" -lt 90 ] || fail "root filesystem at ${usage}% — reclaim space"
+# 3. Disk headroom on every filesystem that holds state — not just /. The
+#    data volume, the backups, and the log dir each fill independently; df
+#    resolves a path to its containing mount. The slowest outage on a single
+#    box is the disk that fills.
+BACKUP_DIR="${BACKUP_DIR:-/var/backups/myapp}"
+for path in / /mnt/data "$BACKUP_DIR" /var/log/myapp; do
+  [ -e "$path" ] || continue
+  usage=$(df --output=pcent "$path" 2>/dev/null | tail -1 | tr -dc '0-9')
+  { [ -n "$usage" ] && [ "$usage" -lt 90 ]; } || fail "filesystem for $path at ${usage:-?}% — reclaim space"
+done
+,,,
 ```
+
+The disk loop is wider than a single-box instinct suggests: it walks *every* filesystem that holds state, not just `/`, because the data volume, the backups, and the logs can each fill while the root still has room.
 
 Each check earns its place by *division of labor* with `/health`. The endpoint itself [deliberately refuses](35-going-live.md) slow or external probes. It is polled by the deploy script and [the proxy's load balancer](36-minimal-downtime.md), so it must stay fast, local, and side-effect-free. The watchdog is where the slow questions belong: it runs out-of-band on a timer, it can afford a five-second TCP connect to the relay, and -- the property that decides where it lives -- **it must outlive the thing it watches**. A check scheduled inside the app dies with the app; the watchdog is systemd's process, not the JVM's, which is the entire argument against the in-process scheduler a job library would have brought.
 

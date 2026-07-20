@@ -81,7 +81,7 @@ The web has a two-part answer, and the historical pages now carry both:
 
 `noindex` says *do not list this page*; the canonical pointing at the **current** recipe says *credit whatever you learned here to that URL*. Two declarative lines per page class, and the version history is a feature for humans again instead of an SEO liability. The live recipe page, by contrast, canonicalizes to itself -- the one true URL for the content, stated explicitly so that query-string variants and future mirrors never split its identity.
 
-Open Graph rides along in the same map (title, type, URL, site name, first description line), which is what turns a pasted link into a card in chat clients. What the card will not have is an image, because [the recipes have none](21-forms-validation.md); the product has no photo feature, and shipping a decorative placeholder as `og:image` would be the small dishonesty this book keeps declining. The day photos exist, one more pair goes in the map.
+Open Graph rides along in the same map (title, type, URL, site name, first description line), which is what turns a pasted link into a card in chat clients. The one pair the map leaves open here is the image: at this point in the book the application has no photo feature, and shipping a decorative placeholder as `og:image` would be the small dishonesty this book keeps declining. [When recipe photos arrive](49-file-storage.md), the promise comes due: `recipe-detail` fills `og:image` (and the JSON-LD `image`) from the recipe's hero derivative, absolute-URL'd because unfurlers resolve nothing relative. A recipe with no photo still omits the pair rather than fake one.
 
 ## The catalog, published
 
@@ -124,7 +124,7 @@ and [the Lighthouse chapter](33-lighthouse.md), three chapters from here, is whe
 
 - **Descriptions are the raw first line, markdown and all.** A `**bold**` in a recipe's opening line reaches the meta description with its asterisks on. The honest fix is a plain-text projection of the markdown AST ([the renderer](14-hiccup-views.md) could grow one), and it is deliberately deferred: a seam, labeled, costing a few odd characters in snippets meanwhile.
 - **Only the recipe page gets the full treatment.** The browse index and [search results](23-search.md) ride the site defaults, which for list pages is nearly right anyway; per-page titles for them are an afternoon, using plumbing that now exists.
-- **The sitemap is unbounded**, like [the browse read it reuses](09-recipe-domain.md) -- one `<urlset>`, no pagination. The sitemap protocol caps a file at 50,000 URLs; the catalog is nowhere near; the seam is the same seam, and it is labeled in both places.
+- **The sitemap is unbounded** -- one `<urlset>`, no pagination -- and it is now the only public read that still loads the whole catalog: [the browse index went keyset-paginated](48-pagination.md), leaving `all-recipes` to back just the sitemap, where the whole set is genuinely wanted. The sitemap protocol caps a file at 50,000 URLs; the catalog is nowhere near; when it nears, a sitemap index splits it the way the browse already pages.
 - **JSON-LD duplicates content into every recipe response** -- ingredients and steps appear twice in the bytes. That is the protocol's design (machines should not have to parse your markup), it compresses well, and [the next chapter](31-conditional-get.md) is about to make repeat fetches of those bytes mostly stop happening anyway.
 
 ## Who shows up when you're legible

@@ -344,7 +344,7 @@ The overlay so far renders the whole-page tree the recording chapter served. The
 **Flow** is the one that carries a distinct idea, so it gets shown in full below. The **dossier** projections are variations on the same template, distinguished only by what they build:
 
 - **value** (`/dev/__value`): navigate a recorded value one bounded level at a time, by a path of child indices, so the overlay can drill `arg0 → 2 → 1` without ever shipping the blob or forcing more than 50 children of a level.
-- **branches** (`/dev/__branches`): the `when`-family conditionals in a frame whose recorded result was nil, i.e. the bodies that *didn't* render. (`if`/`cond` are excluded: a nil there is ambiguous about which branch ran.) On an anonymous request this immediately names the auth-gated `when`s in the top nav: the SSR equivalent of "the button isn't there because you're logged out."
+- **branches** (`/dev/__branches`): the guard conditionals in a frame whose recorded result was nil, i.e. the bodies that *didn't* render -- the single-arm `when` family (`when`/`when-not`/`when-let`/`when-some`) plus the negative and binding `if` forms (`if-not`/`if-let`/`if-some`). Bare `if`/`cond` are left out: a nil under a symmetric two-arm branch says nothing about which arm ran. The binding `if` forms carry a milder version of that same ambiguity -- their *then*-arm can legitimately return nil too -- so this projection can occasionally flag a body as unrendered when its then-arm actually ran and produced nil; a known edge we accept for the far more common single-arm `when` case. On an anonymous request it immediately names the auth-gated `when`s in the top nav: the SSR equivalent of "the button isn't there because you're logged out."
 - **source** (`/dev/__source`): the details-pane twin of flow's eid-match. It reads the eid off a frame's first argument and returns the recorded DB reads whose result contained it.
 - **hiccup** (`/dev/__hiccup`): a component's recorded Hiccup return, re-derived into the element tree it *becomes* (inlining `(for …)` seqs, dropping nil children, keeping the `data-myapp-*` breadcrumbs).
 - **value-threads** (`/dev/__value-threads`): every frame a value flows through, by object identity or by `:db/id`, so you can pick a value and light up its whole path.
@@ -384,7 +384,7 @@ Every projection above is reached through a route that shares one shape: resolve
 
 > **Deliberately not built -- timing/profiling.** Under a recording compiler, per-frame wall-clock would mostly measure the recorder itself (its overhead dominates), so the `ms` we show is the request total from `record-page`, not per-frame timing. For real profiling, reach for a sampling profiler. The construction view answers *structure and data*, not *time*.
 
-> **Trade-off -- the endpoints are unauthenticated, and return real recorded values.** Anything that can reach `/dev/__flow` or `/dev/__value` gets the actual recording: argument and result previews that can include user emails and recipe content. That is acceptable for a dev-only, loopback service: the same posture as `/dev/ws` from the inspector chapter, and prod-absent through the same `requiring-resolve` gate. Don't expose the dev server.
+> **Trade-off -- the endpoints are unauthenticated, and return real recorded values.** Anything that can reach `/dev/__flow` or `/dev/__value` gets the actual recording: argument and result previews that can include user emails and recipe content. That is the same posture as `/dev/ws` from the inspector chapter -- and mind the reach: the dev profile binds `0.0.0.0`, so on a shared network this surface is open to the whole LAN, not just loopback. Keep the dev server off untrusted networks, or bind it to `127.0.0.1`. It is prod-absent regardless, through the same `requiring-resolve` gate.
 
 ## Flow: from one element to the query behind it
 
@@ -430,11 +430,15 @@ Two capabilities make this more than the inspector could do, and both live in `f
                    (if-let [mk (calls k)]
                      (recur (:parent-idx mk)
                        (if (noise? mk) acc (conj acc {:short (short-name (frame-name mk)) :name (frame-name mk)})))
-                     (vec (reverse acc))))]
+                     (vec (reverse acc))))
+            ;; when src-line was passed, the recorded result of that clicked line
+            ;; (scan this frame's exprs for the form whose :line matches src-line):
+            value ,,,]
         {:component comp-name
          :instance (.indexOf ^java.util.List named target)
          :instances (count named)
-         :path path :reads reads
+         :span ,,,                     ; this frame's own name/args/ret preview
+         :path path :reads reads :value value
          :pivot (when eid {:eid eid})})
 
       (seq named) {:component comp-name :instances (count named) :ambiguous true}

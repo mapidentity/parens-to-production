@@ -461,6 +461,14 @@ Note what the test does not assert: it pins the entity count and nothing else. T
 
 Call it with a new email, get a new user. Call it with an existing email, get the same one back. No errors either way.
 
+## Trade-offs & limitations, in one place
+
+- **One factor, and it is the inbox.** A magic link is possession of an email account, so an account is only as strong as the mailbox behind it: a phished or hijacked inbox is a hijacked account, and by the current federal bar an emailed link is not phishing-resistant. This is a trade of password risk for email risk -- right for a recipe box, wrong for a high-value target, where the upgrade is a passkey, not a second password-era factor.
+- **Expiry bounds the leak; the nonce closes replay; issuance is all we revoke.** A signed token is valid every time until it expires, so a leaked link is usable for its 15-minute window until the nonce is consumed. There is no server-side list of live tokens to strike one dead early -- shortening the window and enforcing single use (next chapter) is the whole defense.
+- **The signing key is a single point of forgery.** The scheme rests entirely on a secret, high-entropy key: a weak or leaked key forges tokens outright, and no constant-time comparison defends against that. Config enforces at least 32 CSPRNG bytes and refuses to boot in production without an explicit `SIGNING_KEY`.
+- **`get-or-create-user!` races on first login.** Two concurrent first sign-ins for the same address can both create; the email upsert keeps it to one entity but rewrites `:user/id` and `:user/created-at`. Harmless only because nothing reads `:user/id` today -- the day something holds that UUID, this check-then-act needs a transaction function.
+- **Not built here.** Passkeys/WebAuthn and an identity provider are named as the upgrades when the stakes or the org cross the line, not implemented; and recovery still falls back to email even after a passkey, so the email channel stays part of the security surface either way.
+
 ## Where this leaves us
 
 The chapter has produced a self-contained token primitive, and its size is the point: about 60 lines of Clojure in all (the signing-and-verification pair from the start of the chapter is fewer than 40 of them), with zero external dependencies beyond `clojure.data.json` and Datomic, the crypto coming entirely from the JDK. That is the payoff of declining the JWT spec's generality -- a format simple enough to explain in one sentence and audit in five minutes, with a test suite weighted, as argued above, toward rejection rather than the happy path.

@@ -88,7 +88,7 @@ Four columns. Datomic uses a SQL database as a key-value shelf for immutable sto
 
 Provisioning is three scripts that ship inside the Datomic Pro distribution (`bin/sql/postgres-db.sql`, `postgres-table.sql`, `postgres-user.sql`): create a `datomic` database, that table, and a `datomic` role. Change the role's stock password; it lands next to the URI in exactly two root-owned files. The transactor's own config is a dozen lines, trimmed from the distribution's sample and committed as `ops/transactor.properties`:
 
-```
+```ini
 protocol=sql
 # 127.0.0.1, NOT localhost: `host=` is both the bind address and the
 # address the transactor WRITES INTO STORAGE for peers to find it. On a
@@ -133,8 +133,8 @@ EnvironmentFile=/etc/myapp/env
 # ExitOnOutOfMemoryError turns heap exhaustion into a death Restart= can
 # heal instead of a half-alive process nothing notices; HeapDumpOnOutOfMemory
 # saves the one forensic artifact of a leak before that death (a heap dump
-# holds secrets — see the runbook). MYAPP_REPL_PORT (in the env file) starts a
-# loopback-only diagnosis REPL.
+# holds secrets — see the runbook). MYAPP_REPL_PORT (set by Environment= in
+# this unit) starts a loopback-only diagnosis REPL.
 ExecStart=/usr/bin/java -Xmx1g -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/log/myapp/ -jar /opt/myapp/myapp.jar
 Restart=on-failure
 RestartSec=2
@@ -150,7 +150,7 @@ ProtectSystem=full
 WantedBy=multi-user.target
 ```
 
-Almost every line closes a loop opened elsewhere in the book. `After=myapp-transactor.service` exists for *first* boot only -- thereafter [the peer reconnects through blips on its own](08-datomic.md), now [drilled](41-beyond-one-box.md) (restart the transactor under a live peer and writes pause about twenty seconds, then resume, no committed transaction lost), and ordering is a courtesy. The `-Xmx1g` is not a superstition: the peer gives half its heap to the object cache that [the measurement chapter](32-server-path-measured.md) showed serving reads, so heap size *is* read-cache size, and raising it is a measured decision. `ExitOnOutOfMemoryError` pairs with `Restart=on-failure` to prefer a two-second death-and-rebirth over the far worse mode -- a heap-starved JVM that answers health checks and serves nothing well. And `TimeoutStopSec=15` is [the restart-window section's](34-ci-cd.md) drain hook, seen from the other side: the app asks for one second; systemd grants fifteen before escalating to SIGKILL; nobody ever waits on the default ninety. The transactor's unit (`ops/myapp-transactor.service`) is the same shape minus the ceremony -- `ExecStart=/opt/datomic/bin/transactor`, restart-on-failure, after PostgreSQL.
+Almost every line closes a loop opened elsewhere in the book. `After=myapp-transactor.service` exists for *first* boot only -- thereafter [the peer reconnects through blips on its own](08-datomic.md), now drilled in the failover lab's `ops/lab/` harness (restart the transactor under a live peer and writes pause about twenty seconds, then resume, no committed transaction lost), and ordering is a courtesy. The `-Xmx1g` is not a superstition: the peer gives half its heap to the object cache that [the measurement chapter](32-server-path-measured.md) showed serving reads, so heap size *is* read-cache size, and raising it is a measured decision. `ExitOnOutOfMemoryError` pairs with `Restart=on-failure` to prefer a two-second death-and-rebirth over the far worse mode -- a heap-starved JVM that answers health checks and serves nothing well. And `TimeoutStopSec=15` is [the restart-window section's](34-ci-cd.md) drain hook, seen from the other side: the app asks for one second; systemd grants fifteen before escalating to SIGKILL; nobody ever waits on the default ninety. The transactor's unit (`ops/myapp-transactor.service`) is the same shape minus the ceremony -- `ExecStart=/opt/datomic/bin/transactor`, restart-on-failure, after PostgreSQL.
 
 Logging is the unit's third ownership, and it is two pieces. journald captures stdout -- retention, rotation, and the 3am interface are the supervisor's, which is the entire logging runbook this box needs: `journalctl -u myapp -S -15min` for the app, `-u myapp-transactor` for the writer. What goes *into* stdout is the app's half, and it is one committed file, `resources/logback.xml`:
 
@@ -176,7 +176,7 @@ That file justifies itself with a confession: it did not exist until this chapte
 
 The production Caddyfile (`ops/Caddyfile`) is structurally [the dev block you have been running since chapter 3](03-devcontainer.md) -- same security headers, same cache tiers, same [maintenance-page error handler](34-ci-cd.md) -- with two differences that *are* the going-live story:
 
-```
+```caddyfile
 myapp.example.com {
 	encode zstd gzip
 	,,,
