@@ -13,6 +13,7 @@ git-repository-url = "https://github.com/mapidentity/parens-to-production"
 edit-url-template = ""
 copy-fonts = true
 no-section-label = false
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
 
 [output.html.fold]
 enable = true
@@ -22,3 +23,8 @@ level = 1
 enable = true
 limit-results = 30
 use-boolean-and = true
+
+[preprocessor]
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"

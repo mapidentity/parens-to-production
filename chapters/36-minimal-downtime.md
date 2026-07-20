@@ -87,6 +87,26 @@ if smoke "$idle"; then
   ,,,
 ```
 
+Laid out on a timeline, the window the visitor cannot perceive is the stretch where *both* instances are live and Caddy is free to use either -- the old one never stops until the new one has proven it serves:
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant Dep as deploy-pair.sh
+  participant New as idle instance 3002
+  participant Cad as Caddy pool
+  participant Old as live instance 3001
+  Dep->>New: copy new jar and assets to its path, start it
+  loop until healthy, or give up
+    Dep->>New: GET /health, then smoke (home renders, assets present)
+  end
+  Note over Cad,New: health checks bring the newcomer into the pool
+  Note over Old,New: both live now — Caddy uses either (the imperceptible window)
+  Dep->>Old: SIGTERM, shutdown hook drains in-flight requests
+  Old-->>Cad: port closes, health checks steer all traffic to the newcomer
+  Note over Old: old jar stays on disk — rollback is one systemctl start
+```
+
 Compare the failure modes with [chapter 34's script](34-ci-cd.md), because they have quietly inverted. There, an unhealthy new build meant *rollback under pressure*: the site was already down, and the script raced to restore the previous jar. Here, an unhealthy new build means *nothing happened*: the old instance never stopped serving, the script stops the broken newcomer and exits non-zero, and the failed deploy is a log line instead of an outage. Rollback after a *healthy-but-wrong* deploy is equally calm: the old jar is still sitting at the other port's path, one `systemctl start` away. The health poll also gates the other direction -- the old instance is not stopped until the new one has *proven* it serves, so there is no instant with zero live instances.
 
 Two hardenings the [resilience audit](46-watching-the-watchers.md) added to both deploy scripts, single and pair. First, the gate is now a *smoke*, not just `/health`: it also fetches the home page (a jar that boots and reads the database but 500s on a real render passes `/health` and fails here) and checks that every content-hashed asset the manifest names is present on disk. Second, and this is the one that made a rollback dangerous, the jar and its asset-manifest are treated as **one release**. They used to ship separately, the manifest overwritten in place before the jar swapped, so rolling the jar back left old code pointing at a newer manifest that 404'd its own CSS: the rollback made it worse. Now the script snapshots jar and manifest together and restores them together, so old code always meets the manifest it was built with. The two instances still share one static tree, but each reads the manifest into memory at its own boot, so the newcomer boots against the new manifest while the old instance keeps serving the one it started with -- coherent on both sides of the window.

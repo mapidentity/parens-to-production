@@ -70,6 +70,23 @@ Everything the chapter builds is already decided in this listing, and the decisi
 
 A recipe is **one entity**. There is no separate version record. When the owner edits the ingredients, that is an ordinary transaction asserting a new value of `:recipe/ingredients` on the same entity -- and because Datomic never overwrites, the prior value is still a fact, still queryable, tagged with the transaction that retired it. The version history is therefore not something the schema provides; it is something the schema *cannot avoid*. The same property that would be an audit burden in a mutable store -- "we keep everything" -- is here the feature, free.
 
+That is the whole idea in one picture: a version is not a row you write, it is a transaction that already happened, and every feature this chapter builds is a *read* of the timeline the edits leave behind.
+
+```mermaid
+flowchart LR
+  subgraph tl["one entity · its transactions ARE its versions"]
+    direction LR
+    t1["tx 1005<br/>create"] --> t2["tx 1012<br/>edit ingredients"] --> t3["tx 1020<br/>edit steps · now"]
+  end
+  t1 -. "d/as-of 1005" .-> v1["recipe @ v1"]
+  t3 -. "d/as-of 1020" .-> v3["recipe @ v3"]
+  v1 --> D{{"line-diff = two<br/>as-of reads, compared"}}
+  v3 --> D
+  t1 == "forked-from" ==> FK["a fork:<br/>new entity, copies v1,<br/>keeps one ref back"]
+```
+
+*Nothing here is stored twice. "Version 1" is `d/as-of` the transaction that created it; a diff is two of those reads compared; a fork is a new entity that copied one past version and kept a `:recipe/forked-from` ref. The database did the remembering; the domain only asks.*
+
 `:recipe/forked-from` is a **self-reference**: a ref attribute on a recipe pointing at another recipe. A fork is a brand-new entity with a fresh `:recipe/id`, carrying a copy of the source's content plus this one ref back to where it came from. Following the ref upward, recipe to parent to grandparent, is the lineage. Querying for entities that point *at* a given recipe is the set of its direct forks. The fork graph is a single attribute; the traversals are two short queries.
 
 `:recipe/ingredients` and `:recipe/steps` are **newline-separated text**, not a collection of ingredient entities. This looks like the lazy choice and is in fact the one the diff feature stands on: storing them as line-delimited strings is what lets a version-to-version comparison be a *line diff*, the same kind of diff and the same `+`/`-` display a programmer already reads fluently from `git diff`. Modeling each ingredient as its own entity would buy structured querying the application never needs and cost the very diff it depends on.
@@ -184,6 +201,19 @@ The body is Myers' O(ND) difference algorithm -- the greedy edit-distance search
 `line-diff` returns plain data -- a vector of `{:op :add :text "sugar"}` maps -- so the view layer renders a diff by mapping over it, and a test asserts on it without parsing rendered HTML. The field-level `diff` wraps it together with the scalar comparisons into one map describing everything that changed between two recipe states, carrying a top-level `:changed?` the caller can branch on. It, too, is pure data in and pure data out, with no database handle anywhere in sight -- the temporal reads happened upstream, and the comparison is arithmetic.
 
 ## Lineage and forks
+
+One `:recipe/forked-from` ref per entity is the entire fork graph; both traversals the app needs are just that ref read in the two directions. The seed data (below) is shaped to exercise both -- a chain four deep that crosses all four users, and a root with a second child:
+
+```mermaid
+flowchart TD
+  C["Carbonara<br/>(original)"] --> P["Peas"] --> V["Vegan"] --> Ca["Cashew"] --> S["Spicy"]
+  C --> B["Bacon"]
+  Piz["Pizza"]:::solo
+  Foc["Focaccia"]:::solo
+  classDef solo stroke-dasharray: 4 3
+```
+
+*Upward, `lineage` walks `forked-from` parent to parent to the root original (Spicy → Cashew → Vegan → Peas → Carbonara). Downward, "forks of" is the set of entities whose `forked-from` points at you (Carbonara has two: Peas and Bacon). Pizza and Focaccia are standalones -- no ancestor, no forks -- because "an original with no children" is a state the UI has to render too.*
 
 A fork is the content of a recipe copied onto a new entity that remembers its source:
 

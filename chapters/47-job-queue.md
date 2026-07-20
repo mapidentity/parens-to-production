@@ -66,6 +66,22 @@ The rest is bookkeeping the log makes easy. On success, CAS `:running → :done`
 
 One more failure mode the durable model forces you to face: a worker can claim a job, start running it, and then *die* -- the process is killed mid-deploy, the box loses power. The job is now stuck `:running` forever, with no worker attached. So each poll also reclaims the abandoned: a `:running` job whose `:job/claimed-at` is older than a visibility timeout is CAS'd back to `:pending` for another worker to pick up. That reclaim is why the semantics are honestly **at-least-once**: a worker might send the email and die before recording `:done`, so the reclaimed job sends it again. A notification tolerates a rare duplicate; a handler that must not repeat a side effect has to make itself idempotent. Exactly-once is a fiction, and the queue does not sell it.
 
+Every transition is a compare-and-swap on `:job/status`, which is what makes the whole lifecycle safe across two workers and one transactor -- the reclaim edge is the only one not driven by the job's own worker:
+
+```mermaid
+stateDiagram-v2
+  [*] --> pending: enqueue<br/>(same tx as the domain event)
+  pending --> running: CAS claim<br/>(exactly one worker wins)
+  running --> done: CAS, handler returned
+  running --> pending: CAS, handler threw<br/>(retry, backoff, attempts++)
+  running --> failed: CAS, past the attempt cap
+  running --> pending: reclaim<br/>(claimed-at older than the<br/>visibility timeout — worker died)
+  done --> [*]
+  failed --> [*]: left for a human
+```
+
+*The `running → pending` reclaim edge is the one another worker drives, and it is exactly why delivery is at-least-once: the original worker may have finished the side effect and died before its `done` CAS landed.*
+
 ## The handler, and the two kinds of async
 
 The handler is small, and it lives with the domain it serves -- a `defmethod` on the job multimethod, next to the proposal code, so the queue stays generic:

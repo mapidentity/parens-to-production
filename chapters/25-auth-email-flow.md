@@ -15,6 +15,30 @@ Six steps make up the round trip, and it is worth holding them in view before th
 
 Every step uses the Post-Redirect-Get pattern where appropriate, and the session is an encrypted cookie -- no server-side session store needed.
 
+Laid out across the parties, the round trip has two halves with the user's inbox in between -- and two security facts fall out of the shape: the confirmation page is identical whether or not the email exists (it reveals nothing), and the nonce is written *before* the mail goes out and consumed by a compare-and-swap on the way back (so a link is one-shot):
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor U as User + Browser
+  participant A as App
+  participant N as Analytics DB<br/>(nonce store)
+  participant M as Mail relay
+  U->>A: POST /login {email}
+  A->>A: sign HMAC token<br/>(email, expiry, nonce)
+  A->>N: record nonce
+  A->>M: send magic link
+  A-->>U: 302 "check your email"<br/>(same reply either way)
+  Note over U,M: user opens the email, clicks the link
+  U->>A: GET /verify?token
+  A->>A: check HMAC + expiry
+  A->>N: CAS nonce → consumed<br/>(fails on replay)
+  A->>A: upsert user, seal session cookie
+  A-->>U: 302 dashboard (or terms gate)
+```
+
+*The signing key never leaves the box, the nonce lives in the analytics database (which is why [wiping it fails links closed](28-admin-dashboard.md) rather than open), and nothing server-side remembers a session -- the sealed cookie is the whole of it.*
+
 ## Sending email with Jakarta Mail (Eclipse Angus)
 
 There are Clojure email libraries out there, but they are all thin wrappers around Jakarta Mail anyway. Using Jakarta Mail directly means one fewer dependency to track, and the API is straightforward enough that a wrapper does not add much value. Jakarta Mail is the old JavaMail, renamed after its move to Eclipse; its packages left the `javax` namespace at Jakarta Mail 2.0, and when the 2.1 spec separated the API from its implementation, the reference implementation became Eclipse Angus.

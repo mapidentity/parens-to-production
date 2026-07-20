@@ -42,6 +42,22 @@ With the three inputs in hand, the merge is small. Per content field, the base d
 
 Read the four `cond` clauses as the four possibilities, and notice that *every one of them consults `b`*. Take the base away and the first two clauses collapse into "they differ, so it's a conflict" -- which would flag every field the fork touched as a conflict, making the merge useless. The base is what lets clean changes apply silently and reserves the human's attention for genuine conflicts. Fields that merge cleanly go into a `:clean` map ready to write; conflicting fields carry their `base`, `ours`, and `theirs` values for the reviewer to choose between.
 
+The decision, per field, is exactly those four branches -- and the only reason it can tell "apply" from "conflict" is that it has `b` to compare against:
+
+```mermaid
+flowchart TD
+  F["per field:<br/>b = base (fork's first version)<br/>o = ours (parent now)<br/>t = theirs (fork now)"]
+  F --> Q1{"t = b?"}
+  Q1 -->|"fork never touched it"| K1["keep ours"]
+  Q1 -->|no| Q2{"o = b?"}
+  Q2 -->|"only the fork changed it"| A1["apply theirs"]
+  Q2 -->|no| Q3{"o = t?"}
+  Q3 -->|"both changed it the same way"| K2["keep (converged)"]
+  Q3 -->|"both changed it differently"| CF["CONFLICT<br/>(human picks a side)"]
+```
+
+*The three clean outcomes need no human; only the last -- both sides changed the same field to different values -- becomes a conflict the target owner resolves. Remove `b` and the top two branches vanish: every touched field falls through to CONFLICT.*
+
 This is a *field*-level three-way merge, not a line-level one (Git's `diff3`), and that is a deliberate right-sizing. The teaching point is the *base*, and the base is equally free at any granularity; a line-level merge would add a complex algorithm (conflict hunks, markers) that is beside that point. For a recipe (where "the ingredient list" is one coherent block a cook rewrites as a unit), "you both rewrote the ingredients, pick one" is also the saner interaction than interleaving two people's ingredient lines into something neither wrote. When a conflict does surface on a text field, the review UI still *shows* [the line diff](09-recipe-domain.md) of what each side did, so the choice is informed.
 
 ## The lifecycle: propose, review, merge

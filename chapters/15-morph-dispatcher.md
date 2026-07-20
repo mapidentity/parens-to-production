@@ -6,6 +6,26 @@ That script is the *dispatcher*, loaded once by the base layout as an ES module.
 
 The strategy rests on one idea: **the server always renders complete pages; the client morphs the part that changed.** Specifically, the dispatcher intercepts same-origin navigation, fetches the destination, parses the returned HTML, pulls out its `<main>`, and *morphs* the live `<main>` to match using [idiomorph](https://github.com/bigskysoftware/idiomorph). Morphing diffs the existing DOM against the new DOM and applies the minimal set of mutations, so focus, scroll position, form state, and ongoing CSS transitions inside unchanged subtrees survive the update. We use idiomorph instead of a smaller differ like morphdom or nanomorph for how it matches nodes across a re-render: it indexes the set of ids within each subtree and treats two nodes as the same when those sets overlap, where morphdom and nanomorph look only at each node's own id, sibling by sibling. That is why an element which moved or was re-wrapped between renders is preserved rather than rebuilt -- and why that survival holds even when the new markup differs structurally, not just by an attribute.
 
+The round trip, and the thing to notice, is that the server has *no* idea any of this is happening -- it renders the same full page it would for a cold load; the client is the only party that knows it did a partial update:
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant DOM as Live DOM
+  participant D as Dispatcher (client)
+  participant S as Server
+  Note over DOM,D: click a same-origin link / submit a form
+  D->>D: preventDefault, pick target (default: main)
+  D->>S: fetch(url) -- an ordinary GET/POST
+  S-->>D: 200 · the COMPLETE page (or a 4xx/5xx page, or a redirect)
+  D->>D: parse HTML, pull out its main element
+  D->>DOM: idiomorph swaps the live main to match<br/>(focus, scroll, form state, transitions survive)
+  D->>DOM: fire dispatcher:morphed → controllers re-scan
+  D->>D: pushState(finalUrl) -- Back/refresh just work
+```
+
+*The server renders whole pages and nothing else; "in-place navigation" is entirely a client-side fact. That is why a handler never learns whether it was fetched cold or by the dispatcher, and why the whole scheme survives with JavaScript off -- the link was a real link all along.*
+
 ## What it intercepts
 
 The dispatcher attaches exactly three listeners, two on `document` and one on `window`:

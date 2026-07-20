@@ -4,6 +4,31 @@
 
 This chapter pays the debts. Everything it adds is committed under `ops/` (two systemd units, the transactor config, the production Caddyfile, the environment template, the deploy script), and the claims a repository checkout can prove were *run*, not described: at the end of this chapter, the application boots its real `:prod` profile against a real PostgreSQL-backed Datomic, is killed, boots again, and still has its data.
 
+Here is the whole shape it assembles. One public port; everything else on loopback, behind the one process that faces the internet:
+
+```mermaid
+flowchart LR
+  U([Browser])
+  M[[Mail relay]]
+  subgraph box["one box -- everything below :443 is loopback"]
+    direction LR
+    C["Caddy<br/>TLS edge :443"]
+    A["app · http-kit<br/>:3000 (pair :3001/:3002)"]
+    T["Datomic transactor<br/>:4334"]
+    P[("PostgreSQL<br/>:5432")]
+    V[("state volume<br/>/mnt/data")]
+    C -->|"reverse_proxy 127.0.0.1"| A
+    C -->|"/static /uploads /img<br/>served from disk, never proxied"| V
+    A -->|"peer protocol"| T
+    T --> P
+    A -.->|"blobs written,<br/>read back by Caddy"| V
+  end
+  U -->|"HTTPS :443<br/>(auto-TLS, Let's Encrypt)"| C
+  A -.->|"SMTP (sign-in is email)"| M
+```
+
+*The production topology. The only thing the internet can reach is Caddy on `:443`; the app, the transactor, and PostgreSQL all bind loopback, so the firewall and the bind addresses are [two independent walls](43-harden-patch.md) around the same boundary. The mail relay is the one dependency [bought, not built](25-auth-email-flow.md).*
+
 ## The environment, refused into existence
 
 Start with the smallest debt, because fixing it produces the inventory everything else needs. [The web-server chapter](05-web-server.md) established a doctrine for the two crypto keys: dev generates a fallback, `:prod` refuses to start without the real thing, and the refusal is a *named* message. But the doctrine stopped at the keys. Every other `#env` under `:prod` -- the database URIs, the base URL, the SMTP settings -- resolved to `nil` when unset, and each `nil` failed somewhere worse than boot:

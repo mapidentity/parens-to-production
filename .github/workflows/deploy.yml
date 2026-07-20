@@ -21,9 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       MDBOOK_VERSION: 0.4.43
+      MDBOOK_MERMAID_VERSION: 0.14.0
     steps:
       - uses: actions/checkout@v4
-      - name: Install mdBook
+      - name: Install mdBook + mdbook-mermaid
         run: |
           mkdir -p "$HOME/.cargo/bin"
           url="https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
@@ -33,6 +34,13 @@ jobs:
             --retry 5 --retry-delay 5 --retry-all-errors \
             -o /tmp/mdbook.tar.gz "$url"
           tar -xzf /tmp/mdbook.tar.gz -C "$HOME/.cargo/bin"
+          # The mermaid preprocessor the diagram fences need — book.toml
+          # declares [preprocessor.mermaid], so the build fails without it.
+          mm="https://github.com/badboy/mdbook-mermaid/releases/download/v${MDBOOK_MERMAID_VERSION}/mdbook-mermaid-v${MDBOOK_MERMAID_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fLsS \
+            --retry 5 --retry-delay 5 --retry-all-errors \
+            -o /tmp/mdbook-mermaid.tar.gz "$mm"
+          tar -xzf /tmp/mdbook-mermaid.tar.gz -C "$HOME/.cargo/bin"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Setup Pages
         id: pages

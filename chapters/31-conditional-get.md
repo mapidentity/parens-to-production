@@ -18,6 +18,18 @@ Now inventory what one of our anonymous pages actually depends on. The database 
 
 -- knowable **before rendering anything**. Not a hash of the output; a name for the inputs. The database already knows whether the page changed, because the page can only change if *it* did.
 
+That "before rendering anything" is the whole win, and it is a short-circuit in the middleware: a returning visitor's `If-None-Match` is checked against the validator the peer can name from a single number, and on a match the 304 goes back with no handler, no query, no render:
+
+```mermaid
+flowchart TD
+  R["GET (anonymous HTML)<br/>If-None-Match: prev-etag"] --> V["validator = (basis-t, locale, build)<br/>-- basis-t is one number the peer holds"]
+  V --> Q{"If-None-Match<br/>= validator?"}
+  Q -->|"match — nothing changed"| E304["304 Not Modified<br/>no body · handler never runs"]
+  Q -->|"miss — or first visit"| H["run handler, render page"] --> E200["200 + body<br/>+ ETag: validator"]
+```
+
+*A strong ETag elsewhere hashes the rendered bytes -- you do the whole render to discover you did not need it. Here the validator names the *inputs*, so the match is decided before the handler, and the 304 path is a comparison of one number against a header. The measurement chapter times exactly this: the 304 path serves an order of magnitude more requests than the full render.*
+
 ## The middleware
 
 ```clojure
