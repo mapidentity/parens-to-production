@@ -28,7 +28,12 @@ function submitForm(form) {
     pushUrl: false,
     focus: false,
     ignoreActiveValue: true,
-    key: 'live|' + form.id || action,
+    // Distinct in-flight key per form: prefer the id, fall back to the
+    // action. The parens matter — `'live|' + form.id || action` binds as
+    // `('live|' + form.id) || action`, whose left side is always truthy,
+    // so the fallback was dead and every id-less live form shared one key
+    // (and aborted each other's requests).
+    key: 'live|' + (form.id || action),
   });
 }
 

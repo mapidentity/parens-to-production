@@ -215,10 +215,12 @@
   Each tick is try-wrapped so one bad job can never cancel the schedule."
   ([] (start-worker! 2000))
   ([period-ms]
-   (swap! worker
-     (fn [ex]
-       (or
-         ex
+   ;; `locking`, not a side-effecting `swap!`: `swap!` may RETRY its fn
+   ;; under contention, and creating the executor inside it would leak a
+   ;; scheduler thread per retry. The lock makes check-then-create atomic.
+   (locking worker
+     (when-not @worker
+       (reset! worker
          (doto
            ^ScheduledExecutorService
            (Executors/newSingleThreadScheduledExecutor
@@ -239,10 +241,10 @@
 (defn stop-worker!
   "Stop the background job worker (paired with start-worker!)."
   []
-  (swap! worker
-    (fn [ex]
-      (when ex (.shutdownNow ^ScheduledExecutorService ex))
-      nil))
+  (locking worker
+    (when-let [ex @worker]
+      (.shutdownNow ^ScheduledExecutorService ex)
+      (reset! worker nil)))
   nil)
 
 (defn job-by-id
