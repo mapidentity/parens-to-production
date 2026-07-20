@@ -1,3 +1,7 @@
+<div style="text-align: center; margin: 1rem 0 2.5rem;">
+  <img src="images/cover.svg" alt="Parens to Production -- a server-rendered Clojure/Datomic SaaS on one box you own" style="width: 360px; max-width: 100%; height: auto; border-radius: 6px;">
+</div>
+
 # Parens to Production
 
 **A server-rendered, framework-free Clojure/Datomic SaaS -- built, operated, and defended on one box you own.**

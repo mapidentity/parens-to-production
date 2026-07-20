@@ -25,3 +25,10 @@ printer's dpi — the vector scales losslessly.
 The SVG renders in any browser as-is. To rasterize headless (as these PNGs
 were), load the SVG in a page at a 1200×1800 viewport and screenshot at 2×; a
 swiftshader-flagged Chromium works where GPU rasterization is unavailable.
+
+## On the site
+
+The web book (mdBook) has no native cover slot -- it opens on the Introduction
+page. The cover is embedded there via a copy at `chapters/images/cover.svg`
+(mdBook only copies assets under its `src` = `chapters/`). If you change the
+monolith master here, refresh that copy too.
