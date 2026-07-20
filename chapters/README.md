@@ -62,18 +62,21 @@ invitation should be concrete, so here is the whole on-ramp:
 
 ```bash
 git clone <the companion repo>        # the repo this book's code lives in
-code parens-to-production             # open it in VS Code, then "Reopen in Container"
-# ...the devcontainer builds once (JDK, Node, Caddy, Mailpit, TLS certs), then:
-clojure -M:dev                        # a REPL; at its prompt:
-(start!)                              # server up on https://localhost — a real recipe app
+code parens-to-production             # open in VS Code, then "Reopen in Container"
+# ...the devcontainer builds once (JDK, Node, Caddy, Mailpit, TLS certs), then
+# start a REPL and bring the system up:
+clj -M:dev:repl                       # an nREPL your editor connects to
+(start!)                              # server + file watcher, listening on :3000
 ```
 
-That is the entire setup, and [the devcontainer chapter](03-devcontainer.md)
-is the one that earns it: everything above is checked in, so a fresh clone runs
-the same on every machine. You do not need to master that chapter to use its
-result -- open the container, start the REPL, and you have the live system this
-book takes apart. Read a chapter, then go change the thing it just built and
-watch what moves.
+Then open the app: in the in-container browser it is `https://myapp.lan`, the
+full TLS front door the app's own URLs are built around; from your own machine
+it is the editor's forwarded `http://localhost:3000`. That is the entire setup,
+and [the devcontainer chapter](03-devcontainer.md) is the one that earns it:
+everything above is checked in, so a fresh clone runs the same on every machine.
+You do not need to master that chapter to use its result -- open the container,
+start the REPL, and you have the live system this book takes apart. Read a
+chapter, then go change the thing it just built and watch what moves.
 
 One honest note on prerequisites, so the early chapters do not ambush you. The
 book assumes you can read Clojure and are at home with the infrastructure an

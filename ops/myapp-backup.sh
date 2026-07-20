@@ -39,8 +39,24 @@ rsync -a --delete /etc/myapp/ "$BACKUP_DIR/etc-myapp/"
 # move. No --delete here, on purpose: a blob the GC reaped may still be
 # referenced by a DB backup older than the sweep, and a restore from that
 # backup wants it — prune this mirror the day you prune old DB backups.
-# When BACKUP_URI points off-box, this tree must ride the same channel;
-# an `s3 sync` of the same directory is the operator's one-line extension.
-rsync -a "${MYAPP_UPLOADS_ROOT:-/mnt/data/uploads}/" "$BACKUP_DIR/uploads/"
+UPLOADS_ROOT="${MYAPP_UPLOADS_ROOT:-/mnt/data/uploads}"
+rsync -a "$UPLOADS_ROOT/" "$BACKUP_DIR/uploads/"
+
+# Off-box, when the DB goes off-box. backup-db writes s3:// natively, but
+# /etc/myapp and the uploads tree are plain files — they ride the SAME
+# channel via the aws CLI, so the copy that survives the box is complete,
+# not just the database. If BACKUP_URI is off-box and aws is missing, we
+# say so loudly and fail: a silent half-backup is the trap ch.39 opens on.
+case "${BACKUP_URI}" in
+  s3://*)
+    if command -v aws >/dev/null 2>&1; then
+      aws s3 sync --delete "$BACKUP_DIR/etc-myapp/" "$BACKUP_URI/etc-myapp/"
+      aws s3 sync "$UPLOADS_ROOT/" "$BACKUP_URI/uploads/"
+    else
+      echo "ERROR: BACKUP_URI is off-box ($BACKUP_URI) but the 'aws' CLI is not installed — /etc/myapp and the uploads tree were NOT copied off-box (the database was). Install awscli or sync them yourself." >&2
+      exit 1
+    fi
+    ;;
+esac
 
 echo "backup complete: $(du -sh "$BACKUP_DIR" | cut -f1) in $BACKUP_DIR"

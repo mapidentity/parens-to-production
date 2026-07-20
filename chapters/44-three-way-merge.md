@@ -1,6 +1,6 @@
 # Proposing Changes Back: The Three-Way Merge
 
-We return to the application one last time, now that the whole system is in view -- and the feature we build is the one the app has been asking for since [chapter 9](09-recipe-domain.md). "Git for recipes" gave us forks, diffs, lineage, and history. It has every piece of a version-control system except the one that makes version control *collaborative*: a way to offer a fork's changes back. Git calls it a pull request; the merge underneath it is a three-way merge. That is this chapter.
+We return to the application, now that the whole system is in view -- and the feature we build is the one the app has been asking for since [chapter 9](09-recipe-domain.md). "Git for recipes" gave us forks, diffs, lineage, and history. It has every piece of a version-control system except the one that makes version control *collaborative*: a way to offer a fork's changes back. Git calls it a pull request; the merge underneath it is a three-way merge. That is this chapter.
 
 The reframe worth stating first, because it explains why this, rather than live co-editing, is the right collaboration feature here. There are two axes of collaboration. The *synchronous* one (two cursors in one document, Google Docs) is a genuinely hard problem, stack-independent, and [the positioning chapter](02-positioning.md) islanded it on purpose. The *asynchronous* one -- branch, change, propose, merge -- is how most collaboration on content actually happens, and it is the shape this immutable-history stack is built for. A recipe site whose headline feature is forking is begging for the second axis, not the first.
 
@@ -70,4 +70,4 @@ The merge is the crux, so the tests hammer it directly: only-the-fork-changed ap
 
 ## The other axis
 
-This is asynchronous collaboration, and it is where an immutable-history, server-rendered stack is at its strongest: the merge's hard input was a read, the concurrency safety was inherited, and not one line of real-time machinery was required. The *other* axis -- knowing, live, that someone else is here right now -- is the one everyone assumes server-rendering cannot do. The last chapter shows that it can, with a single honest island.
+This is asynchronous collaboration, and it is where an immutable-history, server-rendered stack is at its strongest: the merge's hard input was a read, the concurrency safety was inherited, and not one line of real-time machinery was required. The *other* axis -- knowing, live, that someone else is here right now -- is the one everyone assumes server-rendering cannot do. [The next chapter](45-live-presence.md) shows that it can, with a single honest island.
