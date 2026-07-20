@@ -3,8 +3,11 @@
 # (myapp-watchdog.timer). Any failed check exits non-zero, which flips the
 # oneshot service to failed and fires OnFailure= → myapp-alert@.
 #
-# Three checks, one per class of silent death the audits actually found:
-# an app that answers, a mail relay that connects, a disk with headroom.
+# Four checks, one per class of silent death the audits actually found —
+# an app that answers, a mail relay that connects, disks with headroom on
+# every filesystem that holds state, a backup that is still advancing —
+# plus the heartbeat ping that turns this box's SILENCE into an off-box
+# alarm.
 set -euo pipefail
 
 # Same source of truth as the app itself.

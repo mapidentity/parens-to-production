@@ -100,17 +100,33 @@ exactly as sensitive as `/etc/myapp/env`. Only then restart.
 The [nightly backup](../chapters/39-backup-restore.md) is drilled weekly by
 `myapp-backup-verify.timer` (it restores into scratch storage and proves
 history survived — so the archive you reach for here has been *proven*
-restorable, not merely written). To restore for real, restore into a **fresh**
-database and repoint — never over the live one, which stays standing as
-evidence:
+restorable, not merely written). To restore for real, restore into **fresh
+storage under the same database name** — Datomic refuses a rename (the
+drill's first stumble: a database's identity travels with it), so "fresh"
+means a new PostgreSQL database (the distribution's stock `bin/sql`
+bootstrap scripts, thirty seconds), never a new name, and never over the
+live storage, which stays standing as evidence:
 
 ```
-datomic restore-db "$BACKUP_URI/myapp" "$SCRATCH_OR_NEW_URI"
-# then edit DATABASE_URI in /etc/myapp/env to the restored DB, and:
-systemctl restart myapp
+# 1. Create the fresh shelf (a second PostgreSQL database, same role):
+#    psql -f bin/sql/postgres-db.sql … → datomic_restore
+# 2. Restore the archive into it — same db names, new storage:
+datomic restore-db "$BACKUP_URI/myapp" \
+  "datomic:sql://myapp?jdbc:postgresql://localhost:5432/datomic_restore?user=…"
+datomic restore-db "$BACKUP_URI/myapp-analytics" \
+  "datomic:sql://myapp-analytics?jdbc:postgresql://localhost:5432/datomic_restore?user=…"
+# 3. A peer finds its transactor THROUGH storage (the drill's second
+#    stumble), so the transactor must serve the restored shelf before any
+#    peer can: edit sql-url in /etc/myapp/transactor.properties to
+#    …/datomic_restore…, edit DATABASE_URI + ANALYTICS_DATABASE_URI in
+#    /etc/myapp/env to match, then:
+systemctl restart myapp-transactor myapp
 ```
 
-Rolling back the restore is editing that one line back. If the backup target is
+Rolling back the restore is editing those lines back. Photos restore as a
+file copy: `rsync` the backup's `uploads/` tree back onto the uploads root
+(the mirror is a superset of what any restored database references — see
+the grace-window argument in [ch.49](../chapters/49-file-storage.md)). If the backup target is
 off-box (`BACKUP_URI=s3://…`, as production should be — the local disk shares
 the failure domain you are recovering from), the same command reads from there.
 
@@ -121,7 +137,11 @@ A deploy that passed its smoke but is wrong in production rolls back as one unit
 
 ```
 /etc/scripts/deploy-myapp.sh --rollback     # single-instance; restores .prev + re-smokes
-# pair topology: the previous jar is still at the other port's path —
+# pair topology: the previous jar is still at the other port's path, but
+# restore the MANIFEST first — the old instance keeps its manifest in
+# memory only until its next restart, and old code must never boot
+# against the newer manifest:
+#   cp -f /mnt/data/static/asset-manifest.edn.prev /mnt/data/static/asset-manifest.edn
 #   systemctl start myapp@<old-port> ; systemctl stop myapp@<new-port>
 ```
 

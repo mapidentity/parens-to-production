@@ -84,11 +84,19 @@ send_mail() {  # subject, body
 fails_file="$STATE_DIR/consecutive-failures"
 alerted_file="$STATE_DIR/alerted"
 
+# The sends are guarded, not bare: under `set -e` a relay hiccup in
+# send_mail would kill the script mid-state-machine (the AGENTS.md rule —
+# the alert path must never be fatal). But a plain `|| true` would be
+# WRONG here: it would advance the latch as if the mail had gone out, and
+# the one alert of the incident would be swallowed. So each state change
+# is conditional on the send succeeding — a failed send leaves the latch
+# untouched and the next run retries it.
 if [ ${#problems[@]} -eq 0 ]; then
   if [ -f "$alerted_file" ]; then
-    send_mail "[myapp-observer] RESOLVED: $host healthy again" \
-      "All external checks pass (DNS, TLS, HTTP body)."
-    rm -f "$alerted_file"
+    if send_mail "[myapp-observer] RESOLVED: $host healthy again" \
+      "All external checks pass (DNS, TLS, HTTP body)."; then
+      rm -f "$alerted_file"
+    fi
   fi
   rm -f "$fails_file"
   exit 0
@@ -99,8 +107,9 @@ echo "$fails" > "$fails_file"
 echo "observer: check failed ($fails/$FAILS_BEFORE_ALERT): ${problems[*]}" >&2
 
 if [ "$fails" -ge "$FAILS_BEFORE_ALERT" ] && [ ! -f "$alerted_file" ]; then
-  send_mail "[myapp-observer] ALERT: $host failing from outside" \
-    "$(printf '%s\n' "${problems[@]}")"
-  touch "$alerted_file"
+  if send_mail "[myapp-observer] ALERT: $host failing from outside" \
+    "$(printf '%s\n' "${problems[@]}")"; then
+    touch "$alerted_file"
+  fi
 fi
 exit 1

@@ -49,7 +49,7 @@ RESULT verdict: PASS
 
 The third line is the one this book cares about most. `d/history` works on the restored database -- every version, [every diff](09-recipe-domain.md), [every transaction's author and note](10-provenance.md) crossed the backup boundary intact, because the archive carries the log, not a snapshot of the present. The features this application is *about* survive its disaster story. That is not a given elsewhere: a `mysqldump` of a hand-built versions table restores whatever the versions table happened to contain; this restores *the time axis itself*.
 
-The production runbook falls out of the same property that made the drill safe, and [the URI-is-config design](35-going-live.md) pays one more time: restore into a *fresh* database, point `DATABASE_URI` at it, restart. The damaged original is never overwritten (it remains standing as evidence), and "rollback of the restore" is editing one line back.
+The production runbook falls out of the same property that made the drill safe, and [the URI-is-config design](35-going-live.md) pays one more time: restore into *fresh storage under the same name* (the first stumble is why "fresh database name" is not on the menu), point the transactor's `sql-url` and then `DATABASE_URI` at it — the second stumble is why the transactor moves first — and restart both. The damaged original is never overwritten (it remains standing as evidence), and "rollback of the restore" is editing those lines back.
 
 ## The chore ch.36 promised
 

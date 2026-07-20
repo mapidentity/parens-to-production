@@ -9,6 +9,17 @@ Four surfaces, four closures: the network, the dependency tree, the OS, and the 
 [Going live](35-going-live.md) bound the datastore to loopback — the transactor on `4334`, PostgreSQL on `5432`, the app on `3000` — so nothing but Caddy faces the internet. That was true, and it rested entirely on *bind addresses*: one config typo, one service that defaults to `0.0.0.0`, and a port is exposed with nothing to catch it. A firewall makes the same guarantee a second time, at a different layer, so the two are independent. `ops/nftables.conf` is default-deny:
 
 ```
+table inet firewall
+delete table inet firewall
+
+table inet firewall {
+	set ssh4 {
+		type ipv4_addr
+		flags dynamic
+		timeout 1m
+		size 65535
+	}
+	,,,
 	chain input {
 		type filter hook input priority filter; policy drop;
 
@@ -16,7 +27,8 @@ Four surfaces, four closures: the network, the dependency tree, the OS, and the 
 		ct state invalid drop
 		iif "lo" accept
 		,,,
-		tcp dport 22 ct state new limit rate 5/minute accept
+		tcp dport 22 ct state new add @ssh4 { ip saddr limit rate 5/minute } accept
+		tcp dport 22 ct state new add @ssh6 { ip6 saddr limit rate 5/minute } accept
 		tcp dport { 80, 443 } accept
 
 		# Everything else — including 3000-3002, 4334, 5432 — is dropped by
@@ -24,7 +36,7 @@ Four surfaces, four closures: the network, the dependency tree, the OS, and the 
 	}
 ```
 
-The shape is the argument. `policy drop` means the datastore ports are closed *without a rule mentioning them* — you cannot forget to block what is blocked by default; you can only forget to *open*, which fails safe. Loopback is accepted, because [the whole app↔proxy↔datastore conversation rides `lo`](35-going-live.md). SSH is rate-limited at the packet level (five new connections per minute per source) so a credential-spray is throttled before `sshd` even accepts it (key-only auth is `sshd`'s job; this is depth beneath it). And only `80`/`443` are open to the world, because everything else the box runs is behind Caddy on loopback. The [fail2ban bans from the previous chapter](42-detect-respond.md) land in nftables' own separate table, so the two compose without touching.
+The shape is the argument. `policy drop` means the datastore ports are closed *without a rule mentioning them* — you cannot forget to block what is blocked by default; you can only forget to *open*, which fails safe. Loopback is accepted, because [the whole app↔proxy↔datastore conversation rides `lo`](35-going-live.md). SSH is rate-limited at the packet level, and the dynamic set is what makes the limit *per source*: each client address gets its own five-new-connections-a-minute budget, tracked in a bounded, expiring set. The first cut of this rule used a bare `limit rate` — one **global** bucket — which reads the same in prose and behaves opposite under attack: a single hostile host drains the shared allowance and the operator's own SSH is what gets dropped, the limiter converted into a lockout. Per-source, a spray throttles the sprayer and nobody else (key-only auth is `sshd`'s job; this is depth beneath it). And only `80`/`443` are open to the world, because everything else the box runs is behind Caddy on loopback. The [fail2ban bans from the previous chapter](42-detect-respond.md) land in nftables' own separate table — which is also why the file replaces *its own table* by name (the declare-then-delete pair above) rather than opening with `flush ruleset`: the obvious one-liner atomically destroys *every* table, fail2ban's active bans included, each time the base firewall reloads. Two owners of one ruleset compose only if each scopes its writes.
 
 One honesty note, and it is the same one [the scaling audit](41-beyond-one-box.md) made about the transactor's failover: this ruleset is *reviewed against the nftables grammar, not applied in the book's sandbox*, which lacks the kernel capability to load packet rules. Applying and testing it (`nft -f`, then a port scan from off-box confirming only 80/443 answer) is a step for the real host, and the runbook says so. A firewall you have not port-scanned from outside is a firewall you are trusting; this chapter marks which claims it drilled and which it reasoned.
 
