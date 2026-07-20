@@ -9,40 +9,6 @@
 
   <rect width="1200" height="1800" fill="url(#bg)"/>
 
-  <!-- FAINT background lineage: a spread-out fork/version DAG as a watermark,
-       growing up from the base toward the title -->
-  <g opacity="0.08" stroke="#818cf8" stroke-width="1.6" fill="none" stroke-linecap="round">
-    <path d="M600 1662 L600 1560"/>
-    <path d="M600 1560 L440 1466"/>
-    <path d="M600 1560 L760 1466"/>
-    <path d="M440 1466 L338 1364"/>
-    <path d="M440 1466 L528 1364"/>
-    <path d="M338 1364 L272 1236"/>
-    <path d="M528 1364 L556 1236"/>
-    <path d="M760 1466 L672 1364"/>
-    <path d="M760 1466 L862 1364"/>
-    <path d="M862 1364 L928 1236"/>
-    <path d="M672 1364 L644 1236"/>
-    <path d="M556 1236 L600 1112"/>
-    <path d="M644 1236 L600 1112"/>
-    <path d="M272 1236 L318 1104"/>
-    <path d="M928 1236 L882 1104"/>
-    <path d="M318 1104 L600 1112"/>
-    <path d="M882 1104 L600 1112"/>
-    <path d="M600 1112 L600 992"/>
-  </g>
-  <g opacity="0.08" fill="#0f1830" stroke="#818cf8" stroke-width="1.6">
-    <circle cx="600" cy="1662" r="7"/>
-    <circle cx="600" cy="1560" r="7"/>
-    <circle cx="440" cy="1466" r="7"/><circle cx="760" cy="1466" r="7"/>
-    <circle cx="338" cy="1364" r="7"/><circle cx="528" cy="1364" r="7"/>
-    <circle cx="672" cy="1364" r="7"/><circle cx="862" cy="1364" r="7"/>
-    <circle cx="272" cy="1236" r="7"/><circle cx="556" cy="1236" r="7"/>
-    <circle cx="644" cy="1236" r="7"/><circle cx="928" cy="1236" r="7"/>
-    <circle cx="318" cy="1104" r="7"/><circle cx="882" cy="1104" r="7"/>
-    <circle cx="600" cy="1112" r="7"/>
-    <circle cx="600" cy="992" r="9" fill="#3b3480"/>
-  </g>
 
   <!-- the one box you own: a restrained hairline frame -->
   <rect x="84" y="84" width="1032" height="1632" fill="none" stroke="#334155" stroke-width="1.5"/>

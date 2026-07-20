@@ -10,10 +10,13 @@ indigo/amber the app and the mdBook site use.
   fork-and-merge DAG (the app's own `:recipe/forked-from` graph) climbs to an
   amber *current* version that ships up into the title. Says the book's thesis —
   "the database already knows" — and could be no other book. Most distinctive.
-- **`parens-to-production--monolith.*`** — the typographic direction. The title
-  as one mass, held inside a pair of parentheses (the Lisp pun made structural),
-  crowned by the fork-mark, footed by `;; drilled or not claimed`. Strongest at
-  thumbnail size; the safest, most conventionally sellable choice.
+- **`parens-to-production--monolith.*`** — the chosen direction. The title as one
+  justified mass (both words tracked to a common measure), held inside a pair of
+  parentheses (the Lisp pun made structural), crowned by the fork-mark, footed by
+  `;; drilled or not claimed`, over a faint lineage watermark that grows up from
+  the base toward the title. Strongest at thumbnail; the safest sell.
+- **`parens-to-production--monolith-clean.*`** — the same, without the watermark,
+  for maximum austerity / when the background reads as noise at small sizes.
 
 Both are self-contained SVG (system fonts, no external refs). For print, set a
 licensed display face in place of the Helvetica/Arial stack and re-render at the
