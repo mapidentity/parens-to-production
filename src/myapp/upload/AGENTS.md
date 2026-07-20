@@ -3,7 +3,7 @@
 > Photos without a bucket: normalize each upload into a WebP *source* keyed by its own SHA-256, store metadata in Datomic, serve lazy `card`/`hero` derivatives, and reap orphans on a clock. All decode/resize runs in a libvips child process, never on the app heap.
 
 ## Key files
-- `core.clj` (`myapp.upload.core`) — `store!` (validate→normalize→hash→dedup→transact), `ensure-derivative!` (lazy variant gen), `url-for`/`derivative-url`/`variant-dimensions`, orphan GC (`gc-orphans!`, `start-gc!`/`stop-gc!`), `check-image-processor!`.
+- `core.clj` (`myapp.upload.core`) — `store!` (validate→normalize→hash→dedup→transact), `ensure-derivative!` (lazy variant gen), `url-for`/`derivative-url`/`variant-dimensions`, orphan GC (`gc-orphans!`, `start-gc!`/`stop-gc!`), boot checks (`check-image-processor!`, `check-uploads-root!`).
 - `vips.clj` (`myapp.upload.vips`) — the interop exemplar: `run` (ProcessBuilder), `probe` (`vipsheader`), `thumbnail!` (`vipsthumbnail`), `check!`, `busy?`.
 
 ## Conventions / rules
@@ -20,7 +20,7 @@
 - Saturation is load-shed, not a queue: no `processes` permit within `acquire-timeout-ms` → `run` throws `::busy` → `store!`/`ensure-derivative!` surface `:busy`, which the handler turns into 503 + Retry-After. Preserve that path (`busy?` reads `ex-data`); don't swallow it.
 - `max-pixels` (25M) is checked from the header via `probe` BEFORE any raster is expanded — that's the decompression-bomb defense. Keep the check before `thumbnail!`, not after.
 - Re-encoding strips EXIF (incl. GPS) and applies orientation via the `[…,strip]` save option + vips autorotation. Don't remove `strip`.
-- `check-image-processor!`/`vips/check!` runs at server boot (`myapp.core`) so a host missing `libvips-tools` fails the deploy loudly, not on a user's first upload. `start-gc!` is likewise wired at boot.
+- `check-image-processor!`/`vips/check!` AND `check-uploads-root!` run at server boot (`myapp.core`): a host missing `libvips-tools` — or an uploads root the systemd sandbox didn't grant (`ReadWritePaths=` in the units) — fails the deploy loudly, not a user's first upload. `start-gc!` is likewise wired at boot.
 
 ## Running / testing what's here
 - Tests: `clojure -X:test` — namespace `myapp.upload.core-test` (drives real ImageIO-written bytes end to end: normalize, dedup, hostile-input rejection, lazy derivative caching, `:busy` shedding, orphan reap).

@@ -3,7 +3,7 @@
 > This is `myapp`, the whole app. The four top-level files are the shared spine (server lifecycle, config, clock, i18n); the sibling dirs are the subsystems. Everything a request touches is reachable from here. Read this before adding a feature that crosses more than one dir.
 
 ## Key files (this dir)
-- `core.clj` — the server lifecycle. `start-server!`/`stop-server!` wire, in order, the DBs + libvips boot check + http-kit + presence reaper + mailer + REPL + job worker + upload GC. `-main` is the uberjar entry (gen-class, NOT clojure.main). Adding a background subsystem means starting AND stopping it here.
+- `core.clj` — the server lifecycle. `start-server!`/`stop-server!` wire, in order, the DBs + boot checks (libvips, uploads-root writability) + http-kit + presence reaper + mailer + REPL + job worker + upload GC. `-main` is the uberjar entry (gen-class, NOT clojure.main). Adding a background subsystem means starting AND stopping it here.
 - `config.clj` — Aero + `#profile` load of `resources/config.edn`. `get-config` reads a path from the delayed `config` map. `:prod` fails closed on missing keys/vars (`prod-required`); `:dev` generates random crypto keys with a warning.
 - `time.clj` — the single swappable clock. Every `now`/`today` in the app routes through here; direct `Instant/now`/`LocalDate/now`/`System/currentTimeMillis` are BANNED elsewhere and `./lint` greps for them. Tests pin time with `with-clock` + `fixed-clock`.
 - `i18n.clj` — `t(locale, key)` translation lookup + `detect-locale` (Accept-Language, RFC 4647). Strings live in `i18n/en.clj` + `i18n/nl.clj` as plain defs, deref'd through vars so they hot-reload.

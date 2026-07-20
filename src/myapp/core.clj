@@ -68,6 +68,10 @@
     ;; with the pair deploy (ch.36) keeping the old instances serving — not a 500
     ;; on some user's first photo upload days later.
     (println (str "Image processor: libvips " (upload/check-image-processor!)))
+    ;; Prove the uploads root is writable, for the same reason: the systemd
+    ;; sandbox makes the filesystem read-only except paths granted by name, so
+    ;; a forgotten ReadWritePaths= must fail the deploy, not a user's upload.
+    (println (str "Uploads root: " (upload/check-uploads-root!)))
     ;; Start HTTP server
     (println (str "Starting server on " host ":" port "..."))
     (reset! server

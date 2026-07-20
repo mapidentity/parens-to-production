@@ -25,7 +25,22 @@ chmod 700 "$BACKUP_DIR"   # the backup contains everything the database does
 
 # The other half of "what is state on this box" (ch.35): /etc/myapp.
 # The env file holds the crypto keys — the backup directory must be
-# treated as exactly as secret as the box itself.
-cp -a /etc/myapp "$BACKUP_DIR/etc-myapp"
+# treated as exactly as secret as the box itself. rsync --delete keeps an
+# exact mirror; cp -a into an existing target would NEST a second copy at
+# etc-myapp/myapp/ on every run after the first and never drop a file
+# deleted at the source.
+rsync -a --delete /etc/myapp/ "$BACKUP_DIR/etc-myapp/"
+
+# User photos (ch.49): the content-addressed blob tree. A blob is written
+# BEFORE the transaction that references it and deleted only long AFTER it
+# goes unreferenced, so a copy taken at-or-after backup-db is always a
+# superset of what the restored database points at — every reference
+# resolves. Content-addressed names make rsync near-free: only new blobs
+# move. No --delete here, on purpose: a blob the GC reaped may still be
+# referenced by a DB backup older than the sweep, and a restore from that
+# backup wants it — prune this mirror the day you prune old DB backups.
+# When BACKUP_URI points off-box, this tree must ride the same channel;
+# an `s3 sync` of the same directory is the operator's one-line extension.
+rsync -a "${MYAPP_UPLOADS_ROOT:-/mnt/data/uploads}/" "$BACKUP_DIR/uploads/"
 
 echo "backup complete: $(du -sh "$BACKUP_DIR" | cut -f1) in $BACKUP_DIR"

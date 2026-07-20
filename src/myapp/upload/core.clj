@@ -108,6 +108,30 @@
   []
   (vips/check!))
 
+(defn check-uploads-root!
+  "Prove the uploads root exists and is writable at startup, or throw.
+  Same philosophy as `check-image-processor!`: under the production sandbox
+  every writable path is granted by name (`ReadWritePaths=` in the unit), so a
+  missing grant — or an unprovisioned directory — must fail the deploy loudly,
+  not surface as a read-only-filesystem error on a user's first upload. The
+  `mkdirs` is a dev/test convenience; in production the parent is read-only
+  and the directory is provisioned once, owned by the service user.
+  Returns the root's absolute path."
+  []
+  (let [^File root (uploads-root)]
+    (.mkdirs root)
+    (let [probe (io/file root (str ".boot-probe-" (System/nanoTime)))]
+      (try
+        (spit probe "ok")
+        (catch Exception e
+          (throw
+            (ex-info
+              "Uploads root is not writable — provision the directory and grant it in the unit (ReadWritePaths=)"
+              {:root (str root)}
+              e)))
+        (finally (io/delete-file probe true))))
+    (.getAbsolutePath root)))
+
 (defn- sha256
   "Lowercase-hex SHA-256 of a byte array — the content address."
   [^bytes b]

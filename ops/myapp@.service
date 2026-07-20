@@ -22,6 +22,10 @@ Environment=MYAPP_PORT=%i
 LogsDirectory=myapp
 Environment=MYAPP_SECURITY_LOG=/var/log/myapp/security.log
 EnvironmentFile=/etc/myapp/env
+# Same uploads grant as myapp.service — the pair instances take uploads
+# during a deploy window too; a missing grant here would EROFS exactly the
+# uploads that arrive mid-deploy. Path-literal, like every sandbox grant.
+ReadWritePaths=/mnt/data/uploads
 # One jar file PER INSTANCE, so the running instance's jar is never
 # replaced underneath a live JVM — deploy-pair.sh copies the new build to
 # the idle instance's path before starting it.

@@ -10,13 +10,17 @@ SMTP_PORT="${SMTP_PORT:-587}"
 
 # Cooldown: OnFailure= plus a 2-minute timer means a persistent failure
 # would email every 2 minutes. One alert per unit per half hour; the
-# operator is awake after the first one.
-stamp="/run/myapp-alert-${unit//\//_}"
+# operator is awake after the first one. The stamp dir is granted by the
+# unit (RuntimeDirectory=myapp-alert) — under ProtectSystem=strict the
+# rest of /run is read-only. The write is best-effort (|| true) on
+# purpose: if the stamp ever becomes unwritable again, the failure mode
+# must be a noisy inbox, not an alerter that dies before it has sent.
+stamp="/run/myapp-alert/${unit//\//_}"
 now=$(date +%s)
 if [ -f "$stamp" ] && [ $((now - $(cat "$stamp"))) -lt 1800 ]; then
   exit 0
 fi
-echo "$now" > "$stamp"
+echo "$now" > "$stamp" || true
 
 body=$(mktemp)
 trap 'rm -f "$body"' EXIT

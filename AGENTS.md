@@ -28,7 +28,7 @@ npx playwright test                # e2e (auto-starts the e2e server on :9876; n
 
 ## Where things are
 
-- `src/myapp/` — the app. `core.clj` (server lifecycle: start/stop wires the presence reaper, mailer, job worker, upload GC, and the libvips boot check), `config.clj` (aero + `#profile`), `time.clj` (the one swappable clock), then subsystems, each with its own `AGENTS.md`: `web/` (HTTP), `db/` (Datomic), `recipe/` (domain), `upload/` (files + libvips), `auth/`, `jobs/`, `admin/`, `analytics/`, `i18n/`.
+- `src/myapp/` — the app. `core.clj` (server lifecycle: start/stop wires the presence reaper, mailer, job worker, upload GC, and the libvips + uploads-root boot checks), `config.clj` (aero + `#profile`), `time.clj` (the one swappable clock), then subsystems, each with its own `AGENTS.md`: `web/` (HTTP), `db/` (Datomic), `recipe/` (domain), `upload/` (files + libvips), `auth/`, `jobs/`, `admin/`, `analytics/`, `i18n/`.
 - `test/` — unit + smoke tests (datomic:mem). `e2e/` — Playwright specs against a real server.
 - `ops/` — the box: systemd units, Caddy, deploy scripts, fail2ban/nftables, the RUNBOOK, the failover lab (`ops/lab/`).
 - `chapters/` — the book (mdBook; `SUMMARY.md` is the TOC). `docs/` — non-book planning artifacts (not in the build).

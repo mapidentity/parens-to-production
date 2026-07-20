@@ -20,6 +20,15 @@ Environment=MYAPP_PROFILE=prod
 # (ch.42) lands there — the one file fail2ban tails and forensics greps.
 LogsDirectory=myapp
 Environment=MYAPP_SECURITY_LOG=/var/log/myapp/security.log
+# User photos (ch.49): the content-addressed store and its derivative cache.
+# ProtectSystem=strict means every writable path is granted here BY NAME —
+# without this line every upload, on-the-fly derivative, and GC sweep dies
+# with a read-only-filesystem error. If MYAPP_UPLOADS_ROOT moves, move this
+# grant with it: the sandbox is path-literal. The directory must exist
+# (provisioned once, owned by User=) or the unit refuses to start — and the
+# boot check (myapp.upload.core/check-uploads-root!) proves writability
+# either way, so a missing grant fails the deploy, not a user's upload.
+ReadWritePaths=/mnt/data/uploads
 # The live-diagnosis lever (ch.43, RUNBOOK): a loopback-only socket REPL the
 # app starts when this is set. Reachable ONLY over an SSH tunnel to the box
 # (it binds 127.0.0.1) — a connection is unauthenticated RCE, so network

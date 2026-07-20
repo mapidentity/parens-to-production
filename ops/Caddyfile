@@ -41,11 +41,30 @@
 myapp.example.com {
 	encode zstd gzip
 
-	# Front-door limits — the "wall" the app repeatedly defers to (ch.21's
-	# body cap, ch.45's slow-reader). A request body over 2 MB is refused
-	# with 413 before it reaches the app: the recipe forms are kilobytes, so
-	# this only ever stops an abusive upload from touching the single heap.
-	request_body {
+	# Front-door limits — the request-body "wall" the app defers to (ch.21).
+	# Over the cap Caddy answers 413 before a byte reaches the app. Two
+	# tiers: the recipe forms are kilobytes, so 2 MB bounds everything —
+	# except the one route that legitimately carries a photo (ch.49), which
+	# gets the app's 5 MB contract plus multipart-envelope headroom. The app
+	# still enforces the real 5 MB ceiling with a friendly, translated
+	# error; this wall only exists so an abusive body never touches the
+	# single heap. (A slow READER — the response direction — is a different
+	# problem, and deliberately not bounded here: see the SSE note in the
+	# upstream block above.)
+	@photo_upload {
+		method POST
+		path /recipes/*/image
+	}
+	request_body @photo_upload {
+		max_size 6MB
+	}
+	@not_photo_upload {
+		not {
+			method POST
+			path /recipes/*/image
+		}
+	}
+	request_body @not_photo_upload {
 		max_size 2MB
 	}
 

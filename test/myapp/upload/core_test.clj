@@ -199,3 +199,9 @@
           (is
             (some? (d/entid (d/db h/*conn*) [:upload/hash (:upload/hash kept)]))
             "kept entity remains"))))))
+
+(deftest check-uploads-root-test
+  (testing "the boot probe proves the configured root writable and returns its path"
+    (let [^String path (upload/check-uploads-root!)]
+      (is (= (.getAbsolutePath (upload/uploads-root)) path))
+      (is (.isDirectory (File. path))))))

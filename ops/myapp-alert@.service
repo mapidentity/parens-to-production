@@ -15,4 +15,12 @@ ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 LockPersonality=true
+# ProtectSystem=strict makes /run read-only along with everything else, so
+# the cooldown stamp myapp-alert.sh writes needs its slot GRANTED here —
+# without it the alerter dies on the stamp write before it has sent
+# anything, and the whole OnFailure= spine goes silent. Preserve= keeps
+# the stamp dir (and so the half-hour cooldown) across oneshot runs; a
+# reboot clears /run, which is the right reset — a reboot is news.
+RuntimeDirectory=myapp-alert
+RuntimeDirectoryPreserve=yes
 
