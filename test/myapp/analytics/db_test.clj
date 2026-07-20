@@ -25,7 +25,10 @@
   (let [convert-instant #'myapp.analytics.db/convert-instant]
     (is (= "hello" (convert-instant "hello")))
     (is (= 42 (convert-instant 42)))
-    (let [d (Date.)]
+    ;; A fixed Date via Date/from, not a wall-clock Date constructor: the
+    ;; passthrough check needs *a* Date, not the current time — and the
+    ;; no-arg constructor is a now-call the time gate now bans outright.
+    (let [d (Date/from (Instant/parse "2026-01-01T00:00:00Z"))]
       (is (identical? d (convert-instant d))))))
 
 ;; -- schema --

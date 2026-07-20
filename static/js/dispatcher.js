@@ -292,7 +292,11 @@ export async function fetchAndMorph(url, opts = {}) {
 }
 
 function onClick(e) {
-  // Allow inline onclick handlers (event.stopPropagation, etc.) to short-circuit.
+  // This listener runs in the CAPTURE phase (see addEventListener(...true)
+  // below), so it fires BEFORE a target's own inline onclick — an
+  // `onclick="return false"` on the link cannot pre-empt us the way it
+  // could a bubble-phase handler. What CAN short-circuit us is an ANCESTOR
+  // capture handler that calls preventDefault first; we honor that here.
   if (e.defaultPrevented) return;
   const a = e.target.closest('a[href]');
   if (!a) return;

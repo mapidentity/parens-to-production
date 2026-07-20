@@ -14,11 +14,15 @@
   transacted by `create-database!` on startup.
 
 ## Conventions / rules
-- **Never call raw `d/pull`/`d/pull-many`/`d/q`/`d/transact`/`d/with` from outside this ns.**
-  Use the `*`-suffixed wrappers so the Peer's `java.util.Date` becomes `java.time.Instant`
-  (and Instants become Dates on write). The two in-file raw `d/pull` sites are intentional and
-  carry `#_:clj-kondo/ignore` + a comment explaining why (conversion on the next line, or a
-  `:db/id`-only ref pull with no Date leakage). Don't add a third without the same justification.
+- **Never call raw `d/pull`/`d/pull-many`/`d/transact`/`d/with` — or a `d/q` that can return a
+  date — from outside this ns.** Use the `*`-suffixed wrappers so the Peer's `java.util.Date`
+  becomes `java.time.Instant` (and Instants become Dates on write). Raw `d/q` for a scalar or
+  eid/collection find that returns NO instant value is fine and common (it is how most reads
+  resolve an eid before pulling — see ch.08); the rule is about DATE LEAKAGE, not `d/q` itself.
+  `q*` exists for the rare tuple query that DOES carry a date. The two in-file raw `d/pull` sites
+  are intentional and carry `#_:clj-kondo/ignore` + a comment (conversion on the next line, or a
+  `:db/id`-only ref pull with no Date leakage). Don't add a raw date-returning read without the
+  same justification.
 - **Any externally-supplied id → an eid MUST pass through `entid-owned`/`pull-owned`.** A raw
   `(d/entid db [:recipe/id …])` or `(d/pull db … [:recipe/id …])` in a handler is a tenant-isolation
   bypass. These helpers return `nil` for both "no such entity" AND "owned by another user" — the

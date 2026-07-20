@@ -69,21 +69,30 @@
   (d/db (get-connection)))
 
 (defn convert-instants
-  "Recursively convert Instant to Date (for writing to Datomic)."
+  "Recursively convert Instant to Date (for writing to Datomic).
+  Recurses through every collection shape tx-data can take — maps,
+  vectors, sets, AND seqs/lists (a `(map …)`-built tx value is a lazy
+  seq, not a vector). A shape that slips through un-recursed would carry a
+  raw Instant to the transactor, which rejects it far from here — the
+  fail-loud the bridge exists to prevent."
   [x]
   (cond (instance? Instant x) (Date/from x)
         (map? x) (into {} (map (fn [[k v]] [k (convert-instants v)])) x)
         (vector? x) (mapv convert-instants x)
         (set? x) (set (map convert-instants x))
+        (seq? x) (map convert-instants x)
         :else x))
 
 (defn convert-dates
-  "Recursively convert Date to Instant (for reading from Datomic)."
+  "Recursively convert Date to Instant (for reading from Datomic).
+  Recurses through maps, vectors, sets, and seqs/lists alike — see
+  `convert-instants` on why a bare seq must not pass through untouched."
   [x]
   (cond (instance? Date x) (.toInstant ^Date x)
         (map? x) (into {} (map (fn [[k v]] [k (convert-dates v)])) x)
         (vector? x) (mapv convert-dates x)
         (set? x) (set (map convert-dates x))
+        (seq? x) (map convert-dates x)
         :else x))
 
 (defn pull*
@@ -109,6 +118,22 @@
   database value that will never be transacted (speculative writes)."
   [db tx-data]
   (d/with db (mapv convert-instants tx-data)))
+
+(defn cas-failed?
+  "True if `e` (or any cause in its chain) is Datomic's `:db.fn/cas` conflict.
+  The one place this walks the cause chain, shared by every optimistic-
+  concurrency site (recipe OCC, the delete-race guards, the job-claim
+  worker) — a CAS refusal is a Datomic-level fact, not a per-domain one."
+  [e]
+  (boolean
+    (some
+      (fn [t] (= :db.error/cas-failed (:db/error (ex-data t))))
+      (take-while
+        some?
+        (iterate
+          #(some-> ^Throwable %
+                   (.getCause))
+          e)))))
 
 (defn q*
   "Like d/q but converts Date values to Instant in result tuples."

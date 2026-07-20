@@ -105,8 +105,14 @@
          {:property (str "og:" (name k))
           :content content}])
       (when-let [ld (:json-ld page-meta)]
+        ;; write-str escapes `/` (a literal </script> cannot close the tag)
+        ;; but not `<` — and `<!--<script>` inside a recipe title would flip
+        ;; the HTML parser into the script-data double-escape state, where
+        ;; our own closing tag can be mis-consumed. `<` means the same
+        ;; thing to JSON and nothing to the HTML parser, so every `<` in
+        ;; user data leaves as the escape, never the character.
         [:script {:type "application/ld+json"}
-         (h/raw (json/write-str ld))])
+         (h/raw (str/replace (json/write-str ld) "<" "\\u003c"))])
       [:link
        {:rel "icon"
         :type "image/svg+xml"
@@ -565,7 +571,7 @@
   two audiences. Emitted by
   base-layout as application/ld+json (data, never executed; the strict CSP
   is indifferent to it)."
-  [recipe canonical]
+  [recipe canonical image-url]
   (cond-> {"@context" "https://schema.org"
            "@type" "Recipe"
            "name" (:recipe/title recipe)
@@ -578,6 +584,8 @@
                                          "text" s})
                                       (recipe/lines (:recipe/steps recipe)))
            "url" canonical}
+    image-url (assoc "image"
+                [image-url])
     (:recipe/created-at recipe) (assoc "datePublished"
                                   (str (:recipe/created-at recipe)))
     (:recipe/updated-at recipe) (assoc "dateModified"
@@ -598,7 +606,12 @@
     {:admin? admin?
      :page-meta (when base-url
                   (let [canonical (str base-url "/recipes/" (:recipe/id recipe))
-                        description (first (recipe/lines (:recipe/description recipe)))]
+                        description (first (recipe/lines (:recipe/description recipe)))
+                        ;; The promise ch.30 made — "og:image the day photos
+                        ;; exist" — comes due here: the hero derivative,
+                        ;; absolute because unfurlers resolve nothing.
+                        image-url (when-let [img (:recipe/image recipe)]
+                                    (str base-url (upload/derivative-url img "hero")))]
                     (cond-> {:title (:recipe/title recipe)
                              :canonical canonical
                              :og (cond-> {:title (:recipe/title recipe)
@@ -606,8 +619,10 @@
                                           :url canonical
                                           :site_name "MyApp"}
                                    description (assoc :description
-                                                 description))
-                             :json-ld (recipe-json-ld recipe canonical)}
+                                                 description)
+                                   image-url (assoc :image
+                                               image-url))
+                             :json-ld (recipe-json-ld recipe canonical image-url)}
                       description (assoc :description
                                     description))))}
     [:div.max-w-3xl.mx-auto
@@ -881,7 +896,7 @@
             {:type "submit"} (if editing? (t locale :recipe/save) (t locale :recipe/create))]
            (when editing?
              [:a.text-sm.text-text-secondary.hover:text-text-primary
-              {:href (str "/recipes/" (:recipe/id recipe))} "Cancel"])]]]
+              {:href (str "/recipes/" (:recipe/id recipe))} (t locale :common/cancel)])]]]
         ;; The live-preview column. The aside is the server-preview island's
         ;; marker: on debounced input it POSTs the form's fields to the
         ;; preview endpoint and morphs the response into itself. Initial

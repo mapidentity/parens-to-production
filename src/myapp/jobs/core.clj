@@ -100,21 +100,6 @@
 ;; The worker
 ;; ---------------------------------------------------------------------------
 
-(defn- cas-failed?
-  "True if `e` (or a cause) is Datomic's compare-and-swap conflict.
-  That is, the job's status was changed by someone else between our read and
-  our write — another worker claimed it, or the reclaimer moved it."
-  [e]
-  (boolean
-    (some
-      (fn [t] (= :db.error/cas-failed (:db/error (ex-data t))))
-      (take-while
-        some?
-        (iterate
-          #(some-> ^Throwable %
-                   .getCause)
-          e)))))
-
 (defn- cas-status!
   "CAS a job's `:job/status` from `from` to `to`, in one transaction with `extra`.
   Returns true, or false if the CAS lost (a concurrent worker or the reclaimer
@@ -123,7 +108,7 @@
   (try
     @(db/transact* conn (into [[:db.fn/cas eid :job/status from to]] extra))
     true
-    (catch Throwable e (if (cas-failed? e) false (throw e)))))
+    (catch Throwable e (if (db/cas-failed? e) false (throw e)))))
 
 (defn- due-eids
   "Ids of :pending jobs whose run-after has arrived, oldest first, capped."

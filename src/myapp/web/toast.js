@@ -58,7 +58,8 @@
     'recipe-deleted': 'Recipe deleted',
     'version-restored': 'Version restored ✓',
     'proposal-merged': 'Proposed change merged ✓',
-    'photo-added': 'Photo added ✓'
+    'photo-added': 'Photo added ✓',
+    'rate-limited': 'Too many requests just now — give it a few minutes'
   };
 
   function processToastParam() {

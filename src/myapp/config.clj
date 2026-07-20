@@ -20,10 +20,31 @@
   []
   (.getBytes ^String (random/base64 32) "ISO-8859-1"))
 
+(def ^:private known-profiles
+  "The profiles config.edn actually defines. A gate, not documentation."
+  #{:dev :prod})
+
 (defn- active-profile
-  "Returns the active config profile from MYAPP_PROFILE env var, defaulting to :dev."
+  "Returns the active config profile from MYAPP_PROFILE env var, defaulting to :dev.
+
+  FAIL-CLOSED on an unknown value: every prod safeguard in this namespace
+  hangs on (= profile :prod), and that comparison fails OPEN under a typo —
+  MYAPP_PROFILE=prdo would boot a fully working datomic:mem app on a
+  production box, keys randomly generated, nothing persisted, nothing
+  complaining. An unrecognized spelling refuses to boot instead, next to a
+  message naming the legal values."
   []
-  (keyword (or (System/getenv "MYAPP_PROFILE") "dev")))
+  (let [raw (System/getenv "MYAPP_PROFILE")
+        profile (keyword (or raw "dev"))]
+    (when-not (contains? known-profiles profile)
+      (throw
+        (ex-info
+          (str
+            "Unknown MYAPP_PROFILE " (pr-str raw)
+            " — expected \"dev\" or \"prod\". A typo here would silently boot "
+            "the in-memory dev stack, so we refuse to boot on a guess.")
+          {:profile profile})))
+    profile))
 
 (defn- require-prod-key!
   "Refuse to start when `var-name` is unset in :prod.
@@ -163,6 +184,9 @@
   "Load and resolve config.edn for the given profile (defaults to active profile)."
   ([] (load-config (active-profile)))
   ([profile]
+   ;; Say which profile resolved, once, at the moment it is decided — the
+   ;; line an operator greps for when a box behaves like the wrong world.
+   (println (str "Config profile: " (name profile)))
    (-> (io/resource "config.edn")
        (aero/read-config {:profile profile})
        (resolve-keys profile)

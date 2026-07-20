@@ -51,14 +51,20 @@
                        t (get theirs f)]
                    (cond
                      (= t b) {:status :unchanged
-                              :value o}
+                              :value o
+                              :base b
+                              :ours o
+                              :theirs t}
                      (= o b) {:status :applied
                               :value t
                               :base b
                               :ours o
                               :theirs t}
                      (= o t) {:status :unchanged
-                              :value o}
+                              :value o
+                              :base b
+                              :ours o
+                              :theirs t}
                      :else {:status :conflict
                             :base b
                             :ours o
@@ -94,7 +100,11 @@
   [db proposal]
   (let [source-id (get-in proposal [:proposal/source :recipe/id])
         target-id (get-in proposal [:proposal/target :recipe/id])
-        base (:recipe (first (recipe/version-history db source-id)))
+        ;; One min-tx query + one as-of pull — NOT (first (version-history …)),
+        ;; which reconstructs every version of the fork to keep its first.
+        ;; The accept path computes this merge up to three times per request;
+        ;; a long-lived fork would pay hundreds of pulls per click.
+        base (recipe/first-version db source-id)
         ours (recipe/recipe-by-id db target-id)
         theirs (recipe/recipe-by-id db source-id)]
     (when (and base ours theirs)
@@ -124,28 +134,55 @@
 ;; Writes
 ;; ---------------------------------------------------------------------------
 
+(defn- open-proposal-between
+  "The already-open proposal from `source-eid` to `target-eid`, or nil."
+  [db source-eid target-eid]
+  (when-let [p (d/q
+                 '[:find ?p .
+                   :in $ ?s ?t
+                   :where
+                   [?p :proposal/source ?s]
+                   [?p :proposal/target ?t]
+                   [?p :proposal/status :open]]
+                 db
+                 source-eid
+                 target-eid)]
+    (:proposal/id (db/pull* db [:proposal/id] p))))
+
 (defn create-proposal!
   "Open a proposal: offer fork `source-id`'s changes back to its parent.
   Caller must own the fork, and it must actually be a fork with a live
-  parent. Returns the new proposal id, or nil."
+  parent. IDEMPOTENT per (source, target): if an open proposal already
+  exists it is returned instead of opened again — a proposal is 'these two
+  recipes differ', which is one fact however often it is submitted, and
+  every duplicate would otherwise queue another email at the target's
+  owner (an authenticated spam lever; the route is also rate-limited at
+  the handler). Returns the (new or existing) proposal id, or nil."
   [conn user-eid source-id]
   (let [db (d/db conn)
         src (recipe/recipe-by-id db source-id)
         parent-id (get-in src [:recipe/forked-from :recipe/id])]
     (when (and src (recipe/owned-by? src user-eid) parent-id (recipe/recipe-by-id db parent-id))
-      (let [pid (random-uuid)]
-        ;; The proposal and the "you have a proposed change" notification job
-        ;; commit in ONE transaction: a crash can never leave a proposal opened
-        ;; with no notification queued, or a notification for a proposal that
-        ;; was never written. The worker delivers it, with retries.
-        @(db/transact* conn
-           [{:proposal/id pid
-             :proposal/source (d/entid db [:recipe/id source-id])
-             :proposal/target (d/entid db [:recipe/id parent-id])
-             :proposal/status :open
-             :proposal/created-at (time/now)}
-            (jobs/enqueue-tx :proposal-notification {:proposal-id pid})])
-        pid))))
+      (let [source-eid (d/entid db [:recipe/id source-id])
+            target-eid (d/entid db [:recipe/id parent-id])]
+        (or
+          (open-proposal-between db source-eid target-eid)
+          (let [pid (random-uuid)]
+            ;; The proposal and the "you have a proposed change" notification
+            ;; job commit in ONE transaction: a crash can never leave a
+            ;; proposal opened with no notification queued, or a notification
+            ;; for a proposal that was never written. The worker delivers it,
+            ;; with retries. Annotated like every other domain write.
+            @(db/transact* conn
+               (recipe/annotate
+                 [{:proposal/id pid
+                   :proposal/source source-eid
+                   :proposal/target target-eid
+                   :proposal/status :open
+                   :proposal/created-at (time/now)}
+                  (jobs/enqueue-tx :proposal-notification {:proposal-id pid})]
+                 user-eid))
+            pid))))))
 
 (defn accept!
   "Merge an open proposal into its target — target owner only.
@@ -172,19 +209,22 @@
                              #(assoc %1
                                 %2 (get resolutions %2))
                              clean
-                             conflict-fs)
-                    result (recipe/update!
-                             conn
-                             user-eid
-                             target-id
-                             merged
-                             "Merged a proposed change"
-                             expected)]
-                (when (true? result)
-                  @(db/transact* conn
-                     [{:proposal/id proposal-id
-                       :proposal/status :accepted}]))
-                result))))))))
+                             conflict-fs)]
+                ;; The merge write and the status flip are ONE transaction
+                ;; (update!'s extra-tx): a crash between "merged" and
+                ;; "accepted" cannot leave merged content behind a still-open
+                ;; proposal, and an OCC refusal aborts both together — the
+                ;; proposal stays open precisely when nothing was merged.
+                ;; The flip also shares the write's annotation.
+                (recipe/update!
+                  conn
+                  user-eid
+                  target-id
+                  merged
+                  "Merged a proposed change"
+                  expected
+                  [{:proposal/id proposal-id
+                    :proposal/status :accepted}])))))))))
 
 (defn decline!
   "Decline an open proposal — target owner only. Returns true or nil."
@@ -195,8 +235,10 @@
                         (recipe/recipe-by-id db))]
     (when (and prop (= :open (:proposal/status prop)) target (recipe/owned-by? target user-eid))
       @(db/transact* conn
-         [{:proposal/id proposal-id
-           :proposal/status :declined}])
+         (recipe/annotate
+           [{:proposal/id proposal-id
+             :proposal/status :declined}]
+           user-eid))
       true)))
 
 ;; The job handler for the notification enqueued by create-proposal!. Lives here,

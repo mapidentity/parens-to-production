@@ -134,10 +134,13 @@
   safety net without a trace."
   ([] (start-reaper! 20000))
   ([period-ms]
-   (swap! reaper
-     (fn [ex]
-       (or
-         ex
+   ;; `locking`, not a side-effecting `swap!`: creating the executor is a
+   ;; side effect, and `swap!` may RETRY its function under contention —
+   ;; each retry would spin up (and leak) another scheduler thread. The
+   ;; lock makes the check-then-create one atomic step with no retry.
+   (locking reaper
+     (when-not @reaper
+       (reset! reaper
          (doto
            ^ScheduledExecutorService (Executors/newSingleThreadScheduledExecutor (daemon-factory))
            (.scheduleWithFixedDelay
@@ -160,10 +163,10 @@
   inherits the dead one's ghost channels and never prunes them (it never
   broadcasts to them)."
   []
-  (swap! reaper
-    (fn [ex]
-      (when ex (.shutdownNow ^ScheduledExecutorService ex))
-      nil))
+  (locking reaper
+    (when-let [ex @reaper]
+      (.shutdownNow ^ScheduledExecutorService ex)
+      (reset! reaper nil)))
   (reset! viewers {})
   nil)
 

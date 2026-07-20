@@ -98,13 +98,28 @@
     (some #(verify-token-1 % token) key-set)))
 
 (defn mark-activity-seen!
-  "Advance the user's activity cursor to now.
-  The dashboard calls this after computing the feed, so 'since your last
-  visit' is true by construction — the cursor always trails the render."
+  "Advance the user's activity cursor to `at` (default: now).
+  The dashboard passes a timestamp captured BEFORE it takes its database
+  snapshot, so the cursor always TRAILS the rendered feed: an event that
+  lands between snapshot and stamp is still ahead of the cursor and shows
+  up next visit. (Stamping 'now' after the render — the first cut — put
+  the cursor AHEAD of the snapshot, and anything transacted in that gap
+  was in neither this render nor any later one: silently lost. A rare
+  duplicate showing beats a silent drop.)"
+  ([conn user-eid] (mark-activity-seen! conn user-eid (time/now)))
+  ([conn user-eid at]
+   @(db/transact* conn
+      [{:db/id user-eid
+        :user/activity-seen-at at}])))
+
+(defn accept-terms!
+  "Stamp `:user/terms-accepted-at` on `user-eid` — the terms-gate's one write.
+  A domain write, not a handler inline: the handler orchestrates, this
+  layer owns the transaction."
   [conn user-eid]
   @(db/transact* conn
      [{:db/id user-eid
-       :user/activity-seen-at (time/now)}]))
+       :user/terms-accepted-at (time/now)}]))
 
 (defn find-user-by-email
   "Find user by email address."

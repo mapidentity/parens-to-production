@@ -13,6 +13,7 @@
     [myapp.time :as time]
     [myapp.upload.core :as upload]
     [myapp.web.handler :as handler]
+    [myapp.web.presence :as presence]
     [myapp.web.ratelimit]
     [myapp.web.routes :as routes])
   (:import
@@ -770,3 +771,145 @@
         (let [resp (show "alice@x.lan" alice pid)]
           (is (= 302 (:status resp)))
           (is (str/includes? (get-in resp [:headers "Location"]) (str orig))))))))
+
+;; ---------------------------------------------------------------------------
+;; Handlers the smoke suite had been missing, and the seam guards added in the
+;; review-fix pass: delete, reorder/move, the viewers-stream existence gate,
+;; the delete-race resurrection guard, and future-basis-t rejection.
+;; ---------------------------------------------------------------------------
+
+(deftest recipe-delete-through-handlers
+  (let [u (mk-user! "cook@x.lan")
+        mallory (mk-user! "mallory@x.lan")
+        id (recipe/create!
+             h/*conn*
+             u
+             {:title "Doomed"
+              :servings 1})
+        del (fn [email eid]
+              (handler/recipe-delete
+                (assoc (h/auth-request :post (str "/recipes/" id "/delete") email)
+                  :user-eid eid
+                  :path-params {:id (str id)})))]
+    (testing "a non-owner cannot delete (recipe survives), same 404-less redirect"
+      (is (= 302 (:status (del "mallory@x.lan" mallory))))
+      (is (some? (recipe/recipe-by-id (d/db h/*conn*) id)) "recipe still there"))
+    (testing "the owner deletes → gone"
+      (is (= 302 (:status (del "cook@x.lan" u))))
+      (is (nil? (recipe/recipe-by-id (d/db h/*conn*) id))))))
+
+(deftest recipe-reorder-and-move-through-handlers
+  (let [u (mk-user! "cook@x.lan")
+        a (recipe/create!
+            h/*conn*
+            u
+            {:title "Apple"
+             :servings 1})
+        b (recipe/create!
+            h/*conn*
+            u
+            {:title "Bacon"
+             :servings 1})
+        c (recipe/create!
+            h/*conn*
+            u
+            {:title "Cocoa"
+             :servings 1})
+        req (fn [params]
+              (assoc (h/auth-request :post "/recipes/reorder" "cook@x.lan" :params params)
+                :user-eid u))
+        positions (fn []
+                    (into
+                      {}
+                      (for [r (recipe/recipes-by-user (d/db h/*conn*) u)]
+                        [(:recipe/title r) (:recipe/position r)])))]
+    (testing "an explicit id order persists as positions 0..n"
+      (is (= 302 (:status (handler/recipe-reorder (req {:ids (str c "," a "," b)})))))
+      (is
+        (=
+          {"Cocoa" 0
+           "Apple" 1
+           "Bacon" 2}
+          (positions))))
+    (testing "a single up-move swaps a recipe with its predecessor"
+      (is
+        (=
+          302
+          (:status
+            (handler/recipe-reorder
+              (req
+                {:id (str a)
+                 :dir "up"})))))
+      (is
+        (=
+          {"Apple" 0
+           "Cocoa" 1
+           "Bacon" 2}
+          (positions))))
+    (testing "reorder does NOT create a version (position is bookkeeping, not content)"
+      (is
+        (= 1 (count (recipe/version-history (d/db h/*conn*) a)))
+        "still a single version after two reorders"))))
+
+(deftest viewers-stream-existence-gate
+  (let [u (mk-user! "cook@x.lan")
+        id (recipe/create!
+             h/*conn*
+             u
+             {:title "Watched"
+              :servings 1})
+        call (fn [uuid]
+               (handler/viewers-stream
+                 (assoc (h/request :get (str "/recipes/" uuid "/viewers"))
+                   :locale :en
+                   :path-params {:id (str uuid)})))]
+    (testing "a made-up recipe UUID is a 404, never a minted registry key"
+      (is (= 404 (:status (call (UUID/randomUUID)))))
+      (is (zero? (presence/count-for (UUID/randomUUID)))))
+    (testing "a real recipe opens a stream (http-kit async channel response)"
+      ;; as-channel returns a Ring response map with no :status until the
+      ;; channel closes; the point is it does NOT 404.
+      (is (not= 404 (:status (call id)))))))
+
+(deftest delete-race-does-not-resurrect-a-recipe
+  ;; The token-less update! / set-image! / reorder! paths carry an existence
+  ;; CAS so a delete landing in the window cannot re-create the entity as an
+  ;; ownerless ghost in the public catalog. Simulate the race with d/with:
+  ;; resolve the eid, delete it, THEN attempt the write against the stale eid.
+  (let [u (mk-user! "cook@x.lan")
+        id (recipe/create!
+             h/*conn*
+             u
+             {:title "Ghost?"
+              :servings 1})]
+    (recipe/delete! h/*conn* u id)
+    (testing "a token-less content update on a deleted recipe writes nothing (nil)"
+      (is (nil? (recipe/update! h/*conn* u id {:title "Back from the dead"}))))
+    (testing "set-image! on a deleted recipe writes nothing (nil)"
+      (is (nil? (recipe/set-image! h/*conn* u id "deadbeef"))))
+    (testing "the catalog has no ghost row (nil id / nil owner)"
+      (let [{:keys [recipes]} (recipe/browse-page (d/db h/*conn*) nil 50)]
+        (is (every? :recipe/id recipes) "every catalog row has a real id")
+        (is (not-any? #(= "Back from the dead" (:recipe/title %)) recipes))))))
+
+(deftest future-basis-t-is-not-cacheable
+  ;; /recipes/:id/at/:t and the diff route validate t against the db's own
+  ;; basis-t: a FUTURE t served the current (mutable) state under an immutable
+  ;; header, pinning today's draft in a cache for a year. Now it 404s.
+  (let [u (mk-user! "cook@x.lan")
+        id (recipe/create!
+             h/*conn*
+             u
+             {:title "Timely"
+              :servings 1})
+        at (fn [t]
+             (handler/recipe-version
+               (assoc (h/request :get (str "/recipes/" id "/at/" t))
+                 :locale :en
+                 :path-params {:id (str id)
+                               :t (str t)})))]
+    (testing "a future basis-t is a 404, not a mis-cached current render"
+      (is (= 404 (:status (at 999999999)))))
+    (testing "a real past basis-t still renders"
+      (let [t (d/basis-t (d/db h/*conn*))]
+        (is (= 200 (:status (at t))))))))

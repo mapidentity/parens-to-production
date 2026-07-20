@@ -221,6 +221,16 @@
 (def ^:private upload-per-ip
   30)
 
+;; A proposal enqueues an email at ANOTHER user's address — shared state
+;; twice over (their inbox, our sender reputation). create-proposal! is
+;; idempotent per (source, target), so the limit only bites someone
+;; cycling proposals open/closed or spraying many forks; a human proposing
+;; in good faith never sees it.
+(def ^:private propose-window-ms
+  (* 10 60 1000))
+(def ^:private propose-per-user
+  10)
+
 (defn request-magic-link
   "Handle a magic-link request — send the email + record the nonce, then redirect (PRG).
 
@@ -260,22 +270,8 @@
   [request]
   (html (views/magic-link-sent (:locale request) (get-in request [:params :email]))))
 
-(defn- consume-magic-link-nonce!
-  "CAS-stamp the analytics record for `nonce` as verified.
-
-  Returns true if this call was the first to consume the nonce; false on
-  replay, malformed nonce, or unknown nonce. The CAS expects
-  `:magic-link/verified-at` to be currently unset; a replay finds it already
-  set, the CAS fails, the transact throws, and we return false. This is the
-  one-shot anti-replay primitive."
-  [^UUID nonce]
-  (try
-    (let [conn (analytics/get-connection)
-          eid (d/q '[:find ?e . :in $ ?n :where [?e :magic-link/nonce ?n]] (d/db conn) nonce)]
-      (when eid
-        @(d/transact conn [[:db.fn/cas eid :magic-link/verified-at nil (time/now-date)]])
-        true))
-    (catch Exception _e false)))
+;; The one-shot nonce consumption lives with its data: see
+;; `myapp.analytics.db/consume-nonce!` — the handler only orchestrates.
 
 (defn verify-magic-link
   "Verify the magic-link token and create the user-and-session.
@@ -315,7 +311,7 @@
       ;; Gate 2: one-shot consumption. A valid signature whose nonce is
       ;; already spent is a REPLAY — a distinct, louder signal than a bad
       ;; token, so it earns its own reason.
-      (not (consume-magic-link-nonce! nonce-uuid))
+      (not (analytics/consume-nonce! nonce-uuid (time/now)))
       (do
         (security/event!
           :auth/replay
@@ -341,14 +337,10 @@
   (if (:user-eid request) (html (views/welcome-page (:locale request))) (response/redirect "/")))
 
 (defn accept-terms
-  "Stamp `:user/terms-accepted-at` on the authenticated user, then continue."
+  "Stamp the terms acceptance on the authenticated user, then continue."
   [request]
-  (let [conn (db/get-connection)
-        user-eid (:user-eid request)]
-    @(db/transact* conn
-       [{:db/id user-eid
-         :user/terms-accepted-at (time/now)}])
-    (response/redirect "/dashboard")))
+  (auth/accept-terms! (db/get-connection) (:user-eid request))
+  (response/redirect "/dashboard"))
 
 (defn logout
   "Clear the session and return to the landing page."
@@ -363,17 +355,19 @@
 (defn dashboard
   "Signed-in home: the user's recipes, and what happened while away.
   The feed — forks of their recipes, upstream edits to originals they
-  forked — is read from the transaction log via d/since. After it is
-  computed the cursor advances, so the panel is 'since your previous
-  visit' by construction: shown once, then folded into history."
+  forked — is read from the transaction log via d/since. The cursor stamp
+  is captured BEFORE the snapshot, so it always trails the rendered feed:
+  an event landing between snapshot and stamp still shows next visit
+  (possibly twice — at-least-once beats silently never)."
   [request]
   (let [conn (db/get-connection)
+        stamp (time/now)
         db (d/db conn)
         user-eid (:user-eid request)
         recipes (recipe/recipes-by-user db user-eid)
         seen-at (:user/activity-seen-at (db/pull* db [:user/activity-seen-at] user-eid))
         items (recipe/activity db user-eid seen-at)]
-    (auth/mark-activity-seen! conn user-eid)
+    (auth/mark-activity-seen! conn user-eid stamp)
     (html
       (views/dashboard (:locale request) (:user-email request) (:admin? request) recipes items))))
 
@@ -590,11 +584,13 @@
               :else
               (let [result (upload/store! conn tmp)]
                 (if-let [up (:upload result)]
-                  (do
-                    @(db/transact* conn
-                       [{:recipe/id id
-                         :recipe/image [:upload/hash (:upload/hash up)]}])
-                    (response/redirect (str "/recipes/" id "?toast=photo-added")))
+                  ;; The reference write is a domain fn (owner-gated,
+                  ;; annotated, delete-race-guarded); nil means the recipe
+                  ;; vanished mid-upload — the blob stays for the orphan
+                  ;; sweep and the answer is the same 404 as any miss.
+                  (if (recipe/set-image! conn (:user-eid request) id (:upload/hash up))
+                    (response/redirect (str "/recipes/" id "?toast=photo-added"))
+                    (not-found request))
                   (response/redirect
                     (str "/recipes/" id "?photo-error=" (name (:error result))))))))
           (do (tenancy-check! request id) (not-found request))))
@@ -608,13 +604,9 @@
   because content-addressing means another recipe may share the same bytes."
   [request]
   (let [conn (db/get-connection)
-        id (path-uuid request)
-        r (recipe/recipe-by-id (d/db conn) id)]
-    (if (and r (recipe/owned-by? r (:user-eid request)))
-      (do
-        (when-let [img-eid (get-in r [:recipe/image :db/id])]
-          @(db/transact* conn [[:db/retract [:recipe/id id] :recipe/image img-eid]]))
-        (response/redirect (str "/recipes/" id)))
+        id (path-uuid request)]
+    (if (recipe/remove-image! conn (:user-eid request) id)
+      (response/redirect (str "/recipes/" id))
       (do (tenancy-check! request id) (not-found request)))))
 
 (defn recipe-image
@@ -691,13 +683,22 @@
 ;; ---------------------------------------------------------------------------
 
 (defn proposal-propose
-  "POST /recipes/:id/propose — the fork owner offers its changes to the parent."
+  "POST /recipes/:id/propose — the fork owner offers its changes to the parent.
+  Rate-limited per user: the accept side notifies the TARGET's owner by
+  email, and a write that lands in someone else's inbox is shared state
+  (see the limit's definition above)."
   [request]
-  (let [fork-id (path-uuid request)
-        pid (proposal/create-proposal! (db/get-connection) (:user-eid request) fork-id)]
-    (if pid
-      (response/redirect (str "/proposals/" pid))
-      (do (tenancy-check! request fork-id) (not-found request)))))
+  (let [fork-id (path-uuid request)]
+    (if-not
+      (ratelimit/allow?
+        (str "propose-user:" (:user-eid request))
+        propose-per-user
+        propose-window-ms)
+      (response/redirect (str "/recipes/" fork-id "?toast=rate-limited"))
+      (let [pid (proposal/create-proposal! (db/get-connection) (:user-eid request) fork-id)]
+        (if pid
+          (response/redirect (str "/proposals/" pid))
+          (do (tenancy-check! request fork-id) (not-found request)))))))
 
 (defn- proposal-parties
   "Resolve the current db, the merge, and target/source ownership.
@@ -720,23 +721,30 @@
   [request]
   (let [pid (path-uuid request)
         prop (proposal/proposal-by-id (d/db (db/get-connection)) pid)]
-    (if (and prop (= :open (:proposal/status prop)))
-      (let [{:keys [mrg target-owner? source-owner?]} (proposal-parties request prop)]
-        (cond
-          (nil? mrg) (not-found request)
-          (or target-owner? source-owner?)
-          (html
-            (views/proposal-page
-              (:locale request)
-              (:user-email request)
-              (:admin? request)
-              prop
-              mrg
-              {:target-owner? target-owner?}))
-          :else (not-found request)))
-      (if prop
-        (response/redirect (str "/recipes/" (get-in prop [:proposal/target :recipe/id])))
-        (not-found request)))))
+    (if prop
+      (let [{:keys [mrg target-owner? source-owner?]} (proposal-parties request prop)
+            party? (or target-owner? source-owner?)]
+        (if (= :open (:proposal/status prop))
+          (cond
+            (nil? mrg) (not-found request)
+            party?
+            (html
+              (views/proposal-page
+                (:locale request)
+                (:user-email request)
+                (:admin? request)
+                prop
+                mrg
+                {:target-owner? target-owner?}))
+            :else (not-found request))
+          ;; Closed proposals redirect to their (merged) target — but only
+          ;; for the two parties. To anyone else a closed proposal is the
+          ;; same 404 as one that never existed: the never-leak rule does
+          ;; not expire when the proposal does.
+          (if party?
+            (response/redirect (str "/recipes/" (get-in prop [:proposal/target :recipe/id])))
+            (not-found request))))
+      (not-found request))))
 
 (defn- resolutions-from
   "Map each conflicting field to its chosen value (ours/theirs) from the form."
@@ -903,12 +911,23 @@
   {:robots "noindex"
    :canonical (str (config/get-config :base-url) "/recipes/" id)})
 
+(defn- realized-t
+  "Validate a client-supplied basis point against what `db` has reached.
+  Returns the t, or nil for a t this db has NOT reached. The point-in-time
+  pages cache as immutable — a pure function of basis-t. That is only true
+  of the past: `as-of` with a FUTURE t silently returns the current
+  (still-mutable) state, and serving that under an immutable header pins
+  today's draft in a cache for a year. A t we have not reached is not a
+  version; it 404s like any other thing that does not exist."
+  [db basis-t]
+  (when (and basis-t (pos? (long basis-t)) (<= (long basis-t) (long (d/basis-t db)))) basis-t))
+
 (defn recipe-version
   "GET /recipes/:id/at/:t — read-only point-in-time view as of basis-t `:t`."
   [request]
   (let [db (d/db (db/get-connection))
         id (path-uuid request)
-        basis-t (parse-long (str (get-in request [:path-params :t])))
+        basis-t (realized-t db (parse-long (str (get-in request [:path-params :t]))))
         r (when basis-t (recipe/version-as-of db id basis-t))]
     (if r
       (html-immutable
@@ -926,8 +945,8 @@
   [request]
   (let [db (d/db (db/get-connection))
         id (path-uuid request)
-        from-t (parse-long (str (get-in request [:params :from])))
-        to-t (parse-long (str (get-in request [:params :to])))
+        from-t (realized-t db (parse-long (str (get-in request [:params :from]))))
+        to-t (realized-t db (parse-long (str (get-in request [:params :to]))))
         old-r (when from-t (recipe/version-as-of db id from-t))
         new-r (when to-t (recipe/version-as-of db id to-t))]
     (if (and old-r new-r)

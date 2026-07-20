@@ -114,11 +114,14 @@
 (defn- fulltext-escape
   "Neutralize Lucene query syntax in user input.
   The fulltext datalog fn hands `q` to a Lucene QueryParser, where `*`,
-  `~`, `AND`… are operators (and some inputs throw outright). We search
-  literal words, so operators become spaces and the analyzer does the rest."
+  `~`, `&&`, `AND`… are operators (and some inputs throw outright). We
+  search literal words, so operators become spaces and the analyzer does
+  the rest. `&` and `|` are in the class because `&&`/`||` are the
+  operator spellings that THROW from the parser — an input of bare
+  operators must conform to nothing, not 500 a public endpoint."
   [q]
   (-> (or q "")
-      (str/replace #"[+\-!(){}\[\]^\"~*?:\\/]" " ")
+      (str/replace #"[+\-!(){}\[\]^\"~*?:\\/&|]" " ")
       (str/replace #"(?i)\b(AND|OR|NOT)\b" " ")
       str/trim))
 
@@ -296,6 +299,26 @@
   [db id t]
   (when-let [eid (d/entid db [:recipe/id id])]
     (db/pull* (d/as-of db t) pull-pattern eid)))
+
+(defn first-version
+  "The earliest version of recipe `id`.
+  Its state as of the first content transaction. This is what the proposal
+  merge reads as its BASE: a fork's
+  first version is the content copied from the parent at fork time. One
+  min-tx query plus one as-of pull, where taking `(first (version-history …))`
+  would reconstruct an annotation + as-of pull for EVERY version just to
+  keep the first. nil if the recipe doesn't exist."
+  [db id]
+  (when-let [eid (d/entid db [:recipe/id id])]
+    (when-let [tx (d/q
+                    '[:find (min ?tx) .
+                      :in $ ?e [?a ...]
+                      :where
+                      [?e ?a _ ?tx true]]
+                    (d/history db)
+                    eid
+                    versioned-attrs)]
+      (db/pull* (d/as-of db tx) pull-pattern eid))))
 
 ;; ---------------------------------------------------------------------------
 ;; Line diff (LCS) — the version-to-version comparison
@@ -522,11 +545,13 @@
         {:title title
          :servings servings}))))
 
-(defn- annotate
+(defn annotate
   "Append the transaction annotation to `tx-data`.
   Every user-driven write names its author, and carries the user's note
   when one was offered. The
-  \"datomic.tx\" tempid resolves to the transaction entity itself."
+  \"datomic.tx\" tempid resolves to the transaction entity itself.
+  Public because every domain write — proposals included — routes its
+  provenance through this one place."
   ([tx-data user-eid] (annotate tx-data user-eid nil))
   ([tx-data user-eid note]
    (conj
@@ -572,16 +597,30 @@
   isolation). Does NOT bump :recipe/updated-at — a reorder is not a content edit
   and must not create a version. Returns true."
   [conn user-eid ids]
-  (let [db (d/db conn)
-        tx (->> ids
-                (map-indexed (fn [i id]
-                               (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
-                                 {:db/id eid
-                                  :recipe/position (long i)})))
-                (remove nil?)
-                vec)]
-    (when (seq tx) @(db/transact* conn (annotate tx user-eid)))
-    true))
+  ;; Each position write rides with an existence CAS (`:recipe/id` → same
+  ;; value): a recipe deleted between the owner check and the transactor
+  ;; must fail the guard, not be re-created as a position-only orphan by a
+  ;; bare assert on its stale eid. One failed guard aborts the whole tx —
+  ;; so on that (rare) race we re-read and retry once, at which point the
+  ;; deleted id falls out via `entid-owned` like any other missing recipe.
+  (loop [attempt 0]
+    (let [db (d/db conn)
+          tx (->> ids
+                  (map-indexed (fn [i id]
+                                 (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
+                                   [[:db.fn/cas eid :recipe/id id id]
+                                    {:db/id eid
+                                     :recipe/position (long i)}])))
+                  (remove nil?)
+                  (apply concat)
+                  vec)
+          result (if (seq tx)
+                   (try
+                     @(db/transact* conn (annotate tx user-eid))
+                     true
+                     (catch Throwable e (if (db/cas-failed? e) :retry (throw e))))
+                   true)]
+      (if (and (= :retry result) (zero? attempt)) (recur 1) true))))
 
 (defn move!
   "Move recipe `id` one step `dir` (:up or :down) within its owner's ordered dashboard list, owner-checked.
@@ -683,19 +722,6 @@
         "unconformed recipe changes — call conform first"
         {:changes (select-keys changes [:recipe/title :recipe/servings])}))))
 
-(defn- cas-failed?
-  "True if `e` (or a cause) is Datomic's compare-and-swap conflict."
-  [e]
-  (boolean
-    (some
-      (fn [t] (= :db.error/cas-failed (:db/error (ex-data t))))
-      (take-while
-        some?
-        (iterate
-          #(some-> ^Throwable %
-                   (.getCause))
-          e)))))
-
 (defn update!
   "Apply `changes` (a subset of the `:recipe/*` content keys) to recipe `id`, if owned by `user-eid`.
   Content must be conformed (see `conform`); the keys present are checked.
@@ -710,10 +736,16 @@
   recipe's content clock, not the global basis-t, precisely because a
   reorder or an unrelated recipe's edit must not read as a conflict —
   which is why `:recipe/updated-at` (bumped by content edits only, never
-  by a reorder) is the right thing to compare."
+  by a reorder) is the right thing to compare.
+
+  Optional `extra-tx` (a seq of tx forms) commits IN THE SAME transaction
+  as the content write — for a caller whose own bookkeeping must be atomic
+  with the edit (the proposal accept's status flip rides here). It shares
+  the write's annotation and its conflict fate: a CAS refusal aborts both."
   ([conn user-eid id changes] (update! conn user-eid id changes nil nil))
   ([conn user-eid id changes note] (update! conn user-eid id changes note nil))
-  ([conn user-eid id changes note expected]
+  ([conn user-eid id changes note expected] (update! conn user-eid id changes note expected nil))
+  ([conn user-eid id changes note expected extra-tx]
    (assert-changes! changes)
    (let [db (d/db conn)]
      (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
@@ -724,18 +756,69 @@
              ;; With a token: CAS asserts the new updated-at only if the
              ;; current one still equals `expected` — atomic on the
              ;; transactor, no read-then-write race in the handler.
-             ;; Without one: the plain bump, as before.
+             ;; Without one: the plain bump — guarded by a CAS on
+             ;; `:recipe/id` (same value in, same value out), whose only
+             ;; job is to REFUSE if the entity vanished between the owner
+             ;; check above and the transactor's turn. A bare assert on a
+             ;; retracted eid would silently re-create the recipe as an
+             ;; ownerless ghost; the guard makes a delete race read as
+             ;; missing (nil), exactly like every other missing recipe.
              tx-forms (if expected
                         [[:db.fn/cas eid :recipe/updated-at expected (time/now)]
                          (merge {:db/id eid} content)]
-                        [(merge
+                        [[:db.fn/cas eid :recipe/id id id]
+                         (merge
                            {:db/id eid
                             :recipe/updated-at (time/now)}
                            content)])]
          (try
-           @(db/transact* conn (annotate tx-forms user-eid note))
+           @(db/transact* conn (annotate (concat tx-forms extra-tx) user-eid note))
            true
-           (catch Throwable e (if (cas-failed? e) :conflict (throw e)))))))))
+           (catch Throwable e
+             (if (db/cas-failed? e)
+               ;; Which CAS failed tells us what happened: the token CAS
+               ;; means a concurrent edit (:conflict); the existence guard
+               ;; means the recipe is gone (nil — same answer as missing).
+               (when expected :conflict)
+               (throw e)))))))))
+
+(defn set-image!
+  "Point recipe `id`'s photo at the stored upload with `upload-hash`, if owned by `user-eid`.
+  A domain write like any other: owner-gated, annotated, and guarded by the
+  existence CAS — the first cut lived in the handler as a bare lookup-ref
+  upsert, and an upsert on `{:recipe/id id}` RE-CREATES a just-deleted
+  recipe as a ghost holding only an id and an image. Does not bump
+  `:recipe/updated-at`: the photo is presentation, not content — a photo
+  swap must not create a version or a false edit conflict. Returns true on
+  success, nil if missing/not owned (including deleted-in-the-window)."
+  [conn user-eid id upload-hash]
+  (let [db (d/db conn)]
+    (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
+      (try
+        @(db/transact* conn
+           (annotate
+             [[:db.fn/cas eid :recipe/id id id]
+              {:db/id eid
+               :recipe/image [:upload/hash upload-hash]}]
+             user-eid))
+        true
+        (catch Throwable e (if (db/cas-failed? e) nil (throw e)))))))
+
+(defn remove-image!
+  "Retract recipe `id`'s photo reference, if owned by `user-eid`.
+  Only the reference goes; the blob stays for the orphan sweep, because
+  content-addressing means another recipe may share the same bytes.
+  Returns true on success (including no-photo-to-remove), nil if the
+  recipe is missing/not owned."
+  [conn user-eid id]
+  (let [db (d/db conn)]
+    (when-let [eid (db/entid-owned db user-eid [:recipe/id id])]
+      (when-let [img-eid (:db/id (:recipe/image (db/pull* db [{:recipe/image [:db/id]}] eid)))]
+        ;; A retraction is race-proof where the upsert was not: retracting
+        ;; a datom that is already gone (photo replaced, recipe deleted) is
+        ;; a no-op, never a resurrection.
+        @(db/transact* conn (annotate [[:db/retract eid :recipe/image img-eid]] user-eid)))
+      true)))
 
 (defn delete!
   "Retract recipe `id` if owned by `user-eid`.

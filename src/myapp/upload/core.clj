@@ -332,22 +332,38 @@
 
 (defn gc-orphans!
   "Reap unreferenced uploads older than `grace-ms`.
-  Deletes the source file, its whole derivative subtree, and retracts the entity;
-  returns the number actually reaped. Safe to run repeatedly."
+  Retracts the entity FIRST, then deletes the source file and its
+  derivative subtree; returns the number actually reaped. Safe to run
+  repeatedly.
+
+  The ordering is the race defense. Deleting files first (the first cut)
+  left a window where a concurrent re-upload deduped against the
+  still-on-disk blob, committed a fresh reference — and then watched this
+  sweep unlink the bytes out from under it: a live recipe pointing at a
+  404. Now the metadata goes first and the bytes go last, with a re-check
+  between: (1) skip anything that regained a referrer since the snapshot;
+  (2) retract; (3) if the hash has been re-CREATED since the retract (a
+  re-upload won the race), keep the files — the new entity depends on
+  them. What remains is a sliver measured in microseconds where a
+  re-upload commits between (3) and the unlink; it costs one re-uploadable
+  photo, not silent corruption, and the next sweep cannot repeat it (the
+  fresh entity is younger than any grace window). Reasoned, not drilled —
+  the window is not schedulable from a test."
   [conn grace-ms]
   (let [cutoff (Date/from (.minusMillis (time/now) (long grace-ms)))
         found (orphans (d/db conn) cutoff)
         reaped (atom 0)]
     (doseq [[h ct] found]
-      ;; Re-check against the CURRENT db right before deleting: a re-upload
-      ;; between the snapshot above and here upserts to this same entity and may
-      ;; have re-referenced it, and content-addressing means the new reference
-      ;; points at these very bytes. Skip anything that gained a referrer.
+      ;; (1) Re-check against the CURRENT db: a re-upload since the snapshot
+      ;; upserts to this same entity and may have re-referenced these bytes.
       (when-not (referenced? (d/db conn) h)
-        (when-let [ext (mime->ext ct)]
-          (io/delete-file (stored-path h ext) true))
-        (delete-tree! (io/file (uploads-root) "img" (subs h 0 2) (subs h 2 4) h))
         @(db/transact* conn [[:db/retractEntity [:upload/hash h]]])
+        ;; (3) A re-upload that lost the entity race re-creates the hash —
+        ;; and, having deduped against the file on disk, needs it to live.
+        (when-not (d/entid (d/db conn) [:upload/hash h])
+          (when-let [ext (mime->ext ct)]
+            (io/delete-file (stored-path h ext) true))
+          (delete-tree! (io/file (uploads-root) "img" (subs h 0 2) (subs h 2 4) h)))
         (swap! reaped inc)))
     @reaped))
 
@@ -361,15 +377,27 @@
   "How long an unreferenced blob is kept before collection (a day)."
   (* 24 60 60 1000))
 
+(def ^:private gc-initial-delay-ms
+  "First sweep runs this long after boot — NOT a full period later.
+  The schedule lives in this process and resets on every restart, and this
+  box redeploys on every push (ch.34): a first-run delay of a whole period
+  meant a box restarted at least daily would never sweep at all, and
+  orphans would accumulate until the quietest week ran the clock out. A
+  short post-boot settle keeps the sweep off the deploy's critical path
+  while making 'daily' mean daily."
+  (* 15 60 1000))
+
 (defn start-gc!
   "Start the daily orphan sweep if not already running (idempotent).
   The same lifecycle-managed, try-wrapped, daemon sweep as the presence reaper."
   ([] (start-gc! (* 24 60 60 1000)))
   ([period-ms]
-   (swap! gc
-     (fn [ex]
-       (or
-         ex
+   ;; `locking`, not a side-effecting `swap!`: `swap!` may RETRY under
+   ;; contention, and creating the executor inside would leak a scheduler
+   ;; thread per retry. The lock makes check-then-create atomic.
+   (locking gc
+     (when-not @gc
+       (reset! gc
          (doto
            ^ScheduledExecutorService
            (Executors/newSingleThreadScheduledExecutor
@@ -382,7 +410,7 @@
                (try
                  (gc-orphans! (db/get-connection) gc-grace-ms)
                  (catch Throwable _ nil)))
-             period-ms
+             (min (long gc-initial-delay-ms) (long period-ms))
              period-ms
              TimeUnit/MILLISECONDS)))))
    nil))
@@ -390,8 +418,8 @@
 (defn stop-gc!
   "Stop the orphan sweep (paired with start-gc!)."
   []
-  (swap! gc
-    (fn [ex]
-      (when ex (.shutdownNow ^ScheduledExecutorService ex))
-      nil))
+  (locking gc
+    (when-let [ex @gc]
+      (.shutdownNow ^ScheduledExecutorService ex)
+      (reset! gc nil)))
   nil)

@@ -16,7 +16,10 @@ kondo_rc=$?
 # Allowed exceptions:
 #   - src/myapp/time.clj         — the wrapper itself
 #   - test/myapp/time_test.clj   — tests for the wrapper
-forbidden_pattern='(LocalDate/now|LocalDateTime/now|ZonedDateTime/now|OffsetDateTime/now|Instant/now|Year/now|YearMonth/now|System/currentTimeMillis|System\.currentTimeMillis)'
+# Also bans the no-arg java.util.Date / GregorianCalendar constructors,
+# which read the wall clock just as surely as *Instant/now* (they slipped
+# the earlier pattern — found by a test doing exactly that).
+forbidden_pattern='(LocalDate/now|LocalDateTime/now|ZonedDateTime/now|OffsetDateTime/now|Instant/now|Year/now|YearMonth/now|System/currentTimeMillis|System\.currentTimeMillis|\(Date\.\)|\(java\.util\.Date\.\)|\(new +Date\)|\(GregorianCalendar\.\)|\(Calendar/getInstance\))'
 violations=$(grep -rn -E "$forbidden_pattern" src test \
   --include='*.clj' --include='*.cljs' --include='*.cljc' \
   | grep -v '^src/myapp/time\.clj:' \
